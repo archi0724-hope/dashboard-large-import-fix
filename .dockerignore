@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+__pycache__
+.pytest_cache
+vendor_data
+*.pyc
+*.pyo
+*.pyd
+.env
+.streamlit/secrets.toml
+*.zip
+*.xlsx
+*.xls
