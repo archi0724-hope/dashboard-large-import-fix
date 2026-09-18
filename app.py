@@ -63,12 +63,12 @@ def setting(name: str, default: str = "") -> str:
 
 def authenticated() -> bool:
     password = setting("APP_PASSWORD")
+    cloud_deployment = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
     if not password:
-        if (APP_DIR / "CLOUD_DEPLOYMENT").exists():
+        if cloud_deployment:
             st.title("Vendor Document Dashboard")
-            st.warning("First-time cloud setup: set APP_PASSWORD in Streamlit Settings > Secrets.")
-            st.code('APP_PASSWORD = "your-own-long-password"\n# Durable online storage:\nDATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require"', language="toml")
-            st.caption("Keep the app private. Never upload vendor documents or secrets to GitHub.")
+            st.warning("Production setup is incomplete: APP_PASSWORD is required.")
+            st.caption("Set APP_PASSWORD and DATABASE_URL as private environment variables on the server.")
             return False
         return True
     if st.session_state.get("authenticated"):
@@ -251,7 +251,7 @@ with st.sidebar:
     if store.cloud:
         st.success("Saved to cloud database")
         st.caption("Files and records are stored in PostgreSQL.")
-    elif (APP_DIR / "CLOUD_DEPLOYMENT").exists():
+    elif setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}:
         st.warning("Temporary cloud disk. Set DATABASE_URL for permanent uploads.")
     else:
         st.success("Saved on this computer")
