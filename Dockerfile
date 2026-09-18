@@ -13,7 +13,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY app.py vendor_core.py storage.py exports.py import_service.py drive_import.py ./
 COPY .streamlit ./.streamlit/
-COPY CLOUD_DEPLOYMENT ./
 
 RUN mkdir -p /app/vendor_data && chown -R appuser:appuser /app
 
