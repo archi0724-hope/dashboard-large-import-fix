@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable
 import pandas as pd
 from vendor_core import ArchiveLimits, classify, discover_folder_companies, iter_uploads, company_key, clean_company, upload_stream
+from catalogue_extraction import extract_records
 
 @dataclass
 class ImportResult:
@@ -51,6 +52,12 @@ def import_documents(store, uploads, forced_company: str = "", read_pdf_text: bo
                         if decision.company_name is None:
                             store.add_review_item("", source=source, record=path, evidence=decision.reason)
                         added = store.save_document(path, content, decision, source)
+                        document_id = store.document_id_for(path, content, decision.company_name or "")
+                        if document_id is not None:
+                            kind, records = extract_records(path, content)
+                            if kind:
+                                store.add_document_types(document_id, ["Price" if kind == "price" else "Catalogue"])
+                            store.save_product_records(document_id, records)
                         result.saved_files += int(added)
                         result.duplicate_files += int(not added)
                         result.review_files += int(added and decision.needs_review)
@@ -92,4 +99,3 @@ def import_documents(store, uploads, forced_company: str = "", read_pdf_text: bo
     result.total_stored_files = int(saved_documents.available.sum())
     store.log_event("Document upload", result.to_dict())
     return result
-

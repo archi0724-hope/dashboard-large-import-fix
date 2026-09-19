@@ -3,14 +3,18 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import importlib
 import importlib.util
 import json
 import logging
 import mimetypes
 import os
+import re
+import unicodedata
 from io import BytesIO
 from pathlib import Path
 import time
+from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
@@ -18,9 +22,15 @@ import streamlit as st
 from exports import csv_bytes, workbook_bytes
 from import_service import import_documents
 from drive_import import DiskUpload, download_drive_zip
-from storage import Store
+import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
                          export_filename, filter_checklist, read_vendor_file, supporting_category)
+
+# Streamlit can retain imported modules during a hot reload. Refresh an older
+# Store class once so catalogue search is available without a manual restart.
+if not hasattr(storage_module.Store, "product_records"):
+    storage_module = importlib.reload(storage_module)
+Store = storage_module.Store
 
 APP_DIR = Path(__file__).resolve().parent
 st.set_page_config(page_title="Vendor Document Dashboard", page_icon="\U0001f4c2", layout="wide")
@@ -94,12 +104,16 @@ if not authenticated():
 
 
 @st.cache_resource
-def open_store(data_dir: str, database_url: str) -> Store:
+def open_store(data_dir: str, database_url: str, storage_schema: str = "product-records-v2") -> Store:
     return Store(Path(data_dir), database_url)
 
 
 try:
-    store = open_store(setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data")), setting("DATABASE_URL"))
+    store = open_store(
+        setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data")),
+        setting("DATABASE_URL"),
+        "product-records-v2",
+    )
 except Exception as error:
     logging.getLogger(__name__).error("Storage initialization failed: %s", type(error).__name__)
     st.error("Storage could not be opened. Check the data folder or your private database settings. No documents were loaded.")
@@ -153,6 +167,290 @@ def show_document_preview(filename: str, payload: bytes):
             st.info("This text file could not be decoded for inline preview.")
     else:
         st.info("Inline preview is not available for this format. Use Download file to open it.")
+
+
+VENDOR_AI_SUGGESTIONS = [
+    "Find vendors for surgical gloves",
+    "Compare prices for wheelchairs",
+    "Show catalogue products from ABC Medical",
+    "Which vendors have GST documents?",
+    "Find the cheapest supplier for this product",
+    "Search company information online",
+]
+
+VENDOR_AI_SYNONYMS = {
+    "glove": ["glove", "gloves", "nitrile glove", "surgical glove", "examination glove", "hand protection"],
+    "wheelchair": ["wheelchair", "wheelchairs", "mobility chair", "transport chair"],
+    "bed": ["bed", "beds", "hospital bed", "medical bed"],
+    "catalogue": ["catalogue", "catalog", "price list", "rate list", "product list"],
+    "gst": ["gst", "goods and services tax", "gstin", "gst registration"],
+    "contact": ["contact", "phone", "mobile", "email", "website", "address"],
+    "price": ["price", "prices", "mrp", "dealer price", "rate", "cost"],
+    "company": ["company", "vendor", "supplier", "manufacturer", "dealer"],
+}
+
+
+def vendor_ai_normalize(value: str) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).lower()
+    text = text.replace("₹", "rs ").replace("€", "eur ").replace("$", "usd ")
+    text = re.sub(r"[^a-z0-9\s]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def vendor_ai_tokens(value: str) -> list[str]:
+    return [token for token in vendor_ai_normalize(value).split() if len(token) > 1]
+
+
+def vendor_ai_terms(question: str) -> set[str]:
+    terms = set(vendor_ai_tokens(question))
+    lower = vendor_ai_normalize(question)
+    for key, aliases in VENDOR_AI_SYNONYMS.items():
+        if key in lower or any(alias in lower for alias in aliases):
+            terms.update({key, *aliases})
+    return {t for t in terms if t}
+
+
+def vendor_ai_extract_text(filename: str, payload: bytes | None) -> str:
+    if payload is None:
+        return filename or ""
+    suffix = Path(filename).suffix.lower()
+    try:
+        if suffix == ".pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(BytesIO(payload), strict=False)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages[:3])
+            return text[:8000]
+        if suffix in {".csv", ".txt", ".log"}:
+            return payload.decode("utf-8", errors="replace")[:8000]
+        if suffix in {".xlsx", ".xls"}:
+            df = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
+            pages = []
+            for sheet in df.values():
+                pages.append(sheet.to_csv(index=False, header=False))
+            return "\n".join(pages)[:8000]
+        if suffix == ".docx":
+            import zipfile
+            with zipfile.ZipFile(BytesIO(payload)) as archive:
+                if "word/document.xml" in archive.namelist():
+                    xml = archive.read("word/document.xml")
+                    text = re.sub(r"<[^>]+>", " ", xml.decode("utf-8", errors="replace"))
+                    return re.sub(r"\s+", " ", text)[:8000]
+    except Exception:
+        pass
+    return filename or ""
+
+
+def vendor_ai_index(store) -> list[dict]:
+    index = []
+    vendors = store.vendors()
+    for _, vendor in vendors.iterrows():
+        company = str(vendor.get("company_name") or "").strip()
+        if not company:
+            continue
+        index.append({
+            "title": company,
+            "source": "Vendor master",
+            "priority": 0,
+            "score_hint": 30,
+            "text": f"{company} vendor supplier company manufacturer dealer contact details",
+        })
+    documents = store.documents()
+    for _, doc in documents.iterrows():
+        company = str(doc.get("company_name") or "").strip()
+        filename = str(doc.get("filename") or "").strip()
+        if not filename or not doc.get("available"):
+            continue
+        payload = store.read_bytes(int(doc["id"]))
+        body = vendor_ai_extract_text(filename, payload)
+        text = f"{company} {filename} {body} {' '.join(doc.get('types', []))}"
+        if "catalog" in filename.lower() or "price" in filename.lower() or "rate" in filename.lower():
+            priority = 3
+        elif any(token in filename.lower() for token in ("gst", "pan", "aadhar", "company")):
+            priority = 2
+        else:
+            priority = 1
+        index.append({
+            "title": company or filename,
+            "source": "Uploaded documents",
+            "priority": priority,
+            "score_hint": 12,
+            "text": text,
+            "vendor": company or "Not found in available vendor data",
+            "source_file": filename,
+        })
+    for _, record in store.product_records().iterrows():
+        company = str(record.get("company_name") or "").strip()
+        product = str(record.get("product_name") or "").strip()
+        if len(product) > 180:
+            continue
+        price = record.get("price")
+        price_text = f" price {price}" if pd.notna(price) else ""
+        index.append({
+            "title": f"{product} ({company})",
+            "source": "Persisted catalogue/price records",
+            "priority": 5 if record.get("record_type") == "price" else 4,
+            "score_hint": 20,
+            "text": (
+                f"{company} {product} {record.get('sku', '')} {record.get('brand', '')} "
+                f"{record.get('product_category', '')} {record.get('specification', '')} "
+                f"{record.get('pack_size', '')} {record.get('unit', '')} "
+                f"{record.get('description', '')}{price_text}"
+            ),
+            "vendor": company or "Not found in available vendor data",
+            "product": product,
+            "sku": str(record.get("sku") or ""),
+            "brand": str(record.get("brand") or ""),
+            "specification": str(record.get("specification") or ""),
+            "pack_size": str(record.get("pack_size") or ""),
+            "unit": str(record.get("unit") or ""),
+            "gst": record.get("gst"),
+            "source_file": str(record.get("source_file") or ""),
+            "source_sheet": str(record.get("source_sheet") or ""),
+            "source_page": str(record.get("source_page") or ""),
+            "price": price,
+        })
+    return index
+
+
+def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
+    terms = vendor_ai_terms(question)
+    question_text = vendor_ai_normalize(question)
+    ranked = []
+    for item in index:
+        haystack = vendor_ai_normalize(f"{item['title']} {item['text']}")
+        score = 0
+        for term in terms:
+            if term in haystack:
+                score += 8 if " " in term else 4
+        if question_text and question_text in haystack:
+            score += 24
+        if item["title"].lower() == question_text:
+            score += 30
+        if any(company in haystack for company in vendor_ai_tokens(question_text)[:3]):
+            score += 12
+        score += item["priority"] * 5 + item["score_hint"]
+        if score > 0:
+            ranked.append({**item, "score": score})
+    ranked.sort(key=lambda row: (-row["score"], row["priority"], row["title"].lower()))
+    unique = []
+    seen = set()
+    for item in ranked:
+        key = (
+            item.get("vendor", ""),
+            item.get("product", item.get("title", "")),
+            item.get("sku", ""),
+            item.get("source_file", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique[:6]
+
+
+def _display_value(value, fallback: str = "Not found") -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return fallback
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    return text[:180] if text else fallback
+
+
+def vendor_ai_format(question: str, results: list[dict]) -> str:
+    if not results:
+        return (
+            "There is no matching vendor, document, catalogue, or price record in this dashboard yet. "
+            "Upload vendor files first; then I can search the saved catalogue and price records. "
+            "Use the Web search shortcut below for public company information."
+        )
+    lines = ["### Internal vendor results"]
+    if any(item["source"] == "Persisted catalogue/price records" for item in results):
+        if any(token in vendor_ai_normalize(question) for token in ("compare", "cheapest", "price", "prices", "cost", "rate")):
+            lines = ["### Internal price comparison"]
+    for i, item in enumerate(results[:5], 1):
+        lines.extend([
+            f"**{i}. {_display_value(item.get('product') or item.get('title'))}**",
+            f"- **Vendor:** {_display_value(item.get('vendor'))}",
+        ])
+        if item["source"] == "Persisted catalogue/price records":
+            lines.extend([
+                f"- **Brand:** {_display_value(item.get('brand'))}",
+                f"- **Model / code:** {_display_value(item.get('sku'))}",
+                f"- **Specification:** {_display_value(item.get('specification'))}",
+                f"- **Pack / unit:** {_display_value(item.get('pack_size') or item.get('unit'))}",
+                f"- **Price:** {_display_value(item.get('price'))}",
+                f"- **GST:** {_display_value(item.get('gst'))}",
+                f"- **Source:** {_display_value(item.get('source_file'))}",
+                f"- **Sheet / page:** {_display_value(item.get('source_sheet'))} / {_display_value(item.get('source_page'))}",
+            ])
+        else:
+            lines.extend([
+                f"- **Source:** {_display_value(item.get('source_file'))}",
+                f"- **Details:** {_display_value(item.get('text'))}",
+            ])
+    lines.append(f"\n**Found:** {len(results[:5])} matching records  ")
+    lines.append(f"**Vendors:** {len({item.get('vendor') for item in results[:5] if item.get('vendor')})}  ")
+    lines.append(f"**Sources searched:** {len({item.get('source_file') for item in results[:5] if item.get('source_file')})}")
+    if "contact" in vendor_ai_normalize(question) or "details" in vendor_ai_normalize(question):
+        lines.append("Tip: review the vendor company records and any uploaded price lists or contact files for phone, email, address and website details.")
+    return "\n".join(lines)
+
+
+def vendor_ai_page():
+    st.subheader("Vendor AI Assistant")
+    st.caption("Search your vendor master data, uploaded documents, price lists and catalogues using natural-language questions.")
+    if st.session_state.pop("vendor_ai_clear_query", False):
+        st.session_state["vendor_ai_query"] = ""
+    if store.vendors().empty and store.documents().empty and store.product_records().empty:
+        st.info("This workspace has no saved vendor files yet. Upload a catalogue, price list, or vendor document before searching.")
+        if st.button("Go to Upload documents", key="vendor_ai_upload"):
+            go_to("Upload documents")
+            st.rerun()
+    suggestion_cols = st.columns(3)
+    for idx, suggestion in enumerate(VENDOR_AI_SUGGESTIONS):
+        with suggestion_cols[idx % 3]:
+            if st.button(suggestion, key=f"vendor_ai_suggestion_{idx}", use_container_width=True):
+                st.session_state["vendor_ai_query"] = suggestion
+                st.session_state["vendor_ai_run"] = suggestion
+
+    if "vendor_ai_run" in st.session_state:
+        candidate = st.session_state.pop("vendor_ai_run")
+        if candidate:
+            st.session_state.setdefault("vendor_ai_conversation", [])
+            st.session_state["vendor_ai_conversation"].append({"role": "user", "content": candidate})
+            results = vendor_ai_rank(candidate, vendor_ai_index(store))
+            st.session_state["vendor_ai_conversation"].append({"role": "assistant", "content": vendor_ai_format(candidate, results)})
+            st.session_state.pop("vendor_ai_query", None)
+
+    query = st.text_input(
+        "Search vendors, products, catalogues, prices, companies...",
+        placeholder="Ask anything about vendors, products, prices or companies...",
+        key="vendor_ai_query",
+    )
+    if st.button("Search dashboard", type="primary", use_container_width=True):
+        if query.strip():
+            st.session_state.setdefault("vendor_ai_conversation", [])
+            st.session_state["vendor_ai_conversation"].append({"role": "user", "content": query.strip()})
+            results = vendor_ai_rank(query.strip(), vendor_ai_index(store))
+            st.session_state["vendor_ai_conversation"].append({"role": "assistant", "content": vendor_ai_format(query.strip(), results)})
+            st.session_state["vendor_ai_clear_query"] = True
+            st.rerun()
+
+    if not st.session_state.get("vendor_ai_conversation"):
+        st.info("Ask a question to search the vendor database and uploaded documents. Results are weighted to keep vendor records first and uploaded catalogues next.")
+
+    for message in st.session_state.get("vendor_ai_conversation", []):
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if st.session_state.get("vendor_ai_conversation"):
+        last_question = ""
+        for message in reversed(st.session_state["vendor_ai_conversation"]):
+            if message["role"] == "user":
+                last_question = message["content"]
+                break
+        if last_question:
+            web_url = "https://www.google.com/search?q=" + quote_plus(last_question)
+            st.link_button("Search the web for this company or product", web_url, use_container_width=True)
 
 
 def reset_filters():
@@ -246,7 +544,20 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
-    page = st.radio("Navigate", ["Companies & documents", "Upload documents", "Uploaded ZIPs", "Review files", "Data & backups"], key="page", captions=["Yes / No checklist + company downloads", "Add a new vendor batch", "Original ZIP uploads saved here", "Only files that need correction", "Backup, restore or reset saved data"])
+    page = st.radio(
+        "Navigate",
+        ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"],
+        key="page",
+        captions=[
+            "Yes / No checklist + company downloads",
+            "Extracted products and prices",
+            "Add a new vendor batch",
+            "Original ZIP uploads saved here",
+            "Only files that need correction",
+            "Natural-language vendor search and company answers",
+            "Backup, restore or reset saved data",
+        ],
+    )
     st.divider()
     if store.cloud:
         st.success("Saved to cloud database")
@@ -471,6 +782,31 @@ elif page == "Companies & documents":
             fig.update_yaxes(autorange="reversed")
             st.plotly_chart(fig,width="stretch",config={"displayModeBar":False})
 
+elif page == "Catalogue & prices":
+    st.subheader("Catalogue and price records")
+    st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
+    search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
+    record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
+    records = store.product_records(search, "" if record_type == "All" else record_type)
+    st.metric("Extracted records", f"{len(records):,}")
+    if records.empty:
+        st.info("No extracted catalogue or price rows match this search yet.")
+    else:
+        product_display_columns = [
+            "company_name", "record_type", "product_name", "sku", "brand", "specification",
+            "pack_size", "unit", "price", "mrp", "gst", "currency", "source_file",
+            "source_sheet", "source_page", "extraction_confidence",
+        ]
+        # Keep legacy product rows visible while a hot-reloaded Store/schema catches up.
+        records = records.reindex(columns=list(dict.fromkeys([*records.columns, *product_display_columns])), fill_value="")
+        display = records[product_display_columns].rename(columns={
+            "company_name": "Vendor", "record_type": "Type", "product_name": "Product", "sku": "SKU",
+            "brand": "Brand", "specification": "Specification", "pack_size": "Pack", "unit": "Unit",
+            "price": "Price", "mrp": "MRP", "gst": "GST", "currency": "Currency", "source_file": "Source file",
+            "source_sheet": "Sheet", "source_page": "Page", "extraction_confidence": "Confidence",
+        })
+        show_table(display)
+
 elif page == "Uploaded ZIPs":
     st.subheader("Uploaded ZIP Files")
     st.write("Every original vendor ZIP saved through the dashboard appears here separately. Downloading returns the exact original ZIP bytes and original filename.")
@@ -533,6 +869,9 @@ elif page == "Review files":
         st.caption("Source path: "+doc.original_path)
     else:
         st.success("No files are waiting for review.")
+
+elif page == "🤖 Vendor AI Assistant":
+    vendor_ai_page()
 
 else:
     st.subheader("Data storage & backups")
