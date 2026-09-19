@@ -30,7 +30,21 @@ HEADER_ALIASES = {
 
 
 def _text(value) -> str:
+    if isinstance(value, pd.Series):
+        value = next((item for item in value.tolist() if _text(item)), "")
+    if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+        return ""
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _unique_headers(values) -> list[str]:
+    seen = {}
+    headers = []
+    for index, value in enumerate(values, 1):
+        base = _text(value) or f"column_{index}"
+        seen[base] = seen.get(base, 0) + 1
+        headers.append(base if seen[base] == 1 else f"{base}_{seen[base]}")
+    return headers
 
 
 def _kind(filename: str, text: str) -> str | None:
@@ -56,7 +70,7 @@ def _frame_records(frame: pd.DataFrame, filename: str, sheet: str, kind: str, pa
         return []
     header = _header_row(frame)
     frame = frame.iloc[header:].copy()
-    headers = [_text(value) or f"column_{i + 1}" for i, value in enumerate(frame.iloc[0].tolist())]
+    headers = _unique_headers(frame.iloc[0].tolist())
     frame = frame.iloc[1:].copy()
     frame.columns = headers
     columns = {column.casefold(): column for column in frame.columns}

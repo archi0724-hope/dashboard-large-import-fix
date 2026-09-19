@@ -116,3 +116,16 @@ def test_legacy_product_frame_can_be_displayed_with_new_columns():
     assert list(display[required].columns) == required
     assert display.loc[0, "product_name"] == "Surgical Gloves"
     assert display.loc[0, "brand"] == ""
+
+
+def test_search_index_signature_changes_when_products_are_saved(tmp_path):
+    store = Store(tmp_path)
+    before = store.search_index_signature()
+    upload = Upload("Alpha Medical price list.xlsx", workbook_bytes())
+    import_documents(store, [upload], forced_company="Alpha Medical", retain_archive=False)
+
+    after = store.search_index_signature()
+
+    assert before[2] == 0
+    assert after[2] == 2
+    assert before != after

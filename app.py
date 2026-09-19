@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import unicodedata
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 import time
@@ -104,7 +105,7 @@ if not authenticated():
 
 
 @st.cache_resource
-def open_store(data_dir: str, database_url: str, storage_schema: str = "product-records-v2") -> Store:
+def open_store(data_dir: str, database_url: str, storage_schema: str = "product-records-v3") -> Store:
     return Store(Path(data_dir), database_url)
 
 
@@ -112,7 +113,7 @@ try:
     store = open_store(
         setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data")),
         setting("DATABASE_URL"),
-        "product-records-v2",
+        "product-records-v3",
     )
 except Exception as error:
     logging.getLogger(__name__).error("Storage initialization failed: %s", type(error).__name__)
@@ -241,6 +242,22 @@ def vendor_ai_extract_text(filename: str, payload: bytes | None) -> str:
 
 
 def vendor_ai_index(store) -> list[dict]:
+    if hasattr(store, "search_index_signature"):
+        signature = store.search_index_signature()
+    else:
+        vendors = store.vendors()
+        documents = store.documents()
+        products = store.product_records()
+        signature = (
+            len(vendors),
+            len(documents),
+            len(products),
+            str(documents.uploaded_at.max()) if not documents.empty else "",
+            str(products.extracted_at.max()) if not products.empty and "extracted_at" in products else "",
+        )
+    cached = st.session_state.get("vendor_ai_index_cache")
+    if cached and cached.get("signature") == signature:
+        return cached["index"]
     index = []
     vendors = store.vendors()
     for _, vendor in vendors.iterrows():
@@ -253,6 +270,8 @@ def vendor_ai_index(store) -> list[dict]:
             "priority": 0,
             "score_hint": 30,
             "text": f"{company} vendor supplier company manufacturer dealer contact details",
+            "vendor": company,
+            "source_file": "Vendor master",
         })
     documents = store.documents()
     for _, doc in documents.iterrows():
@@ -309,7 +328,28 @@ def vendor_ai_index(store) -> list[dict]:
             "source_page": str(record.get("source_page") or ""),
             "price": price,
         })
+    for item in index:
+        item["_normalized_text"] = vendor_ai_normalize(f"{item['title']} {item['text']}")
+    st.session_state["vendor_ai_index_cache"] = {"signature": signature, "index": index}
     return index
+
+
+def vendor_ai_search(store, question: str) -> list[dict]:
+    """Return ranked results, reusing both the normalized index and exact query results."""
+    if hasattr(store, "search_index_signature"):
+        signature = store.search_index_signature()
+    else:
+        signature = None
+    cache = st.session_state.setdefault("vendor_ai_result_cache", {})
+    cache_key = (signature, vendor_ai_normalize(question))
+    if cache_key in cache:
+        return cache[cache_key]
+    results = vendor_ai_rank(question, vendor_ai_index(store))
+    cache[cache_key] = results
+    # Keep session memory bounded while retaining the newest searches.
+    if len(cache) > 32:
+        del cache[next(iter(cache))]
+    return results
 
 
 def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
@@ -317,7 +357,7 @@ def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
     question_text = vendor_ai_normalize(question)
     ranked = []
     for item in index:
-        haystack = vendor_ai_normalize(f"{item['title']} {item['text']}")
+        haystack = item.get("_normalized_text") or vendor_ai_normalize(f"{item['title']} {item['text']}")
         score = 0
         for term in terms:
             if term in haystack:
@@ -409,16 +449,15 @@ def vendor_ai_page():
     for idx, suggestion in enumerate(VENDOR_AI_SUGGESTIONS):
         with suggestion_cols[idx % 3]:
             if st.button(suggestion, key=f"vendor_ai_suggestion_{idx}", use_container_width=True):
-                st.session_state["vendor_ai_query"] = suggestion
                 st.session_state["vendor_ai_run"] = suggestion
 
     if "vendor_ai_run" in st.session_state:
         candidate = st.session_state.pop("vendor_ai_run")
         if candidate:
-            st.session_state.setdefault("vendor_ai_conversation", [])
-            st.session_state["vendor_ai_conversation"].append({"role": "user", "content": candidate})
-            results = vendor_ai_rank(candidate, vendor_ai_index(store))
-            st.session_state["vendor_ai_conversation"].append({"role": "assistant", "content": vendor_ai_format(candidate, results)})
+            with st.spinner("Searching vendor records and product prices..."):
+                results = vendor_ai_search(store, candidate)
+            response = vendor_ai_format(candidate, results)
+            _store_vendor_ai_search(candidate, response, results)
             st.session_state.pop("vendor_ai_query", None)
 
     query = st.text_input(
@@ -428,19 +467,27 @@ def vendor_ai_page():
     )
     if st.button("Search dashboard", type="primary", use_container_width=True):
         if query.strip():
-            st.session_state.setdefault("vendor_ai_conversation", [])
-            st.session_state["vendor_ai_conversation"].append({"role": "user", "content": query.strip()})
-            results = vendor_ai_rank(query.strip(), vendor_ai_index(store))
-            st.session_state["vendor_ai_conversation"].append({"role": "assistant", "content": vendor_ai_format(query.strip(), results)})
+            with st.spinner("Searching vendor records and product prices..."):
+                results = vendor_ai_search(store, query.strip())
+            response = vendor_ai_format(query.strip(), results)
+            _store_vendor_ai_search(query.strip(), response, results)
             st.session_state["vendor_ai_clear_query"] = True
             st.rerun()
 
     if not st.session_state.get("vendor_ai_conversation"):
         st.info("Ask a question to search the vendor database and uploaded documents. Results are weighted to keep vendor records first and uploaded catalogues next.")
 
-    for message in st.session_state.get("vendor_ai_conversation", []):
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    history = sorted(
+        st.session_state.get("vendor_ai_search_history", []),
+        key=lambda entry: entry["timestamp"],
+        reverse=True,
+    )
+    if history:
+        st.markdown("### Recent searches")
+        for entry in history:
+            with st.expander(f"{entry['timestamp']}  ·  {entry['query']}", expanded=entry is history[0]):
+                st.caption(f"{entry['result_count']} matching result(s) · {entry['vendor_count']} vendor(s)")
+                st.markdown(entry["response"])
 
     if st.session_state.get("vendor_ai_conversation"):
         last_question = ""
@@ -451,6 +498,24 @@ def vendor_ai_page():
         if last_question:
             web_url = "https://www.google.com/search?q=" + quote_plus(last_question)
             st.link_button("Search the web for this company or product", web_url, use_container_width=True)
+
+
+def _store_vendor_ai_search(query: str, response: str, results: list[dict]):
+    """Persist the assistant result for this Streamlit session, newest first on display."""
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    entry = {
+        "timestamp": timestamp,
+        "query": query,
+        "response": response,
+        "result_count": len(results),
+        "vendor_count": len({item.get("vendor") for item in results if item.get("vendor")}),
+    }
+    st.session_state.setdefault("vendor_ai_search_history", []).append(entry)
+    st.session_state.setdefault("vendor_ai_conversation", [])
+    st.session_state["vendor_ai_conversation"].extend([
+        {"role": "user", "content": query, "timestamp": timestamp},
+        {"role": "assistant", "content": response, "timestamp": timestamp},
+    ])
 
 
 def reset_filters():
