@@ -148,6 +148,12 @@ def first_page_pdf(payload: bytes) -> bytes | None:
         return None
 
 
+@st.cache_data(show_spinner=False, max_entries=64)
+def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | None:
+    """Cache document reads across Streamlit reruns until the file hash changes."""
+    return _store.read_bytes(document_id)
+
+
 def show_document_preview(filename: str, payload: bytes):
     """Render a fast preview while keeping the original file available for download."""
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -821,7 +827,7 @@ elif page == "Companies & documents":
                         filename_col.text(doc.filename)
                         detail = supporting_category(doc.filename) if not doc.types else doc.method
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
-                        payload = store.read_bytes(doc.id) if doc.available else None
+                        payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
                         if payload is not None:
                             preview_key = f"preview_{doc.id}"
                             if preview_col.button("👁", key=preview_key, help="Preview this document before downloading."):
@@ -928,7 +934,7 @@ elif page == "Review files":
                 refresh("Correction saved. The company checklist is updated.")
             except Exception as error:
                 st.error(str(error) if isinstance(error,ValueError) else "Correction could not be saved. Check storage access.")
-        data=store.read_bytes(selected_doc)
+        data=document_bytes(store, selected_doc, doc.file_hash)
         if data is not None:
             st.download_button("Download original for review",data,doc.filename,key="review_download")
         st.caption("Source path: "+doc.original_path)
