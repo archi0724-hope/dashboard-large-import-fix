@@ -136,3 +136,18 @@ def test_drive_import_ui(tmp_path):
     assert len(Store(tmp_path).documents()) == 1
     assert Store(tmp_path).upload_archives().empty
     assert any('original ZIP not copied' in item.value for item in at.info)
+
+
+def test_vendor_ai_search_stores_timestamped_history(tmp_path):
+    seed(tmp_path)
+    at = app(tmp_path).run()
+    at.radio(key="page").set_value("🤖 Vendor AI Assistant").run()
+    at.button(key="vendor_ai_suggestion_0").click().run()
+
+    assert not at.exception
+    history = at.session_state["vendor_ai_search_history"]
+    assert len(history) == 1
+    assert history[0]["query"] == "Find vendors for surgical gloves"
+    assert history[0]["timestamp"]
+    assert "vendor results" in history[0]["response"] or "no matching" in history[0]["response"]
+    assert len(at.session_state["vendor_ai_result_cache"]) == 1

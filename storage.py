@@ -127,7 +127,12 @@ class Store:
                 self._record_alias(db, row["company_key"], row["company_name"], "Canonical company master")
         if not self.cloud:
             self.migrate_original()
-        self.backfill_product_records()
+        # Avoid reparsing hundreds of documents on every Streamlit startup.
+        # New imports and explicit backup restores already extract their rows.
+        with self.connection() as db:
+            product_count = int(db.execute("SELECT COUNT(*) AS n FROM vdd_product_records").fetchone()["n"])
+        if product_count == 0:
+            self.backfill_product_records()
 
     def _ensure_canonical_ids(self, db: Query):
         if self.cloud:
@@ -580,6 +585,19 @@ class Store:
             rows = [dict(row) for row in db.execute(sql, params).fetchall()]
         return pd.DataFrame(rows, columns=PRODUCT_COLUMNS)
 
+    def search_index_signature(self) -> tuple:
+        """Small changing key used to invalidate the in-session assistant index."""
+        with self.connection() as db:
+            row = db.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM vdd_vendors) AS vendors,
+                    (SELECT COUNT(*) FROM vdd_documents) AS documents,
+                    (SELECT COUNT(*) FROM vdd_product_records) AS products,
+                    (SELECT COALESCE(MAX(uploaded_at), '') FROM vdd_documents) AS latest_document,
+                    (SELECT COALESCE(MAX(extracted_at), '') FROM vdd_product_records) AS latest_product
+            """).fetchone()
+        return tuple(row[key] for key in ("vendors", "documents", "products", "latest_document", "latest_product"))
+
     def backfill_product_records(self) -> int:
         """Extract records for documents imported before catalogue extraction existed."""
         from catalogue_extraction import extract_records
@@ -596,7 +614,10 @@ class Store:
                     payload = path.read_bytes()
             if not payload:
                 continue
-            kind, records = extract_records(row["filename"], payload)
+            try:
+                kind, records = extract_records(row["filename"], payload)
+            except (OSError, ValueError, TypeError):
+                continue
             if kind:
                 self.add_document_types(int(row["id"]), ["Price" if kind == "price" else "Catalogue"])
             extracted += self.save_product_records(int(row["id"]), records)
