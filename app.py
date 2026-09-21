@@ -8,9 +8,11 @@ import json
 import logging
 import mimetypes
 import os
+import zipfile
 from io import BytesIO
 from pathlib import Path
 import time
+from xml.etree import ElementTree
 
 import pandas as pd
 import streamlit as st
@@ -19,6 +21,7 @@ from exports import csv_bytes, workbook_bytes
 from import_service import import_documents
 from drive_import import DiskUpload, download_drive_zip
 from storage import Store
+from catalog_ui import render_catalog_setup, render_sales_assistant
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
                          export_filename, filter_checklist, read_vendor_file, supporting_category)
 
@@ -63,6 +66,13 @@ def setting(name: str, default: str = "") -> str:
 
 def authenticated() -> bool:
     password = setting("APP_PASSWORD")
+    sales_password = setting("SALES_PASSWORD")
+    if sales_password and password and hmac.compare_digest(sales_password.encode(), password.encode()):
+        st.error("APP_PASSWORD and SALES_PASSWORD must be different to keep sales access separate.")
+        return False
+    if sales_password and not password:
+        st.error("Set APP_PASSWORD for administrators before enabling SALES_PASSWORD.")
+        return False
     if not password:
         if (APP_DIR / "CLOUD_DEPLOYMENT").exists():
             st.title("Vendor Document Dashboard")
@@ -82,6 +92,15 @@ def authenticated() -> bool:
             st.error("Please retry after the sign-in cooldown.")
         elif hmac.compare_digest(typed.encode(), password.encode()):
             st.session_state["authenticated"] = True
+            st.session_state["access_role"] = "admin"
+            st.session_state.pop("sales_messages", None)
+            st.session_state.pop("page", None)
+            st.rerun()
+        elif sales_password and hmac.compare_digest(typed.encode(), sales_password.encode()):
+            st.session_state["authenticated"] = True
+            st.session_state["access_role"] = "sales"
+            st.session_state.pop("sales_messages", None)
+            st.session_state.pop("page", None)
             st.rerun()
         else:
             st.session_state["retry_after"] = time.time() + 3
@@ -94,7 +113,8 @@ if not authenticated():
 
 
 @st.cache_resource
-def open_store(data_dir: str, database_url: str) -> Store:
+def open_store(data_dir: str, database_url: str, schema_version: int = 3) -> Store:
+    """The schema version refreshes cached stores when persistence tables change."""
     return Store(Path(data_dir), database_url)
 
 
@@ -133,6 +153,29 @@ def first_page_pdf(payload: bytes) -> bytes | None:
         return None
 
 
+@st.cache_data(show_spinner=False, max_entries=64)
+def spreadsheet_preview(payload: bytes) -> dict[str, pd.DataFrame]:
+    sheets = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
+    return {str(name): frame.fillna("").iloc[:100, :30] for name, frame in sheets.items()}
+
+
+def docx_preview(payload: bytes) -> tuple[str, list[pd.DataFrame]]:
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+    paragraphs = [" ".join(node.itertext()).strip() for node in root.findall(".//w:p", namespace)]
+    tables = []
+    for table in root.findall(".//w:tbl", namespace):
+        rows = [[" ".join(cell.itertext()).split() for cell in row.findall("./w:tc", namespace)]
+                for row in table.findall("./w:tr", namespace)]
+        rows = [[" ".join(cell) for cell in row] for row in rows if row]
+        if rows:
+            width = max(map(len, rows))
+            tables.append(pd.DataFrame([row + [""] * (width - len(row)) for row in rows[1:]],
+                                       columns=rows[0] + [""] * (width - len(rows[0]))).iloc[:100, :30])
+    return "\n\n".join(item for item in paragraphs if item), tables[:30]
+
+
 def show_document_preview(filename: str, payload: bytes):
     """Render a fast preview while keeping the original file available for download."""
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -142,15 +185,61 @@ def show_document_preview(filename: str, payload: bytes):
         if preview:
             st.caption("Fast preview: first page. Download the original file for the complete document.")
             st.pdf(preview)
+        try:
+            from pypdf import PdfReader
+            text = "\n\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(payload), strict=False).pages[:5]).strip()
+        except Exception:
+            text = ""
+        if text:
+            st.caption("Extracted PDF text")
+            st.code(text[:12000], language="text")
         else:
-            st.info("This PDF could not be reduced to a first-page preview. Download the original file to view it.")
+            if not preview:
+                st.info("This PDF has no readable text. Download the original file to view it.")
     elif mime.startswith("image/"):
         st.image(payload, caption=filename, width="stretch")
+        try:
+            from PIL import Image
+            import pytesseract
+            text = pytesseract.image_to_string(Image.open(BytesIO(payload))).strip()
+        except (ImportError, OSError, ValueError):
+            text = ""
+        if text:
+            st.caption("Extracted image text")
+            st.code(text[:12000], language="text")
     elif mime.startswith("text/") or suffix in {".csv", ".txt", ".log"}:
         try:
-            st.code(payload.decode("utf-8", errors="replace"), language="text")
+            if suffix == ".csv":
+                show_table(pd.read_csv(BytesIO(payload), dtype=str).fillna("").iloc[:100, :30])
+            else:
+                st.code(payload.decode("utf-8", errors="replace")[:12000], language="text")
         except Exception:
             st.info("This text file could not be decoded for inline preview.")
+    elif suffix in {".xlsx", ".xls"}:
+        try:
+            sheets = spreadsheet_preview(payload)
+        except (ImportError, OSError, ValueError, zipfile.BadZipFile):
+            st.info("This spreadsheet could not be read for inline preview. Use Download file to open it.")
+        else:
+            tabs = st.tabs(list(sheets))
+            for tab, (name, frame) in zip(tabs, sheets.items()):
+                with tab:
+                    st.caption(f"Showing up to 100 rows and 30 columns from {name}.")
+                    show_table(frame) if not frame.empty else st.caption("This sheet is empty.")
+    elif suffix == ".docx":
+        try:
+            text, tables = docx_preview(payload)
+        except (KeyError, OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
+            st.info("This Word document could not be read for inline preview. Use Download file to open it.")
+        else:
+            if text:
+                st.caption("Extracted Word document text")
+                st.code(text[:12000], language="text")
+            for index, frame in enumerate(tables, 1):
+                st.caption(f"Table {index}")
+                show_table(frame)
+            if not text and not tables:
+                st.info("No readable text or tables were found. Use Download file to open it.")
     else:
         st.info("Inline preview is not available for this format. Use Download file to open it.")
 
@@ -200,6 +289,8 @@ def refresh(message: str):
 
 def execute_delete_all_data():
     """Run the destructive reset as a widget callback, before the next Streamlit rerun."""
+    if st.session_state.get("access_role") == "sales":
+        return
     acknowledged = bool(st.session_state.get("reset_acknowledged"))
     confirmation = str(st.session_state.get("reset_confirmation", "")).strip()
     if not acknowledged or confirmation != "RESET HISTORY":
@@ -215,6 +306,7 @@ def execute_delete_all_data():
         st.session_state["reset_completed"] = True
         st.session_state["notice"] = "Delete All Data complete. Companies, documents, history, backups and uploaded ZIP files are empty. All four counters are 0."
         st.session_state.pop("reset_error", None)
+        st.session_state.pop("sales_messages", None)
         for key in list(st.session_state):
             if key in {"last_upload", "expected_count", "company_search", "company_selection", "status_filter", "uploaded_zip_selection"} or str(key).startswith(("export_", "zip_", "backup_download")):
                 st.session_state.pop(key, None)
@@ -234,6 +326,21 @@ if st.session_state.pop("reset_completed", False):
 if pending_page := st.session_state.pop("pending_page", None):
     st.session_state["page"] = pending_page
 
+# Sales authentication is enforced before rendering document administration.
+sales_only = st.session_state.get("access_role") == "sales"
+sales_view = st.query_params.get("view") == "sales"
+if sales_only or sales_view:
+    with st.sidebar:
+        st.subheader("Sales workspace")
+        st.caption("Vendor catalogs and price comparisons")
+        if not sales_only:
+            st.link_button("Back to administration", "?view=admin")
+        if setting("APP_PASSWORD") and st.button("Sign out", key="sales_sign_out"):
+            st.session_state.clear()
+            st.rerun()
+    render_sales_assistant(store, store.documents(), is_admin=not sales_only)
+    st.stop()
+
 vendors = store.vendors()
 documents = store.documents()
 upload_archives = store.upload_archives()
@@ -246,7 +353,7 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
-    page = st.radio("Navigate", ["Companies & documents", "Upload documents", "Uploaded ZIPs", "Review files", "Data & backups"], key="page", captions=["Yes / No checklist + company downloads", "Add a new vendor batch", "Original ZIP uploads saved here", "Only files that need correction", "Backup, restore or reset saved data"])
+    page = st.radio("Navigate", ["Companies & documents", "Sales assistant", "Catalog setup", "Upload documents", "Uploaded ZIPs", "Review files", "Data & backups"], key="page", captions=["Yes / No checklist + company downloads", "Find products and compare vendor prices", "Prepare catalogs and sales access", "Add a new vendor batch", "Original ZIP uploads saved here", "Only files that need correction", "Backup, restore or reset saved data"])
     st.divider()
     if store.cloud:
         st.success("Saved to cloud database")
@@ -259,6 +366,13 @@ with st.sidebar:
     st.caption("Vendor workspace · local records protected")
     if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
         st.session_state.clear(); st.rerun()
+
+if page == "Sales assistant":
+    render_sales_assistant(store, documents, is_admin=True)
+    st.stop()
+if page == "Catalog setup":
+    render_catalog_setup(store, documents)
+    st.stop()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
@@ -440,26 +554,27 @@ elif page == "Companies & documents":
                 with st.expander(label):
                     if rows.empty:
                         st.caption("No file available in this category.")
-                    for doc in rows.itertuples(index=False):
+                    for row_number, doc in enumerate(rows.itertuples(index=False)):
                         filename_col, preview_col = st.columns([8.5, 1.5], vertical_alignment="center")
                         filename_col.text(doc.filename)
                         detail = supporting_category(doc.filename) if not doc.types else doc.method
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         payload = store.read_bytes(doc.id) if doc.available else None
                         if payload is not None:
-                            preview_key = f"preview_{doc.id}"
+                            widget_suffix = f"{category}_{doc.id}_{row_number}"
+                            preview_key = f"preview_{widget_suffix}"
                             if preview_col.button("👁", key=preview_key, help="Preview this document before downloading."):
                                 st.session_state["preview_document_id"] = doc.id
                             if st.session_state.get("preview_document_id") == doc.id:
                                 with st.container(border=True):
                                     preview_title, close_preview = st.columns([5, 1])
                                     preview_title.markdown(f"**Preview: {doc.filename}**")
-                                    if close_preview.button("Close", key=f"close_{doc.id}"):
+                                    if close_preview.button("Close", key=f"close_{widget_suffix}"):
                                         st.session_state.pop("preview_document_id", None)
                                         st.rerun()
                                     show_document_preview(doc.filename, payload)
                             st.download_button("Download file", payload, doc.filename,
-                                mimetypes.guess_type(doc.filename)[0] or "application/octet-stream", key=f"file_{category}_{doc.id}")
+                                mimetypes.guess_type(doc.filename)[0] or "application/octet-stream", key=f"file_{widget_suffix}")
                         else:
                             st.warning("Original bytes unavailable. Re-upload this file; it does not count as Yes.")
         with st.expander("Document coverage across these companies"):

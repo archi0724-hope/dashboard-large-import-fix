@@ -97,6 +97,10 @@ class Store:
                 method TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', reviewed INTEGER NOT NULL DEFAULT 0,
                 size_bytes BIGINT NOT NULL DEFAULT 0, payload {blob}, UNIQUE(company_key, file_hash))""")
             db.execute("CREATE INDEX IF NOT EXISTS vdd_docs_company ON vdd_documents(company_key)")
+            # A rebuildable search index; source documents remain the backup authority.
+            db.execute("""CREATE TABLE IF NOT EXISTS vdd_catalog_index (
+                document_id BIGINT PRIMARY KEY, file_hash TEXT NOT NULL, version INTEGER NOT NULL,
+                entries_json TEXT NOT NULL, notes_json TEXT NOT NULL, indexed_at TEXT NOT NULL)""")
             db.execute(f"""CREATE TABLE IF NOT EXISTS vdd_upload_archives (
                 id TEXT PRIMARY KEY, file_hash TEXT UNIQUE NOT NULL, filename TEXT NOT NULL,
                 first_uploaded_at TEXT NOT NULL, last_uploaded_at TEXT NOT NULL, upload_count INTEGER NOT NULL DEFAULT 1,
@@ -492,6 +496,21 @@ class Store:
         path = self.safe_path(row["stored_path"])
         return path.read_bytes() if path and path.is_file() else None
 
+    def catalog_index(self) -> dict:
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM vdd_catalog_index").fetchall()
+        return {int(row["document_id"]): dict(row) for row in rows}
+
+    def save_catalog_index(self, document_id: int, file_hash: str, version: int, entries: list, notes: list):
+        with self.connection() as db:
+            # A concurrent reset must not bring deleted catalog data back into the index.
+            if not db.execute("SELECT id FROM vdd_documents WHERE id=? AND file_hash=?", (document_id, file_hash)).fetchone():
+                return
+            db.execute("""INSERT INTO vdd_catalog_index VALUES(?,?,?,?,?,?)
+                ON CONFLICT(document_id) DO UPDATE SET file_hash=excluded.file_hash, version=excluded.version,
+                entries_json=excluded.entries_json, notes_json=excluded.notes_json, indexed_at=excluded.indexed_at""",
+                (document_id, file_hash, version, json.dumps(entries), json.dumps(notes), now()))
+
     def correct_document(self, document_id: int, company: str, types: list[str], note: str = ""):
         from vendor_core import DOCUMENT_TYPES
         if any(t not in DOCUMENT_TYPES for t in types):
@@ -601,6 +620,7 @@ class Store:
             counts = {
                 "companies": int(db.execute("SELECT COUNT(*) AS n FROM vdd_vendors").fetchone()["n"]),
                 "documents": int(db.execute("SELECT COUNT(*) AS n FROM vdd_documents").fetchone()["n"]),
+                "indexed_catalogs": int(db.execute("SELECT COUNT(*) AS n FROM vdd_catalog_index").fetchone()["n"]),
                 "history": int(db.execute("SELECT COUNT(*) AS n FROM vdd_audit").fetchone()["n"]),
                 "backups": int(db.execute("SELECT COUNT(*) AS n FROM vdd_backups").fetchone()["n"]),
                 "uploaded_zips": int(db.execute("SELECT COUNT(*) AS n FROM vdd_upload_archives").fetchone()["n"]),
@@ -634,11 +654,12 @@ class Store:
         # First clear all database-backed user data in one transaction.
         with self.connection() as db:
             if self.cloud:
-                db.execute("LOCK TABLE vdd_documents, vdd_vendors, vdd_audit, vdd_backups, vdd_upload_archives IN ACCESS EXCLUSIVE MODE")
+                db.execute("LOCK TABLE vdd_documents, vdd_catalog_index, vdd_vendors, vdd_audit, vdd_backups, vdd_upload_archives IN ACCESS EXCLUSIVE MODE")
             else:
                 db.execute("BEGIN IMMEDIATE")
 
             db.execute("DELETE FROM vdd_documents")
+            db.execute("DELETE FROM vdd_catalog_index")
             db.execute("DELETE FROM vdd_vendors")
             db.execute("DELETE FROM vdd_company_aliases")
             db.execute("DELETE FROM vdd_review_queue")
