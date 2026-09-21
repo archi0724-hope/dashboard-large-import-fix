@@ -49,6 +49,16 @@ def test_default_search_reset_totals_and_dropdown(tmp_path):
     assert not at.exception and at.metric[0].value=='2'
 
 
+def test_multi_category_document_preview_keys_are_unique(tmp_path):
+    store = seed(tmp_path)
+    document_id = int(store.documents().iloc[0].id)
+    store.add_document_types(document_id, ["PAN Card"])
+
+    at = app(tmp_path).run()
+
+    assert not at.exception
+
+
 def test_password_gate_and_empty_state(tmp_path):
     at=app(tmp_path)
     at.secrets['APP_PASSWORD']='unit-test-only-not-a-real-secret'

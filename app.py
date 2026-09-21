@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import unicodedata
+import zipfile
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -154,6 +155,16 @@ def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | N
     return _store.read_bytes(document_id)
 
 
+@st.cache_data(show_spinner=False, max_entries=64)
+def spreadsheet_preview(payload: bytes) -> dict[str, pd.DataFrame]:
+    """Read a bounded set of rows and columns from each workbook sheet."""
+    sheets = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
+    return {
+        str(sheet_name): frame.fillna("").iloc[:100, :30]
+        for sheet_name, frame in sheets.items()
+    }
+
+
 def show_document_preview(filename: str, payload: bytes):
     """Render a fast preview while keeping the original file available for download."""
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -172,6 +183,23 @@ def show_document_preview(filename: str, payload: bytes):
             st.code(payload.decode("utf-8", errors="replace"), language="text")
         except Exception:
             st.info("This text file could not be decoded for inline preview.")
+    elif suffix in {".xlsx", ".xls"}:
+        try:
+            sheets = spreadsheet_preview(payload)
+        except (ImportError, OSError, ValueError, zipfile.BadZipFile):
+            st.info("This spreadsheet could not be read for inline preview. Use Download file to open it.")
+        else:
+            if not sheets:
+                st.info("This spreadsheet has no readable sheets. Use Download file to open it.")
+            else:
+                st.caption("Showing up to 100 rows and 30 columns per sheet. Download the original for the complete workbook.")
+                tabs = st.tabs(list(sheets))
+                for tab, (sheet_name, frame) in zip(tabs, sheets.items()):
+                    with tab:
+                        if frame.empty:
+                            st.caption(f"{sheet_name} is empty.")
+                        else:
+                            show_table(frame)
     else:
         st.info("Inline preview is not available for this format. Use Download file to open it.")
 
@@ -829,14 +857,14 @@ elif page == "Companies & documents":
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
                         if payload is not None:
-                            preview_key = f"preview_{doc.id}"
+                            preview_key = f"preview_{category}_{doc.id}"
                             if preview_col.button("👁", key=preview_key, help="Preview this document before downloading."):
                                 st.session_state["preview_document_id"] = doc.id
                             if st.session_state.get("preview_document_id") == doc.id:
                                 with st.container(border=True):
                                     preview_title, close_preview = st.columns([5, 1])
                                     preview_title.markdown(f"**Preview: {doc.filename}**")
-                                    if close_preview.button("Close", key=f"close_{doc.id}"):
+                                    if close_preview.button("Close", key=f"close_{category}_{doc.id}"):
                                         st.session_state.pop("preview_document_id", None)
                                         st.rerun()
                                     show_document_preview(doc.filename, payload)
