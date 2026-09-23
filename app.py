@@ -599,9 +599,8 @@ if st.session_state.pop("reset_completed", False):
     st.session_state.pop("reset_acknowledged", None)
 
 
-# Apply requested navigation before the sidebar radio is instantiated.
-if pending_page := st.session_state.pop("pending_page", None):
-    st.session_state["page"] = pending_page
+# Apply requested navigation before the sidebar widgets are instantiated.
+pending_page = st.session_state.pop("pending_page", None)
 
 vendors = store.vendors()
 documents = store.documents()
@@ -615,11 +614,31 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
-    page = st.radio(
-        "Navigate",
-        ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"],
-        key="page",
-        captions=[
+    workspace = st.segmented_control(
+        "Workspace",
+        ["Vendor dashboard", "Organizer dashboard"],
+        default="Vendor dashboard",
+        key="workspace_mode",
+        help="Both views use the same saved data. Organizer dashboard focuses on company folders and product search.",
+    )
+    if workspace == "Organizer dashboard":
+        navigation = ["Organize companies", "Find products", "Import ZIP files", "Export & backups"]
+        page_map = {
+            "Organize companies": "Companies & documents",
+            "Find products": "Catalogue & prices",
+            "Import ZIP files": "Upload documents",
+            "Export & backups": "Data & backups",
+        }
+        captions = [
+            "Company and name-wise document folders",
+            "Search one product instead of opening a full catalogue",
+            "Import a ZIP and extract catalogues and prices",
+            "Download Excel files and one-shot ZIP exports",
+        ]
+    else:
+        navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
+        page_map = {item: item for item in navigation}
+        captions = [
             "Yes / No checklist + company downloads",
             "Extracted products and prices",
             "Add a new vendor batch",
@@ -627,8 +646,18 @@ with st.sidebar:
             "Only files that need correction",
             "Natural-language vendor search and company answers",
             "Backup, restore or reset saved data",
-        ],
+        ]
+    if pending_page:
+        matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
+        if matching_label:
+            st.session_state["page"] = matching_label
+    page_label = st.radio(
+        "Navigate",
+        navigation,
+        key="page",
+        captions=captions,
     )
+    page = page_map[page_label]
     st.divider()
     if store.cloud:
         st.success("Saved to cloud database")
@@ -643,7 +672,10 @@ with st.sidebar:
         st.session_state.clear(); st.rerun()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
-header.title("Vendor Document Dashboard")
+header.title("Organizer Dashboard" if workspace == "Organizer dashboard" else "Vendor Document Dashboard")
+if workspace == "Organizer dashboard":
+    st.html('<script>window.top.location.assign("http://127.0.0.1:8000");</script>', unsafe_allow_javascript=True)
+    st.stop()
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
