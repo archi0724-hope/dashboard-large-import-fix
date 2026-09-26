@@ -178,3 +178,64 @@ def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company
     finish(readme)
     output = BytesIO(); book.save(output)
     return output.getvalue()
+
+
+def catalogue_price_workbook_bytes(records: pd.DataFrame) -> bytes:
+    """Create a read-only, company-wise workbook from extracted product records.
+
+    This deliberately only reads the extracted rows.  It does not move, rename,
+    or delete the original Catalogue/Price documents kept with the checklist.
+    """
+    if OPENPYXL_IMPORT_ERROR is not None:
+        raise RuntimeError("Excel export requires the openpyxl package. Add openpyxl to requirements.txt and redeploy the app.") from OPENPYXL_IMPORT_ERROR
+
+    headers = [
+        "Company Name", "Record Type", "Product Name", "SKU", "Brand", "Specification",
+        "Pack Size", "Unit", "Price", "MRP", "GST", "Currency", "Source File",
+        "Source Sheet", "Source Page", "Extraction Confidence",
+    ]
+    source_columns = [
+        "company_name", "record_type", "product_name", "sku", "brand", "specification",
+        "pack_size", "unit", "price", "mrp", "gst", "currency", "source_file",
+        "source_sheet", "source_page", "extraction_confidence",
+    ]
+    frame = records.reindex(columns=source_columns, fill_value="").copy()
+    frame["company_name"] = frame["company_name"].fillna("Unassigned").replace("", "Unassigned")
+    frame = frame.sort_values(["company_name", "record_type", "product_name"], kind="stable", na_position="last")
+
+    book = Workbook()
+    book.calculation = CalcProperties(calcId=191029, fullCalcOnLoad=True)
+    names_used: set[str] = set()
+
+    def sheet_name(company: str) -> str:
+        base = re.sub(r"[\\/*?:\[\]]", " ", company).strip(" '")[:31] or "Company"
+        name, suffix = base, 2
+        while name.casefold() in names_used:
+            tail = f" ({suffix})"
+            name = base[:31-len(tail)] + tail
+            suffix += 1
+        names_used.add(name.casefold())
+        return name
+
+    def add_rows(sheet, company: str, subset: pd.DataFrame) -> None:
+        style_sheet(
+            sheet, headers, [34, 15, 38, 18, 22, 42, 18, 14, 15, 15, 12, 13, 42, 20, 13, 22],
+            company, "Extracted catalogue and price rows. Original source files remain stored in the checklist and backups.",
+        )
+        for row_number, record in enumerate(subset.itertuples(index=False, name=None), 5):
+            for column, value in enumerate(record, 1):
+                if pd.isna(value):
+                    value = ""
+                write_text(sheet.cell(row_number, column), value)
+        finish(sheet)
+
+    all_rows = book.active
+    all_rows.title = "All catalogue & prices"
+    names_used.add(all_rows.title.casefold())
+    add_rows(all_rows, "ALL COMPANIES — CATALOGUE & PRICES", frame)
+    for company, subset in frame.groupby("company_name", sort=True, dropna=False):
+        add_rows(book.create_sheet(sheet_name(str(company))), f"{company} — CATALOGUE & PRICES", subset)
+
+    output = BytesIO()
+    book.save(output)
+    return output.getvalue()

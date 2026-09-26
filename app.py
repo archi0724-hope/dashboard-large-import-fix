@@ -20,7 +20,7 @@ from urllib.parse import quote_plus
 import pandas as pd
 import streamlit as st
 
-from exports import csv_bytes, workbook_bytes
+from exports import catalogue_price_workbook_bytes, csv_bytes, workbook_bytes
 from import_service import import_documents
 from drive_import import DiskUpload, download_drive_zip
 import storage as storage_module
@@ -890,6 +890,18 @@ elif page == "Catalogue & prices":
     st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
     search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
     record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
+    export_records = store.product_records()
+    if not export_records.empty:
+        st.download_button(
+            "Export company-wise catalogue & prices — Excel",
+            catalogue_price_workbook_bytes(export_records),
+            "Company_Wise_Catalogue_and_Prices.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Creates one Excel tab per company. Original files stay stored in their checklist folders and backups.",
+            icon=":material/download:",
+            key="company_wise_catalogue_price_export",
+        )
+        st.caption("This is a separate export. It does not change the checklist, stored documents, or backups.")
     records = store.product_records(search, "" if record_type == "All" else record_type)
     st.metric("Extracted records", f"{len(records):,}")
     if records.empty:
