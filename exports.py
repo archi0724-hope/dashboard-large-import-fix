@@ -20,6 +20,25 @@ except ModuleNotFoundError as error:
 
 from vendor_core import DOCUMENT_TYPES, supporting_category
 
+CATALOGUE_PRICE_COLUMN_OPTIONS = {
+    "company_name": ("Company Name", 34),
+    "record_type": ("Record Type", 15),
+    "product_name": ("Product Name", 38),
+    "sku": ("SKU", 18),
+    "brand": ("Brand", 22),
+    "specification": ("Specification", 42),
+    "pack_size": ("Pack Size", 18),
+    "unit": ("Unit", 14),
+    "price": ("Price", 15),
+    "mrp": ("MRP", 15),
+    "gst": ("GST", 12),
+    "currency": ("Currency", 13),
+    "source_file": ("Source File", 42),
+    "source_sheet": ("Source Sheet", 20),
+    "source_page": ("Source Page", 13),
+    "extraction_confidence": ("Extraction Confidence", 22),
+}
+
 
 def csv_bytes(frame: pd.DataFrame) -> bytes:
     def safe(value):
@@ -180,7 +199,7 @@ def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company
     return output.getvalue()
 
 
-def catalogue_price_workbook_bytes(records: pd.DataFrame) -> bytes:
+def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | None = None) -> bytes:
     """Create a read-only, company-wise workbook from extracted product records.
 
     This deliberately only reads the extracted rows.  It does not move, rename,
@@ -189,19 +208,16 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame) -> bytes:
     if OPENPYXL_IMPORT_ERROR is not None:
         raise RuntimeError("Excel export requires the openpyxl package. Add openpyxl to requirements.txt and redeploy the app.") from OPENPYXL_IMPORT_ERROR
 
-    headers = [
-        "Company Name", "Record Type", "Product Name", "SKU", "Brand", "Specification",
-        "Pack Size", "Unit", "Price", "MRP", "GST", "Currency", "Source File",
-        "Source Sheet", "Source Page", "Extraction Confidence",
-    ]
-    source_columns = [
-        "company_name", "record_type", "product_name", "sku", "brand", "specification",
-        "pack_size", "unit", "price", "mrp", "gst", "currency", "source_file",
-        "source_sheet", "source_page", "extraction_confidence",
-    ]
-    frame = records.reindex(columns=source_columns, fill_value="").copy()
+    source_columns = columns or list(CATALOGUE_PRICE_COLUMN_OPTIONS)
+    source_columns = [column for column in source_columns if column in CATALOGUE_PRICE_COLUMN_OPTIONS]
+    if not source_columns:
+        raise ValueError("Choose at least one Excel column.")
+    headers = [CATALOGUE_PRICE_COLUMN_OPTIONS[column][0] for column in source_columns]
+    widths = [CATALOGUE_PRICE_COLUMN_OPTIONS[column][1] for column in source_columns]
+    frame = records.reindex(columns=list(dict.fromkeys(["company_name", *source_columns])), fill_value="").copy()
     frame["company_name"] = frame["company_name"].fillna("Unassigned").replace("", "Unassigned")
-    frame = frame.sort_values(["company_name", "record_type", "product_name"], kind="stable", na_position="last")
+    sort_columns = [column for column in ("company_name", "record_type", "product_name") if column in frame]
+    frame = frame.sort_values(sort_columns, kind="stable", na_position="last")
 
     book = Workbook()
     book.calculation = CalcProperties(calcId=191029, fullCalcOnLoad=True)
@@ -219,10 +235,10 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame) -> bytes:
 
     def add_rows(sheet, company: str, subset: pd.DataFrame) -> None:
         style_sheet(
-            sheet, headers, [34, 15, 38, 18, 22, 42, 18, 14, 15, 15, 12, 13, 42, 20, 13, 22],
+            sheet, headers, widths,
             company, "Extracted catalogue and price rows. Original source files remain stored in the checklist and backups.",
         )
-        for row_number, record in enumerate(subset.itertuples(index=False, name=None), 5):
+        for row_number, record in enumerate(subset[source_columns].itertuples(index=False, name=None), 5):
             for column, value in enumerate(record, 1):
                 if pd.isna(value):
                     value = ""

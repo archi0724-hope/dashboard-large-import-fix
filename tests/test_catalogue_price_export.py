@@ -20,3 +20,12 @@ def test_catalogue_price_export_creates_company_tabs_without_mutating_records():
     assert all_rows["A5"].value == "Alpha Medical"
     assert all_rows["C6"].value == "Mask"
     assert list(records.columns) == ["company_name", "record_type", "product_name", "price", "source_file"]
+
+
+def test_catalogue_price_export_uses_the_selected_columns():
+    records = pd.DataFrame([{"company_name": "Alpha Medical", "product_name": "Gloves", "price": 125}])
+
+    payload = catalogue_price_workbook_bytes(records, ["company_name", "product_name", "price"])
+    sheet = load_workbook(BytesIO(payload), data_only=True)["All catalogue & prices"]
+
+    assert [sheet.cell(4, column).value for column in range(1, 4)] == ["Company Name", "Product Name", "Price"]

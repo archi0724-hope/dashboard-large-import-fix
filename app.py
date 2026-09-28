@@ -20,7 +20,7 @@ from urllib.parse import quote_plus
 import pandas as pd
 import streamlit as st
 
-from exports import catalogue_price_workbook_bytes, csv_bytes, workbook_bytes
+import exports as exports_module
 from import_service import import_documents
 from drive_import import DiskUpload, download_drive_zip
 import storage as storage_module
@@ -28,7 +28,14 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
                          export_filename, filter_checklist, read_vendor_file, supporting_category)
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
-# Store class once so catalogue search is available without a manual restart.
+# export or Store class once so the app starts without a manual restart.
+if not hasattr(exports_module, "CATALOGUE_PRICE_COLUMN_OPTIONS"):
+    exports_module = importlib.reload(exports_module)
+CATALOGUE_PRICE_COLUMN_OPTIONS = exports_module.CATALOGUE_PRICE_COLUMN_OPTIONS
+catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
+csv_bytes = exports_module.csv_bytes
+workbook_bytes = exports_module.workbook_bytes
+
 if not hasattr(storage_module.Store, "product_records"):
     storage_module = importlib.reload(storage_module)
 Store = storage_module.Store
@@ -888,20 +895,37 @@ elif page == "Companies & documents":
 elif page == "Catalogue & prices":
     st.subheader("Catalogue and price records")
     st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
-    search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
-    record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
-    export_records = store.product_records()
-    if not export_records.empty:
+    export_columns = st.multiselect(
+        "Excel columns",
+        list(CATALOGUE_PRICE_COLUMN_OPTIONS),
+        default=list(CATALOGUE_PRICE_COLUMN_OPTIONS),
+        format_func=lambda column: CATALOGUE_PRICE_COLUMN_OPTIONS[column][0],
+        key="catalogue_price_export_columns",
+        help="Choose the fields to include in the company-wise Excel workbook.",
+    )
+    export_signature = hashlib.sha256(repr((store.search_index_signature(), export_columns)).encode()).hexdigest()
+    if st.button("Prepare company-wise Excel export", icon=":material/table_view:", disabled=not export_columns, key="prepare_company_wise_catalogue_price_export"):
+        with st.spinner("Preparing the company-wise Excel workbook..."):
+            st.session_state["catalogue_price_export"] = (
+                export_signature,
+                catalogue_price_workbook_bytes(store.product_records(), export_columns),
+            )
+    export_value = st.session_state.get("catalogue_price_export")
+    if export_value and export_value[0] == export_signature:
         st.download_button(
-            "Export company-wise catalogue & prices — Excel",
-            catalogue_price_workbook_bytes(export_records),
+            "Download company-wise catalogue & prices — Excel",
+            export_value[1],
             "Company_Wise_Catalogue_and_Prices.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             help="Creates one Excel tab per company. Original files stay stored in their checklist folders and backups.",
             icon=":material/download:",
             key="company_wise_catalogue_price_export",
         )
-        st.caption("This is a separate export. It does not change the checklist, stored documents, or backups.")
+        st.caption("The Excel file is ready. Downloading it does not change the checklist, stored documents, or backups.")
+    else:
+        st.caption("Prepare the Excel file only when you need it. This keeps the page faster to open.")
+    search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
+    record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
     records = store.product_records(search, "" if record_type == "All" else record_type)
     st.metric("Extracted records", f"{len(records):,}")
     if records.empty:
