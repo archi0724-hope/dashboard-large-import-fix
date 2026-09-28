@@ -74,18 +74,27 @@ def test_password_gate_and_empty_state(tmp_path):
     assert not at.exception and at.metric[0].value=='0'
 
 
-def test_vendor_dashboard_has_no_workspace_switcher(tmp_path):
+def test_vendor_and_organizer_dashboards_are_available(tmp_path):
     seed(tmp_path)
     at = app(tmp_path).run()
 
     assert not at.exception
     assert at.title[0].value == "Vendor Document Dashboard"
-    assert not at.get("segmented_control")
+    assert at.segmented_control(key="workspace_mode").options == ["Organizer", "Vendor"]
     assert any(item.label == "Navigate" for item in at.radio)
     assert at.radio(key="page").options == [
         "Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs",
         "Review files", "🤖 Vendor AI Assistant", "Data & backups",
     ]
+    at.segmented_control(key="workspace_mode").set_value("Organizer").run()
+    assert not at.exception
+    assert at.title[0].value == "Organizer Dashboard"
+    assert at.radio(key="page").options == [
+        "Organize companies", "Find products", "Import ZIP files", "Export & backups",
+    ]
+    at.segmented_control(key="workspace_mode").set_value("Vendor").run()
+    assert not at.exception
+    assert at.radio(key="page").value == "Catalogue & prices"
 
 
 def test_upload_duplicate_export_and_navigation(tmp_path):

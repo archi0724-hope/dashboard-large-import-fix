@@ -31,7 +31,6 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
 # export or Store class once so the app starts without a manual restart.
 if not hasattr(exports_module, "CATALOGUE_PRICE_COLUMN_OPTIONS"):
     exports_module = importlib.reload(exports_module)
-CATALOGUE_PRICE_COLUMN_OPTIONS = exports_module.CATALOGUE_PRICE_COLUMN_OPTIONS
 catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
 csv_bytes = exports_module.csv_bytes
 workbook_bytes = exports_module.workbook_bytes
@@ -569,6 +568,12 @@ def go_to(page_name: str):
     st.session_state["pending_page"] = page_name
 
 
+def switch_dashboard():
+    st.session_state["pending_page"] = (
+        "Catalogue & prices" if st.session_state.get("workspace_mode") == "Vendor" else "Companies & documents"
+    )
+
+
 def open_checklist():
     go_to("Companies & documents")
     st.session_state["view_cleared"] = False
@@ -640,21 +645,46 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
-    page_map = {item: item for item in navigation}
-    captions = [
-        "Yes / No checklist + company downloads",
-        "Extracted products and prices",
-        "Add a new vendor batch",
-        "Original ZIP uploads saved here",
-        "Only files that need correction",
-        "Natural-language vendor search and company answers",
-        "Backup, restore or reset saved data",
-    ]
+    workspace = st.segmented_control(
+        "Dashboard",
+        ["Organizer", "Vendor"],
+        default="Vendor",
+        key="workspace_mode",
+        on_change=switch_dashboard,
+        help="Both dashboards use the same saved files and data.",
+    )
+    if workspace == "Organizer":
+        navigation = ["Organize companies", "Find products", "Import ZIP files", "Export & backups"]
+        page_map = {
+            "Organize companies": "Companies & documents",
+            "Find products": "Catalogue & prices",
+            "Import ZIP files": "Upload documents",
+            "Export & backups": "Data & backups",
+        }
+        captions = [
+            "Company and name-wise document folders",
+            "Search one product instead of opening a full catalogue",
+            "Import a ZIP and extract catalogues and prices",
+            "Download Excel files and one-shot ZIP exports",
+        ]
+    else:
+        navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
+        page_map = {item: item for item in navigation}
+        captions = [
+            "Yes / No checklist + company downloads",
+            "Extracted products and prices",
+            "Add a new vendor batch",
+            "Original ZIP uploads saved here",
+            "Only files that need correction",
+            "Natural-language vendor search and company answers",
+            "Backup, restore or reset saved data",
+        ]
     if pending_page:
         matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
         if matching_label:
             st.session_state["page"] = matching_label
+    elif st.session_state.get("page") not in navigation:
+        st.session_state["page"] = navigation[0]
     page_label = st.radio(
         "Navigate",
         navigation,
@@ -676,7 +706,7 @@ with st.sidebar:
         st.session_state.clear(); st.rerun()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
-header.title("Vendor Document Dashboard")
+header.title("Organizer Dashboard" if workspace == "Organizer" else "Vendor Document Dashboard")
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
@@ -894,35 +924,18 @@ elif page == "Companies & documents":
 elif page == "Catalogue & prices":
     st.subheader("Catalogue and price records")
     st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
-    export_columns = st.multiselect(
-        "Excel columns",
-        list(CATALOGUE_PRICE_COLUMN_OPTIONS),
-        default=list(CATALOGUE_PRICE_COLUMN_OPTIONS),
-        format_func=lambda column: CATALOGUE_PRICE_COLUMN_OPTIONS[column][0],
-        key="catalogue_price_export_columns",
-        help="Choose the fields to include in the company-wise Excel workbook.",
-    )
-    export_signature = hashlib.sha256(repr((store.search_index_signature(), export_columns)).encode()).hexdigest()
-    if st.button("Prepare company-wise Excel export", icon=":material/table_view:", disabled=not export_columns, key="prepare_company_wise_catalogue_price_export"):
-        with st.spinner("Preparing the company-wise Excel workbook..."):
-            st.session_state["catalogue_price_export"] = (
-                export_signature,
-                catalogue_price_workbook_bytes(store.product_records(), export_columns),
-            )
-    export_value = st.session_state.get("catalogue_price_export")
-    if export_value and export_value[0] == export_signature:
+    export_records = store.product_records()
+    if not export_records.empty:
         st.download_button(
-            "Download company-wise catalogue & prices — Excel",
-            export_value[1],
+            "Export company-wise catalogue & prices — Excel",
+            catalogue_price_workbook_bytes(export_records),
             "Company_Wise_Catalogue_and_Prices.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             help="Creates one Excel tab per company. Original files stay stored in their checklist folders and backups.",
             icon=":material/download:",
             key="company_wise_catalogue_price_export",
         )
-        st.caption("The Excel file is ready. Downloading it does not change the checklist, stored documents, or backups.")
-    else:
-        st.caption("Prepare the Excel file only when you need it. This keeps the page faster to open.")
+        st.caption("This is a separate export. It does not change the checklist, stored documents, or backups.")
     search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
     record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
     records = store.product_records(search, "" if record_type == "All" else record_type)
