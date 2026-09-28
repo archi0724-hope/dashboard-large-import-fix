@@ -69,6 +69,18 @@ def test_import_persists_records_and_restart_is_duplicate_safe(tmp_path):
     assert len(Store(tmp_path).product_records()) == 2
 
 
+def test_same_document_is_not_stored_twice_when_vendor_assignment_changes(tmp_path):
+    upload = Upload("price list.xlsx", workbook_bytes())
+    store = Store(tmp_path)
+
+    assert import_documents(store, [upload], forced_company="Alpha Medical", retain_archive=False).saved_files == 1
+    repeat = import_documents(store, [upload], forced_company="Beta Medical", retain_archive=False)
+
+    assert repeat.saved_files == 0
+    assert repeat.duplicate_files == 1
+    assert len(store.documents()) == 1
+
+
 def test_backup_restore_reextracts_product_records(tmp_path):
     upload = Upload("Alpha Medical price list.xlsx", workbook_bytes())
     store = Store(tmp_path)

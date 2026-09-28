@@ -42,6 +42,8 @@ class Store:
         self.data_dir = Path(data_dir).resolve()
         self.files_dir = self.data_dir / "files"
         self.uploads_dir = self.data_dir / "uploaded_zips"
+        self.temp_dir = self.data_dir / "temporary"
+        self.failed_dir = self.data_dir / "failed_files"
         self.db_path = self.data_dir / "vendor_documents.db"
         self.database_url = database_url.strip()
         self.cloud = bool(self.database_url)
@@ -50,6 +52,8 @@ class Store:
         if not self.cloud:
             self.files_dir.mkdir(parents=True, exist_ok=True)
             self.uploads_dir.mkdir(parents=True, exist_ok=True)
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
+            self.failed_dir.mkdir(parents=True, exist_ok=True)
         self.initialize()
 
     @contextmanager
@@ -494,7 +498,10 @@ class Store:
         key = company_key(name) if name else ""
         digest = hashlib.sha256(content).hexdigest()
         with self.connection() as db:
-            existing = db.execute("SELECT id,stored_path,reviewed,types_json FROM vdd_documents WHERE company_key=? AND file_hash=?", (key, digest)).fetchone()
+            # A document's content hash is its identity.  Do this lookup without
+            # a vendor condition so that the same file cannot be added again if
+            # a later upload classifies it under a different vendor.
+            existing = db.execute("SELECT id,stored_path,reviewed,types_json FROM vdd_documents WHERE file_hash=?", (digest,)).fetchone()
             if existing:
                 if not bool(existing["reviewed"]):
                     types = normalize_document_types(json.loads(existing["types_json"]) + list(decision.document_types))
@@ -517,10 +524,9 @@ class Store:
             return cursor.rowcount > 0
 
     def document_id_for(self, original_path: str, content: bytes, company_name: str = "") -> int | None:
-        key = company_key(company_name)
         digest = hashlib.sha256(content).hexdigest()
         with self.connection() as db:
-            row = db.execute("SELECT id FROM vdd_documents WHERE company_key=? AND file_hash=?", (key, digest)).fetchone()
+            row = db.execute("SELECT id FROM vdd_documents WHERE file_hash=?", (digest,)).fetchone()
         return int(row["id"]) if row else None
 
     def save_product_records(self, document_id: int, records: list[dict]) -> int:
@@ -637,6 +643,70 @@ class Store:
                 temporary = temp.name
             os.replace(temporary, destination)
         return "files/" + destination.name
+
+    def save_failed_file(self, original_path: str, content: bytes, reason: str, source: str = "") -> str:
+        """Quarantine a valid upload that could not be processed, without mixing it with saved documents."""
+        if self.cloud or not content:
+            return ""
+        digest = hashlib.sha256(content).hexdigest()
+        suffix = Path(file_basename(original_path)).suffix.lower()
+        if not re.fullmatch(r"\.[a-z0-9]{1,8}", suffix):
+            suffix = ".bin"
+        destination = self.failed_dir / f"{digest}{suffix}"
+        if not destination.exists():
+            destination.write_bytes(content)
+        note = self.failed_dir / f"{digest}.json"
+        if not note.exists():
+            note.write_text(json.dumps({"original_path": original_path, "source": source, "reason": reason, "saved_at": now()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        return str(destination.relative_to(self.data_dir)).replace("\\", "/")
+
+    def failed_files(self) -> pd.DataFrame:
+        if self.cloud or not self.failed_dir.exists():
+            return pd.DataFrame(columns=["File", "Reason", "Stored path"])
+        rows = []
+        for note in sorted(self.failed_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                data = json.loads(note.read_text(encoding="utf-8"))
+                rows.append({"File": data.get("original_path", ""), "Reason": data.get("reason", ""),
+                             "Stored path": "failed_files/" + note.stem})
+            except (OSError, json.JSONDecodeError):
+                continue
+        return pd.DataFrame(rows, columns=["File", "Reason", "Stored path"])
+
+    def reclassify_placeholder_company(self, placeholder: str = "organized_by_company") -> dict:
+        """Repair documents imported from a technical organizer folder.
+
+        The organizer's generated subfolders can contain extracted text rather
+        than vendor names, so recovery deliberately trusts only a filename's
+        clear vendor prefix. Ambiguous files remain unassigned for review.
+        """
+        placeholder_key = company_key(placeholder)
+        changed = unresolved = 0
+        with self.connection() as db:
+            rows = [dict(row) for row in db.execute(
+                "SELECT id, original_path, stored_path, payload FROM vdd_documents"
+            ).fetchall()]
+        for row in rows:
+            payload = bytes(row["payload"]) if row.get("payload") is not None else None
+            if payload is None:
+                path = self.safe_path(row.get("stored_path", ""))
+                payload = path.read_bytes() if path and path.is_file() else None
+            decision = classify(file_basename(row["original_path"]), (), payload)
+            name = clean_company(decision.company_name or "")
+            key = company_key(name)
+            unresolved += int(not name)
+            with self.connection() as db:
+                if name:
+                    self._upsert_vendor(db, name, "Recovered from document filename")
+                db.execute("UPDATE vdd_documents SET company_key=?, company_name=?, method=?, reason=? WHERE id=?",
+                           (key, name, decision.method, decision.reason, row["id"]))
+                db.execute("UPDATE vdd_product_records SET company_key=?, company_name=? WHERE document_id=?",
+                           (key, name, row["id"]))
+            changed += int(bool(name))
+        with self.connection() as db:
+            db.execute("DELETE FROM vdd_vendors WHERE company_key NOT IN (SELECT DISTINCT company_key FROM vdd_documents WHERE company_key<>'')")
+            db.execute("INSERT INTO vdd_audit VALUES(?,?,?)", (now(), "Vendor classification repaired", json.dumps({"changed": changed, "unresolved": unresolved})))
+        return {"changed": changed, "unresolved": unresolved}
 
     def read_bytes(self, document_id: int) -> bytes | None:
         with self.connection() as db:
@@ -769,7 +839,9 @@ class Store:
         if not self.cloud:
             counts["stored_document_files"] = sum(1 for p in self.files_dir.rglob("*") if p.is_file()) if self.files_dir.exists() else 0
             counts["stored_zip_files"] = sum(1 for p in self.uploads_dir.rglob("*") if p.is_file()) if self.uploads_dir.exists() else 0
-            allowed = {self.db_path.name, self.files_dir.name, self.uploads_dir.name}
+            counts["temporary_files"] = sum(1 for p in self.temp_dir.rglob("*") if p.is_file()) if self.temp_dir.exists() else 0
+            counts["failed_files"] = sum(1 for p in self.failed_dir.rglob("*") if p.is_file()) if self.failed_dir.exists() else 0
+            allowed = {self.db_path.name, self.files_dir.name, self.uploads_dir.name, self.temp_dir.name, self.failed_dir.name}
             counts["other_runtime_files"] = sum(
                 1 for child in self.data_dir.iterdir()
                 if child.name not in allowed
@@ -819,14 +891,14 @@ class Store:
         if not self.cloud:
             # Delete actual document and original ZIP bytes. Do not silently ignore failures:
             # the UI must never report success while a file remains on disk.
-            for folder in (self.files_dir, self.uploads_dir):
+            for folder in (self.files_dir, self.uploads_dir, self.temp_dir, self.failed_dir):
                 if folder.exists():
                     shutil.rmtree(folder)
                 folder.mkdir(parents=True, exist_ok=True)
 
             # Delete generated reports, old migration backups and any other runtime artifacts.
             for child in list(self.data_dir.iterdir()):
-                if child.name in {self.db_path.name, self.uploads_dir.name, self.files_dir.name}:
+                if child.name in {self.db_path.name, self.uploads_dir.name, self.files_dir.name, self.temp_dir.name, self.failed_dir.name}:
                     continue
                 if child.is_dir():
                     shutil.rmtree(child)

@@ -3,6 +3,7 @@ from pathlib import Path
 import zipfile
 from unittest.mock import patch
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 from storage import Store
 from vendor_core import classify
@@ -49,6 +50,20 @@ def test_default_search_reset_totals_and_dropdown(tmp_path):
     assert not at.exception and at.metric[0].value=='2'
 
 
+def test_excel_document_preview_shows_first_sheet_as_a_table(tmp_path):
+    payload = BytesIO()
+    pd.DataFrame({"Product": ["Surgical Gloves"], "Price": [125]}).to_excel(payload, index=False)
+    store = Store(tmp_path)
+    store.save_document("Alpha Medical/ASF PRICE LIST.xlsx", payload.getvalue(), classify("ASF PRICE LIST.xlsx"))
+
+    at = app(tmp_path).run()
+    next(button for button in at.button if button.label == "👁").click().run()
+
+    assert not at.exception
+    assert at.get("dataframe")
+    assert any("Preview: Sheet1" in caption.value for caption in at.caption)
+
+
 def test_password_gate_and_empty_state(tmp_path):
     at=app(tmp_path)
     at.secrets['APP_PASSWORD']='unit-test-only-not-a-real-secret'
@@ -57,6 +72,20 @@ def test_password_gate_and_empty_state(tmp_path):
     at.text_input[0].set_value('unit-test-only-not-a-real-secret')
     at.button[0].click().run()
     assert not at.exception and at.metric[0].value=='0'
+
+
+def test_vendor_dashboard_has_no_workspace_switcher(tmp_path):
+    seed(tmp_path)
+    at = app(tmp_path).run()
+
+    assert not at.exception
+    assert at.title[0].value == "Vendor Document Dashboard"
+    assert not at.get("segmented_control")
+    assert any(item.label == "Navigate" for item in at.radio)
+    assert at.radio(key="page").options == [
+        "Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs",
+        "Review files", "🤖 Vendor AI Assistant", "Data & backups",
+    ]
 
 
 def test_upload_duplicate_export_and_navigation(tmp_path):

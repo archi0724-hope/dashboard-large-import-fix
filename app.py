@@ -161,6 +161,17 @@ def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | N
     return _store.read_bytes(document_id)
 
 
+@st.cache_data(show_spinner=False, max_entries=32)
+def first_sheet_excel_preview(payload: bytes) -> tuple[str, pd.DataFrame] | None:
+    """Read a bounded, display-only preview from the first Excel worksheet."""
+    try:
+        workbook = pd.ExcelFile(BytesIO(payload))
+        sheet_name = workbook.sheet_names[0]
+        return sheet_name, pd.read_excel(workbook, sheet_name=sheet_name, nrows=100).iloc[:, :50]
+    except Exception:
+        return None
+
+
 def show_document_preview(filename: str, payload: bytes):
     """Render a fast preview while keeping the original file available for download."""
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -174,6 +185,14 @@ def show_document_preview(filename: str, payload: bytes):
             st.info("This PDF could not be reduced to a first-page preview. Download the original file to view it.")
     elif mime.startswith("image/"):
         st.image(payload, caption=filename, width="stretch")
+    elif suffix in {".xlsx", ".xls"}:
+        preview = first_sheet_excel_preview(payload)
+        if preview is None:
+            st.info("This Excel workbook could not be read for preview. Use Download file to open it.")
+        else:
+            sheet_name, rows = preview
+            st.caption(f"Preview: {sheet_name} · first {len(rows)} data row(s), up to 50 columns. Download the original file for all sheets and rows.")
+            st.dataframe(rows, hide_index=True, height=360)
     elif mime.startswith("text/") or suffix in {".csv", ".txt", ".log"}:
         try:
             st.code(payload.decode("utf-8", errors="replace"), language="text")
@@ -621,39 +640,17 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
-    workspace = st.segmented_control(
-        "Workspace",
-        ["Vendor dashboard", "Organizer dashboard"],
-        default="Vendor dashboard",
-        key="workspace_mode",
-        help="Both views use the same saved data. Organizer dashboard focuses on company folders and product search.",
-    )
-    if workspace == "Organizer dashboard":
-        navigation = ["Organize companies", "Find products", "Import ZIP files", "Export & backups"]
-        page_map = {
-            "Organize companies": "Companies & documents",
-            "Find products": "Catalogue & prices",
-            "Import ZIP files": "Upload documents",
-            "Export & backups": "Data & backups",
-        }
-        captions = [
-            "Company and name-wise document folders",
-            "Search one product instead of opening a full catalogue",
-            "Import a ZIP and extract catalogues and prices",
-            "Download Excel files and one-shot ZIP exports",
-        ]
-    else:
-        navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
-        page_map = {item: item for item in navigation}
-        captions = [
-            "Yes / No checklist + company downloads",
-            "Extracted products and prices",
-            "Add a new vendor batch",
-            "Original ZIP uploads saved here",
-            "Only files that need correction",
-            "Natural-language vendor search and company answers",
-            "Backup, restore or reset saved data",
-        ]
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
+    page_map = {item: item for item in navigation}
+    captions = [
+        "Yes / No checklist + company downloads",
+        "Extracted products and prices",
+        "Add a new vendor batch",
+        "Original ZIP uploads saved here",
+        "Only files that need correction",
+        "Natural-language vendor search and company answers",
+        "Backup, restore or reset saved data",
+    ]
     if pending_page:
         matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
         if matching_label:
@@ -673,16 +670,13 @@ with st.sidebar:
         st.warning("Temporary cloud disk. Set DATABASE_URL for permanent uploads.")
     else:
         st.success("Saved on this computer")
-        st.caption("Records stay in vendor_data after closing the browser. Keep this folder when updating.")
+        st.caption("Successful files are in vendor_data/files, temporary work uses vendor_data/temporary, and files that fail during processing are quarantined in vendor_data/failed_files.")
     st.caption("Vendor workspace · local records protected")
     if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
         st.session_state.clear(); st.rerun()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
-header.title("Organizer Dashboard" if workspace == "Organizer dashboard" else "Vendor Document Dashboard")
-if workspace == "Organizer dashboard":
-    st.html('<script>window.top.location.assign("http://127.0.0.1:8000");</script>', unsafe_allow_javascript=True)
-    st.stop()
+header.title("Vendor Document Dashboard")
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
@@ -791,6 +785,10 @@ if page == "Upload documents":
         if last["issues"]:
             st.warning("Some files were skipped or could not be saved. Review these before treating the batch as complete.")
             show_table(pd.DataFrame(last["issues"]))
+            failed = store.failed_files()
+            if not failed.empty:
+                st.caption("Files that reached processing but failed are retained separately for review.")
+                show_table(failed)
     with st.expander("Optional: import a company list from Excel"):
         master = st.file_uploader("Company list", type=["xlsx", "csv"], key="vendor_master")
         st.caption("Use a Company Name or Vendor Name column. A Yes in this list is not evidence of an uploaded document.")
@@ -861,26 +859,27 @@ elif page == "Companies & documents":
                 with st.expander(label):
                     if rows.empty:
                         st.caption("No file available in this category.")
-                    for doc in rows.itertuples(index=False):
+                    for row_number, doc in enumerate(rows.itertuples(index=False)):
                         filename_col, preview_col = st.columns([8.5, 1.5], vertical_alignment="center")
                         filename_col.text(doc.filename)
                         detail = supporting_category(doc.filename) if not doc.types else doc.method
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
                         if payload is not None:
-                            preview_key = f"preview_{doc.id}"
+                            preview_token = f"{category}_{doc.id}_{row_number}"
+                            preview_key = f"preview_{preview_token}"
                             if preview_col.button("👁", key=preview_key, help="Preview this document before downloading."):
-                                st.session_state["preview_document_id"] = doc.id
-                            if st.session_state.get("preview_document_id") == doc.id:
+                                st.session_state["preview_document_id"] = preview_token
+                            if st.session_state.get("preview_document_id") == preview_token:
                                 with st.container(border=True):
                                     preview_title, close_preview = st.columns([5, 1])
                                     preview_title.markdown(f"**Preview: {doc.filename}**")
-                                    if close_preview.button("Close", key=f"close_{doc.id}"):
+                                    if close_preview.button("Close", key=f"close_{preview_token}"):
                                         st.session_state.pop("preview_document_id", None)
                                         st.rerun()
                                     show_document_preview(doc.filename, payload)
                             st.download_button("Download file", payload, doc.filename,
-                                mimetypes.guess_type(doc.filename)[0] or "application/octet-stream", key=f"file_{category}_{doc.id}")
+                                mimetypes.guess_type(doc.filename)[0] or "application/octet-stream", key=f"file_{preview_token}")
                         else:
                             st.warning("Original bytes unavailable. Re-upload this file; it does not count as Yes.")
         with st.expander("Document coverage across these companies"):

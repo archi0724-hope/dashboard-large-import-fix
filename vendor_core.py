@@ -41,6 +41,7 @@ MASTER_COMPANY_NAMES = (
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".docx", ".doc", ".xlsx", ".xls", ".csv", ".txt"}
 GENERIC_FOLDERS = {
     "document", "documents", "doc", "docs", "file", "files", "upload", "uploads",
+    "organized by company", "organised by company",
     "vendor", "vendors", "vender", "venders", "supplier", "suppliers", "attachment", "attachments",
     "kyc", "certificates", "certificate", "compliance", "company documents", "vendor documents",
     "all documents", "records", "data", "handover", "handover files", "batch", "archive",

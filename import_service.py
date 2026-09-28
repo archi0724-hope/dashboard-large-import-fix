@@ -67,7 +67,11 @@ def import_documents(store, uploads, forced_company: str = "", read_pdf_text: bo
                             if decision.company_name not in names:
                                 names[decision.company_name] = decision.company_name
                     except Exception as error:
-                        result.issues.append({"File": path, "Reason": f"Not saved: {type(error).__name__}. Check this file/storage and retry."})
+                        reason = f"Not saved: {type(error).__name__}. Check this file/storage and retry."
+                        quarantined = store.save_failed_file(path, content, reason, source)
+                        if quarantined:
+                            reason += f" Kept separately at {quarantined}."
+                        result.issues.append({"File": path, "Reason": reason})
             except Exception as error:
                 result.issues.append({"File": upload.name, "Reason": f"Stopped: {str(error) if isinstance(error, ValueError) else type(error).__name__}. Saved records are retained; retry the upload."})
             if upload.name.lower().endswith(".zip"):
