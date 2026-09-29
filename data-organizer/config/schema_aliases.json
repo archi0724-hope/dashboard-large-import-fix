@@ -1,0 +1,351 @@
+{
+ "_readme": "Maps different source column headers to the universal schema. Headers are matched after lower-casing and stripping punctuation. Add your own synonyms here or override individual headers from the dashboard (Schema page). The ORIGINAL column name is always preserved in original_data and column_map.",
+ "fields": {
+  "name": [
+   "name",
+   "entity name",
+   "entity",
+   "hospital name",
+   "hospital",
+   "name of hospital",
+   "name of the hospital",
+   "name of institution",
+   "name of the institution",
+   "institution name",
+   "institution",
+   "organization",
+   "organisation",
+   "organization name",
+   "organisation name",
+   "company name",
+   "company",
+   "name of company",
+   "name of the company",
+   "firm name",
+   "name of firm",
+   "name of the firm",
+   "facility name",
+   "facility",
+   "party name",
+   "customer name",
+   "supplier name",
+   "vendor name",
+   "vendor",
+   "manufacturer",
+   "manufacturer name",
+   "name of manufacturer",
+   "business name",
+   "establishment",
+   "establishment name",
+   "health facility",
+   "nursing home name",
+   "clinic name",
+   "unit name",
+   "trade name",
+   "licensee",
+   "name of the unit",
+   "name of unit",
+   "full name",
+   "person name",
+   "title"
+  ],
+  "address": [
+   "address",
+   "addr",
+   "full address",
+   "complete address",
+   "postal address",
+   "street address",
+   "address line 1",
+   "address line 2",
+   "address 1",
+   "address 2",
+   "location",
+   "location address",
+   "registered address",
+   "office address",
+   "premises",
+   "locality",
+   "area"
+  ],
+  "city": [
+   "city",
+   "town",
+   "city town",
+   "city name",
+   "town city",
+   "village",
+   "city village",
+   "taluka",
+   "tehsil",
+   "place"
+  ],
+  "district": [
+   "district",
+   "dist",
+   "district name",
+   "zila"
+  ],
+  "state": [
+   "state",
+   "state name",
+   "st",
+   "state ut",
+   "province"
+  ],
+  "pincode": [
+   "pincode",
+   "pin code",
+   "pin",
+   "zip",
+   "zip code",
+   "postal code",
+   "postcode"
+  ],
+  "phone": [
+   "phone",
+   "phone no",
+   "phone number",
+   "phone no 1",
+   "phone 1",
+   "phone 2",
+   "telephone",
+   "telephone no",
+   "tel",
+   "tel no",
+   "contact",
+   "contact no",
+   "contact number",
+   "contact no 1",
+   "mobile",
+   "mobile no",
+   "mobile number",
+   "cell",
+   "cell no",
+   "landline",
+   "helpline",
+   "whatsapp",
+   "ph",
+   "ph no",
+   "mob",
+   "mob no"
+  ],
+  "email": [
+   "email",
+   "e mail",
+   "email id",
+   "e mail id",
+   "email address",
+   "mail",
+   "mail id",
+   "emailid",
+   "email 1"
+  ],
+  "website": [
+   "website",
+   "web site",
+   "web",
+   "url",
+   "web address",
+   "website url",
+   "site",
+   "homepage",
+   "web page"
+  ],
+  "registration_id": [
+   "registration id",
+   "registration no",
+   "registration number",
+   "reg no",
+   "reg number",
+   "reg id",
+   "registration",
+   "gst",
+   "gst no",
+   "gst number",
+   "gstin",
+   "gstin no",
+   "gstin number",
+   "udyam",
+   "udyam no",
+   "udyam number",
+   "udyam registration number",
+   "udyam registration no",
+   "cin",
+   "cin no",
+   "pan",
+   "pan no",
+   "licence no",
+   "license no",
+   "licence number",
+   "license number",
+   "drug licence no",
+   "drug license no",
+   "nabh no",
+   "clinical establishment registration",
+   "ce registration no",
+   "tin",
+   "tin no",
+   "id no"
+  ],
+  "category": [
+   "category",
+   "type",
+   "entity type",
+   "hospital type",
+   "type of hospital",
+   "type of institution",
+   "type of facility",
+   "ownership",
+   "sector",
+   "industry",
+   "business type",
+   "nature of business",
+   "specialty",
+   "speciality",
+   "class",
+   "level",
+   "classification"
+  ]
+ },
+ "never_name": [
+  "contact person",
+  "person",
+  "owner",
+  "proprietor",
+  "director",
+  "doctor name",
+  "name of doctor",
+  "authorised",
+  "authorized",
+  "signatory",
+  "representative",
+  "father",
+  "guardian",
+  "in charge",
+  "incharge",
+  "head",
+  "medical superintendent",
+  "ms name",
+  "cmo",
+  "bank",
+  "account",
+  "ifsc",
+  "designation",
+  "employee",
+  "patient",
+  "applicant",
+  "user"
+ ],
+ "keyword_rules": [
+  {
+   "field": "name",
+   "any": [
+    "hospital name",
+    "company name",
+    "firm name",
+    "institution name",
+    "organisation name",
+    "organization name",
+    "name of hospital",
+    "name of institution",
+    "name of company",
+    "entity name"
+   ]
+  },
+  {
+   "field": "email",
+   "any": [
+    "email",
+    "e mail",
+    "mail id"
+   ]
+  },
+  {
+   "field": "website",
+   "any": [
+    "website",
+    "web site",
+    "url",
+    "homepage"
+   ]
+  },
+  {
+   "field": "phone",
+   "any": [
+    "phone",
+    "mobile",
+    "telephone",
+    "contact no",
+    "contact number",
+    "tel no",
+    "cell",
+    "landline",
+    "helpline"
+   ]
+  },
+  {
+   "field": "pincode",
+   "any": [
+    "pincode",
+    "pin code",
+    "zip",
+    "postal code"
+   ]
+  },
+  {
+   "field": "registration_id",
+   "any": [
+    "gstin",
+    "gst no",
+    "gst number",
+    "udyam",
+    "registration no",
+    "registration number",
+    "reg no",
+    "licence no",
+    "license no"
+   ]
+  },
+  {
+   "field": "address",
+   "any": [
+    "address"
+   ]
+  },
+  {
+   "field": "district",
+   "any": [
+    "district"
+   ]
+  },
+  {
+   "field": "state",
+   "all": [
+    "state"
+   ]
+  },
+  {
+   "field": "city",
+   "any": [
+    "city",
+    "town"
+   ]
+  },
+  {
+   "field": "category",
+   "any": [
+    "category",
+    "type of"
+   ]
+  }
+ ],
+ "multi_value_fields": [
+  "address",
+  "phone",
+  "email",
+  "website",
+  "registration_id"
+ ],
+ "fuzzy_min_score": 90
+}

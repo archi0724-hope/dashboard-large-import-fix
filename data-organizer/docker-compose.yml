@@ -1,0 +1,20 @@
+services:
+  organizer:
+    build: .
+    image: data-organizer:latest
+    ports:
+      - "${DASHBOARD_PORT:-8000}:8000"
+    env_file:
+      - .env                       # copy .env.example -> .env first (optional but recommended)
+    environment:
+      DASHBOARD_HOST: 0.0.0.0
+      DASHBOARD_PORT: 8000
+      # Point this at a folder ON THIS MACHINE that docker-compose mounts below.
+      # Leave as-is to use the container path; change the LEFT side of the volume mount instead.
+      LOCAL_INPUT_DIR: /input
+    volumes:
+      - ./data:/app/data           # extracted data, the DuckDB database, exports (survives restarts)
+      - ./logs:/app/logs
+      - ./secrets:/app/secrets     # Google Drive credentials, if used
+      - ./input:/input:ro          # your source files - read-only mount, the app never writes here
+    restart: unless-stopped

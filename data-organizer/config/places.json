@@ -1,0 +1,325 @@
+{
+ "_readme": "Gazetteer used for (a) normalising city/state spellings, (b) spotting a trailing place in a name ('SMS Hospital Jaipur'), (c) detecting city/state conflicts. It is evidence only - it never fills in missing fields. Extend it for your geography; cities observed in your data are added automatically.",
+ "states": {
+  "andhra pradesh": [
+   "ap",
+   "a p"
+  ],
+  "arunachal pradesh": [
+   "ar"
+  ],
+  "assam": [
+   "as"
+  ],
+  "bihar": [
+   "br"
+  ],
+  "chhattisgarh": [
+   "cg",
+   "chattisgarh"
+  ],
+  "goa": [
+   "ga"
+  ],
+  "gujarat": [
+   "gj",
+   "gujrat"
+  ],
+  "haryana": [
+   "hr",
+   "hry"
+  ],
+  "himachal pradesh": [
+   "hp",
+   "h p"
+  ],
+  "jharkhand": [
+   "jh"
+  ],
+  "karnataka": [
+   "ka",
+   "krnataka"
+  ],
+  "kerala": [
+   "kl"
+  ],
+  "madhya pradesh": [
+   "mp",
+   "m p"
+  ],
+  "maharashtra": [
+   "mh",
+   "maharastra"
+  ],
+  "manipur": [
+   "mn"
+  ],
+  "meghalaya": [
+   "ml"
+  ],
+  "mizoram": [
+   "mz"
+  ],
+  "nagaland": [
+   "nl"
+  ],
+  "odisha": [
+   "od",
+   "orissa"
+  ],
+  "punjab": [
+   "pb"
+  ],
+  "rajasthan": [
+   "raj",
+   "rj",
+   "rajasthan state",
+   "rajsthan",
+   "rajastan"
+  ],
+  "sikkim": [
+   "sk"
+  ],
+  "tamil nadu": [
+   "tn",
+   "tamilnadu"
+  ],
+  "telangana": [
+   "ts",
+   "tg"
+  ],
+  "tripura": [
+   "tr"
+  ],
+  "uttar pradesh": [
+   "up",
+   "u p"
+  ],
+  "uttarakhand": [
+   "uk",
+   "uttaranchal"
+  ],
+  "west bengal": [
+   "wb",
+   "w b"
+  ],
+  "delhi": [
+   "dl",
+   "nct of delhi",
+   "nct delhi",
+   "new delhi"
+  ],
+  "chandigarh": [
+   "ch"
+  ],
+  "jammu and kashmir": [
+   "jk",
+   "j k",
+   "jammu kashmir"
+  ],
+  "ladakh": [
+   "la"
+  ],
+  "puducherry": [
+   "py",
+   "pondicherry"
+  ],
+  "andaman and nicobar islands": [
+   "an"
+  ],
+  "dadra and nagar haveli and daman and diu": [
+   "dn",
+   "dd"
+  ],
+  "lakshadweep": [
+   "ld"
+  ]
+ },
+ "city_synonyms": {
+  "gurgaon": "gurugram",
+  "bombay": "mumbai",
+  "bangalore": "bengaluru",
+  "calcutta": "kolkata",
+  "madras": "chennai",
+  "poona": "pune",
+  "allahabad": "prayagraj",
+  "new delhi": "delhi",
+  "jaipur city": "jaipur",
+  "jodhpur city": "jodhpur",
+  "kota city": "kota",
+  "sriganganagar": "sri ganganagar",
+  "ganganagar": "sri ganganagar",
+  "s madhopur": "sawai madhopur",
+  "sawaimadhopur": "sawai madhopur",
+  "bhilwada": "bhilwara",
+  "chittaurgarh": "chittorgarh",
+  "jhunjhunun": "jhunjhunu",
+  "banswada": "banswara",
+  "trivandrum": "thiruvananthapuram",
+  "cochin": "kochi"
+ },
+ "cities": {
+  "rajasthan": [
+   "ajmer",
+   "alwar",
+   "banswara",
+   "baran",
+   "barmer",
+   "bharatpur",
+   "bhilwara",
+   "bikaner",
+   "bundi",
+   "chittorgarh",
+   "churu",
+   "dausa",
+   "dholpur",
+   "dungarpur",
+   "hanumangarh",
+   "jaipur",
+   "jaisalmer",
+   "jalore",
+   "jhalawar",
+   "jhunjhunu",
+   "jodhpur",
+   "karauli",
+   "kota",
+   "nagaur",
+   "pali",
+   "pratapgarh",
+   "rajsamand",
+   "sawai madhopur",
+   "sikar",
+   "sirohi",
+   "sri ganganagar",
+   "tonk",
+   "udaipur",
+   "beawar",
+   "kishangarh",
+   "bhiwadi",
+   "neemrana",
+   "abu road"
+  ],
+  "haryana": [
+   "gurugram",
+   "faridabad",
+   "hisar",
+   "rohtak",
+   "panipat",
+   "karnal",
+   "ambala",
+   "sonipat",
+   "yamunanagar",
+   "bhiwani",
+   "rewari",
+   "panchkula",
+   "kurukshetra"
+  ],
+  "delhi": [
+   "delhi"
+  ],
+  "gujarat": [
+   "ahmedabad",
+   "surat",
+   "vadodara",
+   "rajkot",
+   "gandhinagar",
+   "bhavnagar",
+   "jamnagar"
+  ],
+  "maharashtra": [
+   "mumbai",
+   "pune",
+   "nagpur",
+   "nashik",
+   "thane",
+   "kolhapur"
+  ],
+  "uttar pradesh": [
+   "lucknow",
+   "kanpur",
+   "agra",
+   "varanasi",
+   "noida",
+   "ghaziabad",
+   "meerut",
+   "prayagraj",
+   "bareilly",
+   "mathura"
+  ],
+  "madhya pradesh": [
+   "bhopal",
+   "indore",
+   "gwalior",
+   "jabalpur",
+   "ujjain"
+  ],
+  "punjab": [
+   "ludhiana",
+   "amritsar",
+   "jalandhar",
+   "patiala",
+   "bathinda"
+  ],
+  "chandigarh": [
+   "chandigarh"
+  ],
+  "karnataka": [
+   "bengaluru",
+   "mysuru",
+   "mangaluru",
+   "hubballi"
+  ],
+  "tamil nadu": [
+   "chennai",
+   "coimbatore",
+   "madurai",
+   "salem",
+   "tiruchirappalli"
+  ],
+  "west bengal": [
+   "kolkata",
+   "howrah",
+   "siliguri",
+   "durgapur"
+  ],
+  "telangana": [
+   "hyderabad",
+   "warangal",
+   "secunderabad"
+  ],
+  "kerala": [
+   "kochi",
+   "thiruvananthapuram",
+   "kozhikode",
+   "thrissur"
+  ],
+  "bihar": [
+   "patna",
+   "gaya",
+   "muzaffarpur",
+   "bhagalpur"
+  ],
+  "uttarakhand": [
+   "dehradun",
+   "haridwar",
+   "roorkee",
+   "haldwani"
+  ],
+  "himachal pradesh": [
+   "shimla",
+   "solan",
+   "mandi"
+  ]
+ },
+ "pincode_prefix_state": {
+  "_note": "Coarse consistency check only (first 2 digits). Extend if you need more states.",
+  "11": "delhi",
+  "12": "haryana",
+  "13": "haryana",
+  "30": "rajasthan",
+  "31": "rajasthan",
+  "32": "rajasthan",
+  "33": "rajasthan",
+  "34": "rajasthan"
+ }
+}
