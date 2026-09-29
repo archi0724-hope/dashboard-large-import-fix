@@ -924,18 +924,37 @@ elif page == "Companies & documents":
 elif page == "Catalogue & prices":
     st.subheader("Catalogue and price records")
     st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
-    export_records = store.product_records()
-    if not export_records.empty:
+    export_signature = store.search_index_signature()
+    prepared_export = st.session_state.get("catalogue_price_export")
+    if st.button(
+        "Export company-wise catalogue & prices — Excel",
+        icon=":material/download:",
+        key="prepare_company_wise_catalogue_price_export",
+        help="Prepare an Excel workbook with one tab per company. Original files stay stored in their checklist folders and backups.",
+    ):
+        with st.spinner("Preparing the company-wise Excel workbook..."):
+            export_records = store.product_records()
+            if export_records.empty:
+                st.warning("There are no catalogue or price records to export yet.")
+            else:
+                st.session_state["catalogue_price_export"] = (
+                    export_signature,
+                    catalogue_price_workbook_bytes(export_records),
+                )
+        prepared_export = st.session_state.get("catalogue_price_export")
+    if prepared_export and prepared_export[0] == export_signature:
         st.download_button(
-            "Export company-wise catalogue & prices — Excel",
-            catalogue_price_workbook_bytes(export_records),
+            "Download company-wise catalogue & prices — Excel",
+            prepared_export[1],
             "Company_Wise_Catalogue_and_Prices.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="Creates one Excel tab per company. Original files stay stored in their checklist folders and backups.",
+            help="Download the prepared company-wise workbook.",
             icon=":material/download:",
             key="company_wise_catalogue_price_export",
         )
-        st.caption("This is a separate export. It does not change the checklist, stored documents, or backups.")
+        st.caption("The Excel file is ready. Downloading it does not change the checklist, stored documents, or backups.")
+    else:
+        st.caption("Prepare the Excel file only when you need it. This keeps the dashboard fast to open.")
     search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
     record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
     records = store.product_records(search, "" if record_type == "All" else record_type)
