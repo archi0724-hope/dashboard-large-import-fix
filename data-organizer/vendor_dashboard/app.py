@@ -19,6 +19,7 @@ from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import exports as exports_module
 from import_service import import_documents
@@ -469,6 +470,17 @@ def vendor_ai_format(question: str, results: list[dict]) -> str:
 def vendor_ai_page():
     st.subheader("Vendor AI Assistant")
     st.caption("Search your vendor master data, uploaded documents, price lists and catalogues using natural-language questions.")
+    st.caption("Integrated with the QuoteSarthi AI assistant for live product and quotation workflows.")
+    st.markdown(
+        """
+        <div style="padding:12px 14px; border:1px solid #dfe9ef; border-radius:12px; background:linear-gradient(135deg,#f4f9ff,#ffffff); margin-bottom:1rem;">
+            <strong>Vendor + QuoteSarthi AI</strong><br>
+            Use the dashboard search below or open the integrated AI copilot side-by-side for product discovery and quote support.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    components.iframe("http://127.0.0.1:5001/", height=820, scrolling=True)
     if st.session_state.pop("vendor_ai_clear_query", False):
         st.session_state["vendor_ai_query"] = ""
     if store.vendors().empty and store.documents().empty and store.product_records().empty:
