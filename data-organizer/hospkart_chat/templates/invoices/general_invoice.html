@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ quote.quote_id }} - Invoice</title>
+  <style>
+    @page { size: A4; margin: 15mm 12mm; }
+    body { font-family: Helvetica, Arial, sans-serif; color: #1f2937; font-size: 10px; }
+    .header { border: 1px solid #d1d5db; padding: 10px; }
+    .brand-row { width: 100%; }
+    .logo-wrap { width: 22%; vertical-align: top; }
+    .logo-wrap img { width: 120px; height: auto; }
+    .company-wrap { width: 78%; vertical-align: top; text-align: right; }
+    .company-name { font-size: 16px; font-weight: 700; color: #0f2f74; }
+    .tagline { color: #f08a00; font-size: 10px; margin-top: 2px; font-weight: 700; }
+    .invoice-title { margin-top: 8px; font-size: 18px; font-weight: 700; text-align: center; color: #0f2f74; }
+    .meta { margin-top: 8px; font-size: 10px; }
+    .box-grid { width: 100%; margin-top: 10px; }
+    .box { border: 1px solid #d1d5db; padding: 8px; vertical-align: top; width: 50%; }
+    .box-title { font-size: 11px; font-weight: 700; margin-bottom: 4px; color: #111827; text-transform: uppercase; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
+    th { background: #f3f4f6; color: #111827; text-align: left; font-weight: 700; }
+    .num { text-align: right; white-space: nowrap; }
+    .totals { width: 45%; margin-left: auto; margin-top: 10px; }
+    .totals td { border: 1px solid #d1d5db; padding: 6px; }
+    .totals .label { font-weight: 700; width: 68%; }
+    .section { border: 1px solid #d1d5db; padding: 8px; margin-top: 10px; }
+    .muted { color: #4b5563; }
+    ol { margin: 6px 0 0 16px; padding: 0; }
+    li { margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <table class="brand-row">
+      <tr>
+        <td class="logo-wrap">
+          {% if company.logo_data_uri %}
+          <img src="{{ company.logo_data_uri }}" alt="HOSPkart Logo" />
+          {% else %}
+          <div style="font-size:11px; font-weight:700;">HOSPkart</div>
+          {% endif %}
+        </td>
+        <td class="company-wrap">
+          <div class="company-name">{{ company.name }}</div>
+          <div class="tagline">{{ company.tagline }}</div>
+          <div>{{ company.address }}</div>
+          <div>Email: {{ company.email }} | Phone: {{ company.phone }}</div>
+          <div>PAN: {{ company.pan }} | GSTIN: {{ company.gstin }}</div>
+        </td>
+      </tr>
+    </table>
+
+    <div class="invoice-title">{{ "PURCHASE INVOICE" if quote.document_type == "purchase_invoice" else "TAX INVOICE" }}</div>
+    <div class="meta">
+      <b>Invoice No:</b> {{ quote.quote_id }} |
+      <b>Date:</b> {{ bill_date }} |
+      <b>Place of Supply:</b> {{ place_of_supply }}
+    </div>
+  </div>
+
+  <table class="box-grid">
+    <tr>
+      <td class="box" style="padding-right: 6px;">
+        <div class="box-title">Bill From</div>
+        <div><b>{{ company.name }}</b></div>
+        <div>{{ company.address }}</div>
+        <div>Email: {{ company.email }}</div>
+        <div>Phone: {{ company.phone }}</div>
+      </td>
+      <td class="box" style="padding-left: 6px;">
+        <div class="box-title">Bill To</div>
+        <div><b>{{ party.name }}</b></div>
+        <div>State: {{ party.state_name }} ({{ party.state_code }})</div>
+        {% if party.gstin %}
+        <div>GSTIN: {{ party.gstin }}</div>
+        {% endif %}
+        <div>Vendor Source: {{ quote.vendor_name }}</div>
+        <div>Ship To: {{ party.ship_to }}</div>
+      </td>
+    </tr>
+  </table>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:6%;">SL</th>
+        <th style="width:35%;">Description</th>
+        <th style="width:8%;">Qty</th>
+        <th style="width:13%;">Rate</th>
+        <th style="width:10%;">Discount</th>
+        <th style="width:8%;">GST %</th>
+        <th style="width:20%;">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>
+          <b>{{ quote.product_name }}</b><br />
+          <span class="muted">Category: {{ quote.category }}</span><br />
+          <span class="muted">Manufacturer: {{ quote.manufacturer }}</span><br />
+          <span class="muted">Warranty: {{ quote.warranty }}</span>
+        </td>
+        <td class="num">{{ quote.quantity }}</td>
+        <td class="num">INR {{ "%.2f"|format(quote.unit_price) }}</td>
+        <td class="num">INR {{ "%.2f"|format(quote.discount_amount) }}</td>
+        <td class="num">{{ gst_rate_pct }}</td>
+        <td class="num">INR {{ "%.2f"|format(quote.taxable_amount) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table class="totals">
+    <tr><td class="label">Subtotal</td><td class="num">INR {{ "%.2f"|format(quote.subtotal) }}</td></tr>
+    <tr><td class="label">Taxable Value</td><td class="num">INR {{ "%.2f"|format(quote.taxable_amount) }}</td></tr>
+    <tr><td class="label">CGST</td><td class="num">INR {{ "%.2f"|format(cgst_amount) }}</td></tr>
+    <tr><td class="label">SGST</td><td class="num">INR {{ "%.2f"|format(sgst_amount) }}</td></tr>
+    <tr><td class="label">Final Amount</td><td class="num"><b>INR {{ "%.2f"|format(quote.final_amount) }}</b></td></tr>
+  </table>
+
+  <div class="section">
+    <div class="box-title">Bank Details</div>
+    <div>Bank Name: {{ company.bank_name }}</div>
+    <div>Account Name: {{ company.account_name }}</div>
+    <div>Account No: {{ company.account_no }}</div>
+    <div>IFSC: {{ company.ifsc }}</div>
+  </div>
+
+  <div class="section">
+    <div class="box-title">Terms and Conditions</div>
+    <ol>
+      {% for term in terms %}
+      <li>{{ term }}</li>
+      {% endfor %}
+    </ol>
+    {% if note %}
+    <div style="margin-top: 6px;"><b>Note:</b> {{ note }}</div>
+    {% endif %}
+    <div style="margin-top: 6px;">This is a computer generated invoice.</div>
+  </div>
+</body>
+</html>

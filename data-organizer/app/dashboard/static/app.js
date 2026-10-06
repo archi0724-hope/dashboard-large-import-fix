@@ -95,11 +95,12 @@ const PAGES = [
   ["entities", "Companies"], ["quality", "Data quality"], ["export", "Export data"], ["settings", "Workspace settings"], ["logs", "Activity log"],
 ];
 const VENDOR_PAGES = [["vendor", "Vendor dashboard"]];
+const workspacePages = () => S.workspace === "vendor" ? VENDOR_PAGES : PAGES;
 
 function renderNav() {
   const pend = S.status?.totals?.pending_reviews || 0;
-  const pages = S.workspace === "vendor" ? VENDOR_PAGES : PAGES;
-  $("#nav").innerHTML = pages.map(([k, l]) => html`<a href="#/${k}" class="${S.page === k ? "on" : ""}" ${S.page === k ? raw('aria-current="page"') : ""}>${icon(k === "vendor" ? "overview" : k)}<span>${l}</span><span class="sp"></span>${k === "review" && pend ? html`<span class="badge-n">${pend}</span>` : ""}</a>`).map(x => x.__raw).join("");
+  const pages = workspacePages();
+  $("#nav").innerHTML = pages.map(([k, l]) => html`<a href="#/${k}" class="${S.page === k ? "on" : ""}" ${S.page === k ? raw('aria-current="page"') : ""}>${icon(["vendor", "chatbot"].includes(k) ? "overview" : k)}<span>${l}</span><span class="sp"></span>${k === "review" && pend ? html`<span class="badge-n">${pend}</span>` : ""}</a>`).map(x => x.__raw).join("");
   const p = S.status?.progress;
   const pill = $("#runpill");
   if (p?.running) { pill.className = "pill run"; pill.textContent = `Running ${p.percent}%`; }
@@ -108,7 +109,7 @@ function renderNav() {
   const c = S.cfg;
   $("#srclabel").textContent = c ? (c.source_kind === "drive" ? "Source: Google Drive" : "Source: " + (c.local_input_dir ? c.local_input_dir.split("/").slice(-2).join("/") : "not set")) : "";
   $$('[data-workspace]').forEach(button => button.classList.toggle("on", button.dataset.workspace === S.workspace));
-  document.body.classList.toggle("vendor-full", S.workspace === "vendor");
+  document.body.classList.toggle("vendor-full", S.workspace !== "organizer");
 }
 
 async function refreshStatus() {
@@ -122,17 +123,24 @@ function killCharts() { S.charts.forEach(c => c.destroy()); S.charts = []; }
 
 async function route() {
   const k = (location.hash.replace(/^#\//, "") || "overview").split("?")[0];
-  const pages = S.workspace === "vendor" ? VENDOR_PAGES : PAGES;
+  S.workspace = ["vendor", "chatbot"].includes(k) ? "vendor" : "organizer";
+  localStorage.setItem("workspace", S.workspace);
+  const pages = workspacePages();
   S.page = pages.some(p => p[0] === k) ? k : pages[0][0];
   killCharts();
   $("#title").textContent = (S.workspace === "vendor" ? "Vendor workspace · " : "Organizer workspace · ") + pages.find(p => p[0] === S.page)[1];
   $("#topactions").innerHTML = "";
-  await guard(refreshStatus)();
-  if (S.workspace === "vendor") {
-    $("#view").innerHTML = `<iframe class="vendor-frame" title="Vendor dashboard" src="/vendor/"></iframe>`;
+  if (S.workspace !== "organizer") {
+    renderNav();
+    const src = k === "chatbot" ? "/vendor/?assistant=1" : "/vendor/";
+    const title = "Vendor dashboard";
+    if ($("#view .vendor-frame")?.getAttribute("src") !== src) {
+      $("#view").innerHTML = `<iframe class="vendor-frame" title="${title}" src="${src}"></iframe>`;
+    }
     $("#view").focus({ preventScroll: true });
     return;
   }
+  await guard(refreshStatus)();
   $("#view").innerHTML = `<div class="empty">Loading...</div>`;
   await guard(PAGE[S.page])();
   $("#view").focus({ preventScroll: true });
@@ -141,8 +149,9 @@ window.addEventListener("hashchange", route);
 $$('[data-workspace]').forEach(button => button.addEventListener("click", () => {
   S.workspace = button.dataset.workspace;
   localStorage.setItem("workspace", S.workspace);
-  location.hash = S.workspace === "vendor" ? "#/vendor" : "#/overview";
-  route();
+  const target = S.workspace === "vendor" ? "#/vendor" : "#/overview";
+  if (location.hash === target) route();
+  else location.hash = target;
 }));
 
 // ---------------------------------------------------------------- overview

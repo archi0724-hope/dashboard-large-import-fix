@@ -13,13 +13,13 @@ import re
 import unicodedata
 from datetime import datetime
 from io import BytesIO
+from functools import partial
 from pathlib import Path
 import time
 from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 import exports as exports_module
 from import_service import import_documents
@@ -30,13 +30,13 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
 # export or Store class once so the app starts without a manual restart.
-if not hasattr(exports_module, "CATALOGUE_PRICE_COLUMN_OPTIONS"):
+if not getattr(exports_module, "STREAMING_CATALOGUE_EXPORT", False):
     exports_module = importlib.reload(exports_module)
 catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
 csv_bytes = exports_module.csv_bytes
 workbook_bytes = exports_module.workbook_bytes
 
-if not hasattr(storage_module.Store, "product_records"):
+if not hasattr(storage_module.Store, "product_record_count"):
     storage_module = importlib.reload(storage_module)
 Store = storage_module.Store
 
@@ -120,7 +120,7 @@ try:
     store = open_store(
         setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data")),
         setting("DATABASE_URL"),
-        "product-records-v3",
+        "product-records-v4",
     )
 except Exception as error:
     logging.getLogger(__name__).error("Storage initialization failed: %s", type(error).__name__)
@@ -159,6 +159,11 @@ def first_page_pdf(payload: bytes) -> bytes | None:
 def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | None:
     """Cache document reads across Streamlit reruns until the file hash changes."""
     return _store.read_bytes(document_id)
+
+
+@st.cache_data(show_spinner=False, max_entries=2, ttl=600)
+def catalogue_download(_store: Store, store_identity: str, signature: tuple) -> bytes:
+    return catalogue_price_workbook_bytes(_store.product_records())
 
 
 @st.cache_data(show_spinner=False, max_entries=32)
@@ -468,79 +473,8 @@ def vendor_ai_format(question: str, results: list[dict]) -> str:
 
 
 def vendor_ai_page():
-    st.subheader("Vendor AI Assistant")
-    st.caption("Search your vendor master data, uploaded documents, price lists and catalogues using natural-language questions.")
-    st.caption("Integrated with the QuoteSarthi AI assistant for live product and quotation workflows.")
-    st.markdown(
-        """
-        <div style="padding:12px 14px; border:1px solid #dfe9ef; border-radius:12px; background:linear-gradient(135deg,#f4f9ff,#ffffff); margin-bottom:1rem;">
-            <strong>Vendor + QuoteSarthi AI</strong><br>
-            Use the dashboard search below or open the integrated AI copilot side-by-side for product discovery and quote support.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    components.iframe("http://127.0.0.1:5001/", height=820, scrolling=True)
-    if st.session_state.pop("vendor_ai_clear_query", False):
-        st.session_state["vendor_ai_query"] = ""
-    if store.vendors().empty and store.documents().empty and store.product_records().empty:
-        st.info("This workspace has no saved vendor files yet. Upload a catalogue, price list, or vendor document before searching.")
-        if st.button("Go to Upload documents", key="vendor_ai_upload"):
-            go_to("Upload documents")
-            st.rerun()
-    suggestion_cols = st.columns(3)
-    for idx, suggestion in enumerate(VENDOR_AI_SUGGESTIONS):
-        with suggestion_cols[idx % 3]:
-            if st.button(suggestion, key=f"vendor_ai_suggestion_{idx}", use_container_width=True):
-                st.session_state["vendor_ai_run"] = suggestion
-
-    if "vendor_ai_run" in st.session_state:
-        candidate = st.session_state.pop("vendor_ai_run")
-        if candidate:
-            with st.spinner("Searching vendor records and product prices..."):
-                results = vendor_ai_search(store, candidate)
-            response = vendor_ai_format(candidate, results)
-            _store_vendor_ai_search(candidate, response, results)
-            st.session_state.pop("vendor_ai_query", None)
-
-    query = st.text_input(
-        "Search vendors, products, catalogues, prices, companies...",
-        placeholder="Ask anything about vendors, products, prices or companies...",
-        key="vendor_ai_query",
-    )
-    if st.button("Search dashboard", type="primary", use_container_width=True):
-        if query.strip():
-            with st.spinner("Searching vendor records and product prices..."):
-                results = vendor_ai_search(store, query.strip())
-            response = vendor_ai_format(query.strip(), results)
-            _store_vendor_ai_search(query.strip(), response, results)
-            st.session_state["vendor_ai_clear_query"] = True
-            st.rerun()
-
-    if not st.session_state.get("vendor_ai_conversation"):
-        st.info("Ask a question to search the vendor database and uploaded documents. Results are weighted to keep vendor records first and uploaded catalogues next.")
-
-    history = sorted(
-        st.session_state.get("vendor_ai_search_history", []),
-        key=lambda entry: entry["timestamp"],
-        reverse=True,
-    )
-    if history:
-        st.markdown("### Recent searches")
-        for entry in history:
-            with st.expander(f"{entry['timestamp']}  ·  {entry['query']}", expanded=entry is history[0]):
-                st.caption(f"{entry['result_count']} matching result(s) · {entry['vendor_count']} vendor(s)")
-                st.markdown(entry["response"])
-
-    if st.session_state.get("vendor_ai_conversation"):
-        last_question = ""
-        for message in reversed(st.session_state["vendor_ai_conversation"]):
-            if message["role"] == "user":
-                last_question = message["content"]
-                break
-        if last_question:
-            web_url = "https://www.google.com/search?q=" + quote_plus(last_question)
-            st.link_button("Search the web for this company or product", web_url, use_container_width=True)
+    from hospkart_chat.vendor_assistant import render_assistant
+    render_assistant()
 
 
 def _store_vendor_ai_search(query: str, response: str, results: list[dict]):
@@ -578,12 +512,6 @@ def show_saved_data():
 def go_to(page_name: str):
     # Never mutate the radio widget key after it has been instantiated in the same run.
     st.session_state["pending_page"] = page_name
-
-
-def switch_dashboard():
-    st.session_state["pending_page"] = (
-        "Catalogue & prices" if st.session_state.get("workspace_mode") == "Vendor" else "Companies & documents"
-    )
 
 
 def open_checklist():
@@ -644,6 +572,9 @@ if st.session_state.pop("reset_completed", False):
 
 # Apply requested navigation before the sidebar widgets are instantiated.
 pending_page = st.session_state.pop("pending_page", None)
+if st.query_params.get("assistant") == "1" and not st.session_state.get("assistant_deep_link_applied"):
+    pending_page = "🤖 Vendor AI Assistant"
+    st.session_state["assistant_deep_link_applied"] = True
 
 vendors = store.vendors()
 documents = store.documents()
@@ -657,40 +588,17 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
-    workspace = st.segmented_control(
-        "Dashboard",
-        ["Organizer", "Vendor"],
-        default="Vendor",
-        key="workspace_mode",
-        on_change=switch_dashboard,
-        help="Both dashboards use the same saved files and data.",
-    )
-    if workspace == "Organizer":
-        navigation = ["Organize companies", "Find products", "Import ZIP files", "Export & backups"]
-        page_map = {
-            "Organize companies": "Companies & documents",
-            "Find products": "Catalogue & prices",
-            "Import ZIP files": "Upload documents",
-            "Export & backups": "Data & backups",
-        }
-        captions = [
-            "Company and name-wise document folders",
-            "Search one product instead of opening a full catalogue",
-            "Import a ZIP and extract catalogues and prices",
-            "Download Excel files and one-shot ZIP exports",
-        ]
-    else:
-        navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
-        page_map = {item: item for item in navigation}
-        captions = [
-            "Yes / No checklist + company downloads",
-            "Extracted products and prices",
-            "Add a new vendor batch",
-            "Original ZIP uploads saved here",
-            "Only files that need correction",
-            "Natural-language vendor search and company answers",
-            "Backup, restore or reset saved data",
-        ]
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
+    page_map = {item: item for item in navigation}
+    captions = [
+        "Yes / No checklist + company downloads",
+        "Extracted products and prices",
+        "Add a new vendor batch",
+        "Original ZIP uploads saved here",
+        "Only files that need correction",
+        "HospKart chat, product search, quotations and vendor documents",
+        "Backup, restore or reset saved data",
+    ]
     if pending_page:
         matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
         if matching_label:
@@ -718,7 +626,7 @@ with st.sidebar:
         st.session_state.clear(); st.rerun()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
-header.title("Organizer Dashboard" if workspace == "Organizer" else "Vendor Document Dashboard")
+header.title("Vendor Document Dashboard")
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
@@ -729,34 +637,35 @@ reset_col.button("Reset all history", key="open_reset", on_click=open_data_reset
 if notice := st.session_state.pop("notice", None):
     st.success(notice)
 
-st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
-m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available document records. Identical bytes uploaded again for the same company do not increase this count.")
-m3.metric(f"All {len(DOCUMENT_TYPES)} types available", f"{display_counts['complete_companies']:,}", help="Every checklist category has a classified file; this is not a validity/compliance score.")
-m4.metric("Needs review", f"{display_counts['review_files']:,}", help="Unassigned, unclassified or unavailable document files.")
-document_type_counts = {
-    document_type: int(documents.loc[
-        documents.available & documents.types.map(lambda types: document_type in types),
-        "company_key",
-    ].nunique())
-    for document_type in DOCUMENT_TYPES
-}
-if view_cleared:
-    document_type_counts = {document_type: 0 for document_type in DOCUMENT_TYPES}
-st.markdown('<div class="type-label">Document coverage</div>', unsafe_allow_html=True)
-for start in range(0, len(DOCUMENT_TYPES), 5):
-    type_columns = st.columns(5)
-    for column, document_type in zip(type_columns, DOCUMENT_TYPES[start:start + 5]):
-        column.metric(
-            document_type,
-            f"{document_type_counts[document_type]:,}",
-            help=f"Unique companies with at least one available {document_type} file. Multiple files for one company count once.",
-        )
-if view_cleared:
-    st.info("Dashboard view is cleared, so the summary shows 0. Saved data is still stored. Click **Show saved data** to bring it back, or use **Reset all data** to actually delete the active records.")
-else:
-    st.caption("Headcount is unique companies. Document totals count files, and document-type cards count classified files.")
+if page != "🤖 Vendor AI Assistant":
+    st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
+    m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available document records. Identical bytes uploaded again for the same company do not increase this count.")
+    m3.metric(f"All {len(DOCUMENT_TYPES)} types available", f"{display_counts['complete_companies']:,}", help="Every checklist category has a classified file; this is not a validity/compliance score.")
+    m4.metric("Needs review", f"{display_counts['review_files']:,}", help="Unassigned, unclassified or unavailable document files.")
+    document_type_counts = {
+        document_type: int(documents.loc[
+            documents.available & documents.types.map(lambda types: document_type in types),
+            "company_key",
+        ].nunique())
+        for document_type in DOCUMENT_TYPES
+    }
+    if view_cleared:
+        document_type_counts = {document_type: 0 for document_type in DOCUMENT_TYPES}
+    st.markdown('<div class="type-label">Document coverage</div>', unsafe_allow_html=True)
+    for start in range(0, len(DOCUMENT_TYPES), 5):
+        type_columns = st.columns(5)
+        for column, document_type in zip(type_columns, DOCUMENT_TYPES[start:start + 5]):
+            column.metric(
+                document_type,
+                f"{document_type_counts[document_type]:,}",
+                help=f"Unique companies with at least one available {document_type} file. Multiple files for one company count once.",
+            )
+    if view_cleared:
+        st.info("Dashboard view is cleared, so the summary shows 0. Saved data is still stored. Click **Show saved data** to bring it back, or use **Reset all data** to actually delete the active records.")
+    else:
+        st.caption("Headcount is unique companies. Document totals count files, and document-type cards count classified files.")
 
 if page == "Upload documents":
     st.subheader("Upload vendor documents")
@@ -866,7 +775,7 @@ elif page == "Companies & documents":
         checklist_dl1, checklist_dl2 = st.columns(2)
         visible_excel_name = export_filename(filtered.iloc[0]["Company Name"], "Checklist", "xlsx") if len(filtered) == 1 else "All_Vendors_Checklist.xlsx"
         visible_csv_name = export_filename(filtered.iloc[0]["Company Name"], "Checklist", "csv") if len(filtered) == 1 else "All_Vendors_Checklist.csv"
-        checklist_dl1.download_button("Download visible checklist - Excel", workbook_bytes(filtered, scoped, True, aliases), visible_excel_name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch", key="visible_excel")
+        checklist_dl1.download_button("Download visible checklist - Excel", partial(workbook_bytes, filtered, scoped, True, aliases), visible_excel_name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch", key="visible_excel", on_click="ignore")
         checklist_dl2.download_button("Download visible checklist - CSV", csv_bytes(view), visible_csv_name, "text/csv", width="stretch", key="visible_csv")
         st.divider()
         st.markdown("### Company documents")
@@ -884,8 +793,8 @@ elif page == "Companies & documents":
             row = company_checklist.iloc[0]
             st.caption(f"{int(company_docs.available.sum())} documents saved | {row['Available']} of {len(DOCUMENT_TYPES)} document types available | {row['Needs review']} to review")
             x1,x2 = st.columns(2)
-            x1.download_button("Download company Excel", workbook_bytes(company_checklist, company_docs, True, aliases),
-                export_filename(company,"Checklist","xlsx"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch", key="company_excel")
+            x1.download_button("Download company Excel", partial(workbook_bytes, company_checklist, company_docs, True, aliases),
+                export_filename(company,"Checklist","xlsx"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch", key="company_excel", on_click="ignore")
             if x2.button("Prepare all company documents", disabled=company_docs.empty, width="stretch", key="prepare_company_zip"):
                 with st.spinner("Preparing this company's files..."):
                     st.session_state["zip_company"] = (signature, store.company_zip(company, company_docs))
@@ -898,7 +807,10 @@ elif page == "Companies & documents":
                 available = int(rows.available.sum())
                 yes_no = "Yes" if available else "No"
                 label = f"{category}  |  {yes_no}  |  {available} file(s)" if category in DOCUMENT_TYPES else f"Other documents  |  {available} file(s)"
-                with st.expander(label):
+                category_panel = st.expander(label, key=f"company_category_{selected}_{category}", on_change="rerun")
+                with category_panel:
+                    if not category_panel.open:
+                        continue
                     if rows.empty:
                         st.caption("No file available in this category.")
                     for row_number, doc in enumerate(rows.itertuples(index=False)):
@@ -937,40 +849,34 @@ elif page == "Catalogue & prices":
     st.subheader("Catalogue and price records")
     st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
     export_signature = store.search_index_signature()
-    prepared_export = st.session_state.get("catalogue_price_export")
-    if st.button(
+    st.download_button(
         "Export company-wise catalogue & prices — Excel",
+        data=partial(catalogue_download, store, hashlib.sha256((str(store.data_dir) + store.database_url).encode()).hexdigest(), export_signature),
+        file_name="Company_Wise_Catalogue_and_Prices.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         icon=":material/download:",
-        key="prepare_company_wise_catalogue_price_export",
-        help="Prepare an Excel workbook with one tab per company. Original files stay stored in their checklist folders and backups.",
-    ):
-        with st.spinner("Preparing the company-wise Excel workbook..."):
-            export_records = store.product_records()
-            if export_records.empty:
-                st.warning("There are no catalogue or price records to export yet.")
-            else:
-                st.session_state["catalogue_price_export"] = (
-                    export_signature,
-                    catalogue_price_workbook_bytes(export_records),
-                )
-        prepared_export = st.session_state.get("catalogue_price_export")
-    if prepared_export and prepared_export[0] == export_signature:
-        st.download_button(
-            "Download company-wise catalogue & prices — Excel",
-            prepared_export[1],
-            "Company_Wise_Catalogue_and_Prices.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="Download the prepared company-wise workbook.",
-            icon=":material/download:",
-            key="company_wise_catalogue_price_export",
-        )
-        st.caption("The Excel file is ready. Downloading it does not change the checklist, stored documents, or backups.")
-    else:
-        st.caption("Prepare the Excel file only when you need it. This keeps the dashboard fast to open.")
+        key="company_wise_catalogue_price_export",
+        on_click="ignore",
+        help="Download an Excel workbook with one tab per company. Original files stay stored in their checklist folders and backups.",
+    )
+    st.caption("Excel generates when you click download. You can keep browsing while it prepares.")
     search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
     record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
-    records = store.product_records(search, "" if record_type == "All" else record_type)
-    st.metric("Extracted records", f"{len(records):,}")
+    kind = "" if record_type == "All" else record_type
+    total_records = store.product_record_count(search, kind)
+    st.metric("Extracted records", f"{total_records:,}")
+    page_size = 200
+    page_count = max(1, (total_records + page_size - 1) // page_size)
+    filter_key = (search, kind)
+    if st.session_state.get("product_page_filter") != filter_key:
+        st.session_state["product_page_filter"] = filter_key
+        st.session_state["product_page"] = 1
+    st.session_state["product_page"] = min(st.session_state.get("product_page", 1), page_count)
+    page_number = st.number_input("Page", min_value=1, max_value=page_count, step=1, key="product_page")
+    offset = (int(page_number) - 1) * page_size
+    records = store.product_records(search, kind, limit=page_size, offset=offset)
+    if total_records:
+        st.caption(f"Showing {offset + 1:,}–{offset + len(records):,} of {total_records:,} matching records. Search covers all records; Excel export includes the full catalogue.")
     if records.empty:
         st.info("No extracted catalogue or price rows match this search yet.")
     else:

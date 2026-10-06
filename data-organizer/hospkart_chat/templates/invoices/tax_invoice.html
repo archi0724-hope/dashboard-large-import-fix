@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ quote.quote_id }} - Tax Invoice</title>
+  <style>
+    @page { size: A4; margin: 22mm 14mm; }
+    body { font-family: Helvetica, Arial, sans-serif; color: #111; font-size: 11px; }
+    .title { font-size: 22px; font-weight: 700; letter-spacing: 0.6px; margin-bottom: 8px; }
+    .row { display: flex; width: 100%; }
+    .cell { width: 50%; vertical-align: top; }
+    .meta { margin: 3px 0; }
+    .section { margin-top: 12px; }
+    .section-title { font-size: 12px; font-weight: 700; margin-bottom: 5px; text-transform: uppercase; }
+    .boxed { border: 1px solid #111; padding: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border: 1px solid #111; padding: 6px; vertical-align: top; }
+    th { background: #f2f2f2; text-align: left; }
+    .number { text-align: right; white-space: nowrap; }
+    .totals { width: 45%; margin-left: auto; margin-top: 8px; }
+    .totals td { border: 1px solid #111; padding: 5px; }
+    .totals .label { width: 65%; font-weight: 700; }
+    .muted { color: #333; }
+    .page-break { page-break-before: always; }
+    .terms li { margin-bottom: 4px; }
+    .footer-note { margin-top: 12px; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div class="title">TAX INVOICE</div>
+  <div class="meta"><b>Bill No.</b> {{ quote.quote_id }} &nbsp; | &nbsp; <b>Bill Date</b> {{ bill_date }} &nbsp; | &nbsp; <b>Place of Supply</b> Rajasthan (08)</div>
+  <div class="meta"><b>Reference Quotation</b> {{ quote.quote_id }}</div>
+
+  <div class="row section">
+    <div class="cell boxed" style="margin-right: 6px;">
+      <div class="section-title">Bill From</div>
+      <div><b>{{ company.name }}</b></div>
+      <div>{{ company.address }}</div>
+      <div>PAN: {{ company.pan }}</div>
+      <div>GSTIN: {{ company.gstin }}</div>
+      <div>Email: {{ company.email }}</div>
+      <div>Phone: {{ company.phone }}</div>
+    </div>
+    <div class="cell boxed" style="margin-left: 6px;">
+      <div class="section-title">Bill To</div>
+      <div><b>{{ party.name }}</b></div>
+      <div>State Name: {{ party.state_name }}, Code: {{ party.state_code }}</div>
+      <div>Vendor Source: {{ quote.vendor_name }}</div>
+      <div>Category: {{ quote.category }}</div>
+      <div>Shipped To: {{ party.ship_to }}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:6%;">SL</th>
+        <th style="width:38%;">Description</th>
+        <th style="width:8%;">Qty</th>
+        <th style="width:14%;">Rate</th>
+        <th style="width:8%;">GST (%)</th>
+        <th style="width:12%;">Amount</th>
+        <th style="width:14%;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>
+          <b>{{ quote.product_name }}</b><br />
+          <span class="muted">Manufacturer: {{ quote.manufacturer }}</span><br />
+          <span class="muted">Warranty: {{ quote.warranty }}</span>
+        </td>
+        <td class="number">{{ quote.quantity }}</td>
+        <td class="number">INR {{ "%.2f"|format(quote.unit_price) }}</td>
+        <td class="number">{{ gst_rate_pct }}</td>
+        <td class="number">INR {{ "%.2f"|format(quote.taxable_amount) }}</td>
+        <td class="number">INR {{ "%.2f"|format(quote.final_amount) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table class="totals">
+    <tr><td class="label">Taxable Value</td><td class="number">INR {{ "%.2f"|format(quote.taxable_amount) }}</td></tr>
+    <tr><td class="label">CGST</td><td class="number">INR {{ "%.2f"|format(cgst_amount) }}</td></tr>
+    <tr><td class="label">SGST</td><td class="number">INR {{ "%.2f"|format(sgst_amount) }}</td></tr>
+    <tr><td class="label">Total (incl. GST)</td><td class="number"><b>INR {{ "%.2f"|format(quote.final_amount) }}</b></td></tr>
+  </table>
+
+  <div class="footer-note">Payment Note: 50% advance payment. Remaining 50% after successful delivery and installation.</div>
+  <div class="footer-note">This is an electronically generated tax invoice.</div>
+
+  <div class="page-break"></div>
+  <div class="section-title">ITEM SPECIFICATIONS / DESCRIPTIONS</div>
+  <div class="meta"><b>Bill No.</b> {{ quote.quote_id }} &nbsp; <b>Bill Date</b> {{ bill_date }}</div>
+  <div class="boxed">
+    <div><b>1. {{ quote.product_name }}</b></div>
+    <div style="margin-top:6px;">Category: {{ quote.category }}</div>
+    <div>Manufacturer: {{ quote.manufacturer }}</div>
+    <div>Vendor: {{ quote.vendor_name }}</div>
+    <div>Warranty: {{ quote.warranty }}</div>
+    <div>Offered Unit Price: INR {{ "%.2f"|format(quote.unit_price) }}</div>
+  </div>
+
+  <div class="page-break"></div>
+  <div class="section-title">BANK DETAILS & DECLARATION</div>
+  <div class="meta"><b>Bill No.</b> {{ quote.quote_id }} &nbsp; <b>Bill Date</b> {{ bill_date }}</div>
+  <div class="boxed">
+    <div><b>Company's Bank Details</b></div>
+    <div>Bank Name: {{ company.bank_name }}</div>
+    <div>Account Name: {{ company.account_name }}</div>
+    <div>Account No: {{ company.account_no }}</div>
+    <div>IFSC Code: {{ company.ifsc }}</div>
+    <br />
+    <div><b>Terms and Conditions</b></div>
+    <div>Refer annexure for Payment & Delivery Terms, Logistics & Installation, and Warranty Policy.</div>
+  </div>
+
+  <div class="page-break"></div>
+  <div class="section-title">TERMS AND CONDITIONS</div>
+  <div class="meta"><b>Annexure to Invoice No.</b> {{ quote.quote_id }}</div>
+  <ol class="terms">
+    {% for term in terms %}
+    <li>{{ term }}</li>
+    {% endfor %}
+  </ol>
+</body>
+</html>

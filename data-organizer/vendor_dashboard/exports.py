@@ -20,6 +20,8 @@ except ModuleNotFoundError as error:
 
 from vendor_core import DOCUMENT_TYPES, supporting_category
 
+STREAMING_CATALOGUE_EXPORT = True
+
 CATALOGUE_PRICE_COLUMN_OPTIONS = {
     "company_name": ("Company Name", 34),
     "record_type": ("Record Type", 15),
@@ -219,8 +221,14 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
     sort_columns = [column for column in ("company_name", "record_type", "product_name") if column in frame]
     frame = frame.sort_values(sort_columns, kind="stable", na_position="last")
 
-    book = Workbook()
-    book.calculation = CalcProperties(calcId=191029, fullCalcOnLoad=True)
+    import xlsxwriter
+
+    output = BytesIO()
+    book = xlsxwriter.Workbook(output, {"constant_memory": True, "strings_to_formulas": False, "strings_to_urls": False})
+    title_format = book.add_format({"font_name": "Calibri", "font_size": 18, "bold": True, "font_color": "#17221B"})
+    note_format = book.add_format({"font_size": 10, "font_color": "#667268", "text_wrap": True})
+    header_format = book.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#233B2E", "text_wrap": True})
+    row_formats = [book.add_format({"font_name": "Calibri", "font_size": 11, "font_color": "#24613C", "text_wrap": True, "valign": "vcenter", **({"bg_color": "#F5F7F2"} if striped else {})}) for striped in (False, True)]
     names_used: set[str] = set()
 
     def sheet_name(company: str) -> str:
@@ -234,24 +242,31 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
         return name
 
     def add_rows(sheet, company: str, subset: pd.DataFrame) -> None:
-        style_sheet(
-            sheet, headers, widths,
-            company, "Extracted catalogue and price rows. Original source files remain stored in the checklist and backups.",
-        )
-        for row_number, record in enumerate(subset[source_columns].itertuples(index=False, name=None), 5):
-            for column, value in enumerate(record, 1):
-                if pd.isna(value):
-                    value = ""
-                write_text(sheet.cell(row_number, column), value)
-        finish(sheet)
+        sheet.hide_gridlines(2)
+        sheet.freeze_panes(4, 1)
+        sheet.set_landscape()
+        sheet.fit_to_pages(1, 0)
+        sheet.repeat_rows(0, 3)
+        for column, width in enumerate(widths):
+            sheet.set_column(column, column, width)
+        sheet.set_row(0, 32)
+        sheet.merge_range(0, 0, 0, len(headers)-1, company, title_format) if len(headers) > 1 else sheet.write_string(0, 0, company, title_format)
+        sheet.set_row(1, 34)
+        note = "Extracted catalogue and price rows. Original source files remain stored in the checklist and backups."
+        sheet.merge_range(1, 0, 1, len(headers)-1, note, note_format) if len(headers) > 1 else sheet.write_string(1, 0, note, note_format)
+        sheet.set_row(3, 32)
+        sheet.write_row(3, 0, headers, header_format)
+        for row_number, record in enumerate(subset[source_columns].itertuples(index=False, name=None), 4):
+            values = ["" if pd.isna(value) else ILLEGAL_CHARACTERS_RE.sub("", str(value)) for value in record]
+            sheet.set_row(row_number, 24)
+            sheet.write_row(row_number, 0, values, row_formats[row_number % 2])
+        sheet.autofilter(3, 0, max(3, len(subset)+3), len(headers)-1)
 
-    all_rows = book.active
-    all_rows.title = "All catalogue & prices"
-    names_used.add(all_rows.title.casefold())
+    all_rows = book.add_worksheet("All catalogue & prices")
+    names_used.add("all catalogue & prices")
     add_rows(all_rows, "ALL COMPANIES — CATALOGUE & PRICES", frame)
     for company, subset in frame.groupby("company_name", sort=True, dropna=False):
-        add_rows(book.create_sheet(sheet_name(str(company))), f"{company} — CATALOGUE & PRICES", subset)
+        add_rows(book.add_worksheet(sheet_name(str(company))), f"{company} — CATALOGUE & PRICES", subset)
 
-    output = BytesIO()
-    book.save(output)
+    book.close()
     return output.getvalue()

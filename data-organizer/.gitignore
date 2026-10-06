@@ -11,3 +11,8 @@ secrets/*
 
 *.duckdb
 *.duckdb.wal
+
+hospkart_chat/exports/
+hospkart_chat/logs/
+hospkart_chat/data/
+.localhost.pid

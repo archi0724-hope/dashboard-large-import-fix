@@ -46,3 +46,8 @@ plotly>=5.24,<7
 pytest==8.3.3
 httpx==0.28.1                     # used by fastapi.testclient
 reportlab==4.4.10                 # used only by scripts/generate_sample_data.py (synthetic PDF)
+
+# --- HospKart chat workspace (live catalogue, no embedding download required) ---
+Flask>=3.1,<4
+Jinja2>=3.1,<4
+a2wsgi>=1.10,<2

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ quote.quote_id }} - Purchase Invoice</title>
+  <style>
+    @page { size: A4; margin: 20mm 14mm; }
+    body { font-family: Helvetica, Arial, sans-serif; color: #111; font-size: 11px; }
+    .title { font-size: 22px; font-weight: 700; letter-spacing: 0.4px; margin-bottom: 10px; }
+    .meta { margin: 4px 0; }
+    .panel { border: 1px solid #111; padding: 8px; margin-top: 10px; }
+    .row { display: flex; width: 100%; }
+    .col { width: 50%; vertical-align: top; }
+    .section-title { font-size: 12px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #111; padding: 6px; vertical-align: top; }
+    th { background: #f2f2f2; text-align: left; }
+    .num { text-align: right; white-space: nowrap; }
+    .totals { width: 46%; margin-left: auto; margin-top: 10px; }
+    .totals td { border: 1px solid #111; padding: 6px; }
+    .totals .label { width: 65%; font-weight: 700; }
+    .page-break { page-break-before: always; }
+    .terms li { margin-bottom: 4px; }
+    .small { font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div class="title">PURCHASE INVOICE</div>
+  <div class="meta"><b>Purchase No.</b> {{ quote.quote_id }} &nbsp; | &nbsp; <b>Date</b> {{ bill_date }} &nbsp; | &nbsp; <b>Station</b> Jaipur</div>
+
+  <div class="row">
+    <div class="col panel" style="margin-right: 6px;">
+      <div class="section-title">Supplier</div>
+      <div><b>{{ quote.vendor_name }}</b></div>
+      <div>Manufacturer: {{ quote.manufacturer }}</div>
+      <div>Category: {{ quote.category }}</div>
+      <div>Product: {{ quote.product_name }}</div>
+      <div>Warranty: {{ quote.warranty }}</div>
+    </div>
+    <div class="col panel" style="margin-left: 6px;">
+      <div class="section-title">Buyer</div>
+      <div><b>{{ company.name }}</b></div>
+      <div>{{ company.address }}</div>
+      <div>Email: {{ company.email }}</div>
+      <div>Phone: {{ company.phone }}</div>
+      <div>PAN: {{ company.pan }}</div>
+      <div>GSTIN: {{ company.gstin }}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:42%;">Description</th>
+        <th style="width:10%;">Qty</th>
+        <th style="width:14%;">Unit Price</th>
+        <th style="width:14%;">Discount</th>
+        <th style="width:20%;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <b>{{ quote.product_name }}</b><br />
+          Vendor: {{ quote.vendor_name }}
+        </td>
+        <td class="num">{{ quote.quantity }}</td>
+        <td class="num">INR {{ "%.2f"|format(quote.unit_price) }}</td>
+        <td class="num">INR {{ "%.2f"|format(quote.discount_amount) }}</td>
+        <td class="num">INR {{ "%.2f"|format(quote.taxable_amount) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table class="totals">
+    <tr><td class="label">Subtotal</td><td class="num">INR {{ "%.2f"|format(quote.subtotal) }}</td></tr>
+    <tr><td class="label">GST ({{ gst_rate_pct }}%)</td><td class="num">INR {{ "%.2f"|format(quote.gst_amount) }}</td></tr>
+    <tr><td class="label">Final Amount</td><td class="num"><b>INR {{ "%.2f"|format(quote.final_amount) }}</b></td></tr>
+  </table>
+
+  <div class="panel">
+    <div class="section-title">Bank Details & Declaration</div>
+    <div>Bank Name: {{ company.bank_name }}</div>
+    <div>Account Name: {{ company.account_name }}</div>
+    <div>Account No: {{ company.account_no }}</div>
+    <div>IFSC: {{ company.ifsc }}</div>
+    <div style="margin-top: 8px;">We declare that this purchase invoice reflects agreed terms and pricing.</div>
+  </div>
+
+  <div class="small" style="margin-top: 10px;">This is a computer generated purchase invoice.</div>
+
+  <div class="page-break"></div>
+  <div class="section-title">Terms and Conditions (Annexure)</div>
+  <ol class="terms">
+    {% for term in terms %}
+    <li>{{ term }}</li>
+    {% endfor %}
+  </ol>
+</body>
+</html>

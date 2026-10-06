@@ -11,6 +11,8 @@ from typing import Any, Literal
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from a2wsgi import WSGIMiddleware
+from hospkart_chat.app import app as chatbot_app
 from pydantic import BaseModel, Field
 import streamlit as streamlit
 
@@ -61,7 +63,7 @@ async def guard(request: Request, call_next):
     path = request.url.path
     # The mounted Streamlit app owns its own sessions and storage. Do not open
     # the Organizer database or apply Organizer API authentication to it.
-    if path.startswith("/vendor"):
+    if path == "/vendor" or path.startswith("/vendor/") or path == "/chatbot" or path.startswith("/chatbot/"):
         return await call_next(request)
     token = st().settings.dashboard_token
     if token and path.startswith("/api/") and request.headers.get("x-token") != token and request.query_params.get("token") != token:
@@ -372,3 +374,5 @@ def index():
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.mount("/vendor", vendor_dashboard, name="vendor-dashboard")
+
+app.mount("/chatbot", WSGIMiddleware(chatbot_app), name="hospkart-chatbot")

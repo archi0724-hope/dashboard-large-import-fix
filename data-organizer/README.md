@@ -1,5 +1,10 @@
 # Data Organizer
 
+This workspace now includes the HospKart BD chatbot connected to the Vendor
+catalogue. Run `python -m app serve` and open <http://127.0.0.1:8000/> to switch
+between Organizer and Vendor. HospKart chat is inside Vendor AI Assistant. See [MERGED_APP.md](MERGED_APP.md)
+for the shared setup, API routes and catalogue behavior.
+
 A production-ready pipeline and dashboard that takes a messy pile of files — Excel, legacy `.xls`, CSV, PDF,
 Word, plain text, scanned images — and turns them into one clean, traceable master list of entities (hospitals,
 companies, or any other kind of organisation you choose), with every name variant recorded and every record

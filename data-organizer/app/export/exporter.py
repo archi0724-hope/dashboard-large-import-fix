@@ -245,7 +245,7 @@ class Exporter:
         data = [[Paragraph(c, style) for c in columns]]
         for row in df.itertuples(index=False, name=None):
             data.append([Paragraph(str(value if value is not None else ""), style) for value in row])
-        doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=0.25 * inch, leftMargin=0.25 * inch,
+        doc = SimpleDocTemplate(str(path), pagesize=landscape(letter), rightMargin=0.25 * inch, leftMargin=0.25 * inch,
                                 topMargin=0.3 * inch, bottomMargin=0.3 * inch)
         table = LongTable(data, repeatRows=1, splitByRow=1)
         table.setStyle(TableStyle([

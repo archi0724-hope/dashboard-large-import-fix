@@ -572,21 +572,35 @@ class Store:
                 db.execute("UPDATE vdd_documents SET types_json=?,method='Content extraction',reason=? WHERE id=?",
                            (json.dumps(merged), "Catalogue/price-list classification from filename and extracted content.", int(document_id)))
 
-    def product_records(self, query: str = "", record_type: str = "") -> pd.DataFrame:
-        sql = """SELECT p.*, COALESCE(NULLIF(p.source_file, ''), d.filename) AS source_file
-            FROM vdd_product_records p
-            LEFT JOIN vdd_documents d ON d.id=p.document_id"""
+    @staticmethod
+    def _product_filter(query: str, record_type: str):
         clauses, params = [], []
         if query.strip():
-            clauses.append("(lower(product_name) LIKE ? OR lower(sku) LIKE ? OR lower(description) LIKE ? OR lower(company_name) LIKE ?)")
+            clauses.append("(lower(p.product_name) LIKE ? OR lower(p.sku) LIKE ? OR lower(p.description) LIKE ? OR lower(p.company_name) LIKE ?)")
             term = f"%{query.casefold().strip()}%"
             params.extend([term, term, term, term])
         if record_type:
-            clauses.append("record_type=?")
+            clauses.append("p.record_type=?")
             params.append(record_type)
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
+        return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+    def product_record_count(self, query: str = "", record_type: str = "") -> int:
+        where, params = self._product_filter(query, record_type)
+        with self.connection() as db:
+            return int(db.execute("SELECT COUNT(*) AS n FROM vdd_product_records p" + where, params).fetchone()["n"])
+
+    def product_records(self, query: str = "", record_type: str = "", *, limit: int | None = None, offset: int = 0) -> pd.DataFrame:
+        sql = """SELECT p.*, COALESCE(NULLIF(p.source_file, ''), d.filename) AS source_file
+            FROM vdd_product_records p
+            LEFT JOIN vdd_documents d ON d.id=p.document_id"""
+        where, params = self._product_filter(query, record_type)
+        sql += where
         sql += " ORDER BY lower(p.company_name), lower(p.product_name), p.id"
+        if limit is not None:
+            if limit < 1 or offset < 0:
+                raise ValueError("Page size must be positive and offset must be non-negative.")
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([int(limit), int(offset)])
         with self.connection() as db:
             rows = [dict(row) for row in db.execute(sql, params).fetchall()]
         return pd.DataFrame(rows, columns=PRODUCT_COLUMNS)
