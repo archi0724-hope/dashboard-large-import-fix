@@ -68,6 +68,14 @@ SUPPORTING_ONLY = re.compile(
 )
 
 
+def documents_for_category(documents: pd.DataFrame, category: str) -> pd.DataFrame:
+    """Select category rows while retaining the schema when there are no documents."""
+    mask = documents["types"].map(
+        lambda types: category in types if category in DOCUMENT_TYPES else not types
+    ).astype(bool)
+    return documents.loc[mask]
+
+
 def normalize(value: str) -> str:
     return re.sub(r"[^\w]+", " ", unicodedata.normalize("NFKC", str(value)).casefold().replace("_", " ")).strip()
 

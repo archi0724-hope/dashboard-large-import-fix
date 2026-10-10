@@ -88,7 +88,7 @@ def test_free_text_lines(settings, cfg, demo_dir):
 def test_scanned_image_needs_ocr(settings, cfg, demo_dir):
     from app.ingestion.ocr_reader import ocr_available
 
-    if not ocr_available():
+    if not ocr_available(settings.tesseract_cmd):
         pytest.skip("tesseract not installed")
     recs, rep = extract(settings, cfg, demo_dir, "scanned_directory.png")
     assert "Eastern Star Hospital" in names(recs) and rep.blocks[0].method == "ocr_image"

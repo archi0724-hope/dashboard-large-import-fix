@@ -2,8 +2,8 @@
 @font-face{font-family:"IBM Plex Sans";font-weight:500;font-style:normal;font-display:swap;src:url(/static/vendor/ibm-plex-sans-latin-500-normal.woff2) format("woff2")}
 @font-face{font-family:"IBM Plex Sans";font-weight:600;font-style:normal;font-display:swap;src:url(/static/vendor/ibm-plex-sans-latin-600-normal.woff2) format("woff2")}
 :root{
-  --ink:#14213d;--muted:#5b6577;--faint:#8b93a3;--line:#dcdad0;--paper:#f5f4ef;--card:#fff;--side:#0f1b2d;
-  --accent:#0b7a75;--accent-d:#095e5a;--accent-s:#ddf0ee;
+  --ink:#142d55;--muted:#63758e;--faint:#8b99ae;--line:#dfe6f1;--paper:#f5f7fc;--card:#fff;--side:#142447;
+  --accent:#fa811b;--accent-d:#c85b08;--accent-s:#fff0e3;
   --ok:#1b7f4b;--ok-s:#dcf1e5;--warn:#a85a08;--warn-s:#fbebd3;--bad:#b42318;--bad-s:#fbe4e1;--info:#2456a6;--info-s:#e0e9f8;--new:#4d5b73;--new-s:#e6e9ef;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--r:10px;
 }
@@ -20,7 +20,7 @@ h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}h1{font-size:20px}h2{fon
 .workspace-toggle{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:0 8px 14px;padding:3px;background:#18294a;border-radius:9px}.workspace-toggle button{justify-content:center;border:0;background:transparent;color:#b8c6dc;padding:6px 4px;font-size:12px}.workspace-toggle button.on{background:#2b4776;color:#fff}
 #nav{display:flex;flex-direction:column;gap:2px;flex:1;overflow:auto}
 #nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:#c9d3e3;text-decoration:none;font-weight:500}
-#nav a:hover{background:#18294a}#nav a.on{background:#1d3358;color:#fff;box-shadow:inset 3px 0 0 #5ec6be}
+#nav a:hover{background:#203357}#nav a.on{background:#353044;color:#fff;box-shadow:inset 3px 0 0 var(--accent)}
 #nav svg{width:17px;height:17px;flex:none;opacity:.9}#nav .sp{flex:1}
 .badge-n{background:#e9a23b;color:#1a1200;border-radius:99px;font-size:11px;font-weight:600;padding:1px 7px}
 .side-foot{padding:10px 8px 0;border-top:1px solid #23334f;display:grid;gap:6px}
@@ -29,7 +29,7 @@ h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}h1{font-size:20px}h2{fon
 .main{min-width:0}.top{display:flex;align-items:center;justify-content:space-between;padding:18px 28px 10px;gap:12px}
 #view{padding:6px 28px 60px;outline:none;max-width:1400px}
 .vendor-frame{display:block;width:100%;height:calc(100vh - 94px);min-height:720px;border:1px solid var(--line);border-radius:var(--r);background:#fff}
-.workspace-float{display:none;position:fixed;z-index:80;top:12px;left:12px;gap:4px;padding:3px;background:#18294a;border-radius:9px;box-shadow:0 3px 14px rgba(15,27,45,.25)}
+.workspace-float{display:none;position:fixed;z-index:80;top:8px;left:64px;gap:4px;padding:3px;background:#18294a;border-radius:9px;box-shadow:0 3px 14px rgba(15,27,45,.25)}
 .workspace-float button{border:0;background:transparent;color:#c9d3e3;padding:6px 10px;font-size:12px}.workspace-float button.on{background:#2b4776;color:#fff}
 body.vendor-full .side,body.vendor-full .top{display:none}body.vendor-full .shell{display:block}body.vendor-full #view{position:fixed;inset:0;z-index:70;max-width:none;padding:0}body.vendor-full .vendor-frame{width:100vw;height:100vh;min-height:0;border:0;border-radius:0}body.vendor-full .workspace-float{display:flex}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:16px}
@@ -85,3 +85,24 @@ details.file{border:1px solid var(--line);border-radius:9px;margin-bottom:8px;ba
 
 button.primary kbd{background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.55)}
 label.row{flex-wrap:nowrap;align-items:flex-start}label.row input[type=checkbox]{margin-top:3px;flex:none}
+
+/* HospKart dashboard theme: navy navigation, orange actions, white surfaces. */
+.side{background:linear-gradient(180deg,#10203f,#17294f);padding:26px 10px 18px}
+.brand{flex-direction:column;text-align:center;gap:12px;padding:0 6px 20px}
+.brand-mark{width:100%;min-height:80px;display:grid;place-items:center;border-radius:10px;background:radial-gradient(ellipse at center,#fff9c1 0%,#ffe754 55%,#ffd51c 100%);color:#152a4e;font-size:23px;font-weight:600;letter-spacing:-.04em}
+.brand-mark span,.brand strong span{color:#e9670b}
+.brand strong{font-size:21px;letter-spacing:-.03em}.brand small{display:block;margin-top:2px;text-transform:uppercase;letter-spacing:.065em;font-size:10px;color:#b5c1d8}
+.workspace-toggle button.on,.workspace-float button.on{background:#353044;box-shadow:inset 0 -2px var(--accent)}
+#nav a{min-height:42px;padding:10px 12px}.badge-n{background:#334567;color:#e0e7f4}
+.top{min-height:70px;padding:16px 24px;background:#fff;border-bottom:1px solid var(--line);margin-bottom:22px}
+#view{padding:0 20px 60px;max-width:none}
+.card{border-radius:12px;box-shadow:0 8px 22px rgba(20,45,85,.06)}
+.kpi{position:relative;overflow:hidden;min-height:100px;padding:18px 16px 16px;border-left:4px solid var(--accent)}
+.kpi:nth-child(4n+2){border-left-color:#2f70f5}.kpi:nth-child(4n+3){border-left-color:#8246e8}.kpi:nth-child(4n){border-left-color:#17975e}
+.kpi .v{font-size:26px;font-weight:600;color:var(--ink)}.kpi .l{font-size:12px}
+button,.btn{font-weight:600;min-height:36px}button:hover,.btn:hover{border-color:#b8c8e0;background:#f5f7fc}
+input,select,textarea{border-color:var(--line);min-height:38px}
+th{background:#f5f7fc;color:#47607f}th,td{border-bottom-color:#e9eef7}tbody tr.click:hover{background:#f5f8ff}
+.seg{padding:4px;gap:3px;background:#edf1f7;border:0}.seg button{border:0;border-radius:7px}.seg button.on{background:#fff;color:var(--ink);box-shadow:0 2px 6px rgba(20,45,85,.08)}
+.cmp>div{background:#f8faff}.bar{background:#edf1f7}
+@media(max-width:900px){.brand{flex-direction:row;text-align:left;padding:0 4px}.brand-mark{width:110px;min-height:48px;font-size:16px}.brand strong{font-size:17px}.top{padding:14px}.side{padding:14px}#view{padding:0 14px 40px}}

@@ -214,6 +214,13 @@ class RuntimeConfig:
 
     # ---- validation ---------------------------------------------------------
     def validate(self) -> "RuntimeConfig":
+        # Windows "Copy as path" wraps a folder in quotes. Those quotes belong
+        # to the clipboard representation, not to the filesystem path.
+        for field_name in ("local_input_dir", "output_dir"):
+            value = str(getattr(self, field_name) or "").strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"\"", "'"}:
+                value = value[1:-1].strip()
+            setattr(self, field_name, value)
         if self.source_kind not in ("drive", "local"):
             raise ConfigError("source_kind must be 'drive' or 'local'")
         if self.entity_type not in ENTITY_TYPES:

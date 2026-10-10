@@ -26,7 +26,7 @@ from import_service import import_documents
 from drive_import import DiskUpload, download_drive_zip
 import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
-                         export_filename, filter_checklist, read_vendor_file, supporting_category)
+                         documents_for_category, export_filename, filter_checklist, read_vendor_file, supporting_category)
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
 # export or Store class once so the app starts without a manual restart.
@@ -41,33 +41,45 @@ if not hasattr(storage_module.Store, "product_record_count"):
 Store = storage_module.Store
 
 APP_DIR = Path(__file__).resolve().parent
-st.set_page_config(page_title="Vendor Document Dashboard", page_icon="\U0001f4c2", layout="wide")
+st.set_page_config(page_title="Vendor Document Dashboard", page_icon="\U0001f4c2", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-.stApp{background:linear-gradient(145deg,#eef3f4 0%,#f8fafb 48%,#edf1f2 100%);color:#172b3a}
-.block-container{max-width:1460px;padding-top:1.5rem;padding-bottom:3rem}
-h1{font-size:2.1rem!important;font-weight:750!important;letter-spacing:-.025em;color:#173b43}
-h2,h3{letter-spacing:-.015em;color:#173b43}
-[data-testid="stSidebar"]{background:#fdfefe;border-right:1px solid #dce5e7}
-[data-testid="stMetric"]{background:rgba(255,255,255,.92);border:1px solid #dce5e7;border-radius:10px;padding:.85rem 1rem;box-shadow:0 4px 14px rgba(25,55,64,.05)}
-[data-testid="stMetricValue"]{font-size:1.85rem;color:#173b43;font-weight:700}
-[data-testid="stMetricLabel"]{color:#58717a;font-size:.82rem;font-weight:650}
-[data-testid="stFileUploader"]{border:1px dashed #8caeb3;border-radius:10px;background:rgba(255,255,255,.86)}
-[data-testid="stExpander"]{background:rgba(255,255,255,.78);border:1px solid #dce5e7;border-radius:8px}
+.stApp{background:#f5f7fc;color:#142d55}
+.block-container{max-width:1460px;padding-top:4.5rem;padding-bottom:3rem}
+h1{font-size:1.65rem!important;font-weight:750!important;letter-spacing:-.025em;color:#142d55}
+h2,h3{letter-spacing:-.015em;color:#142d55}
+[data-testid="stHeader"]{background:#fff;border-bottom:1px solid #dfe6f1}
+[data-testid="stExpandSidebarButton"]{visibility:visible!important;opacity:1!important;width:40px;height:40px;border:1px solid #dfe6f1;border-radius:8px;background:#fff;color:#142d55}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,#10203f,#17294f);border-right:1px solid #334567}
+[data-testid="stSidebar"] [data-testid="stRadio"] label{padding:9px 10px;border-radius:8px;margin:2px 0}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#353044;box-shadow:inset 3px 0 #fa811b}
+[data-testid="stMetric"]{background:#fff;border:1px solid #dfe6f1;border-left:4px solid #fa811b;border-radius:12px;padding:1rem;box-shadow:0 8px 22px rgba(20,45,85,.06)}
+[data-testid="stColumn"]:nth-child(4n+2) [data-testid="stMetric"]{border-left-color:#2f70f5}
+[data-testid="stColumn"]:nth-child(4n+3) [data-testid="stMetric"]{border-left-color:#8246e8}
+[data-testid="stColumn"]:nth-child(4n) [data-testid="stMetric"]{border-left-color:#17975e}
+[data-testid="stMetricValue"]{font-size:1.85rem;color:#142d55;font-weight:700}
+[data-testid="stMetricLabel"]{color:#63758e;font-size:.82rem;font-weight:650}
+[data-testid="stFileUploader"]{border:1px dashed #b8c8e0;border-radius:10px;background:#fff}
+[data-testid="stExpander"]{background:#fff;border:1px solid #dfe6f1;border-radius:10px}
+[data-testid="stBaseButton-secondary"]{background:#fff;color:#142d55;border-color:#dfe6f1;font-weight:600}
+[data-testid="stBaseButton-primary"]{background:#fa811b;color:#142447;border-color:#fa811b;font-weight:700}
+[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]{background:#253858;color:#e0e7f4;border-color:#334567}
 .brand{display:flex;gap:12px;align-items:center;margin:.25rem 0 1.2rem}
-.brand-icon{background:#166d76;color:white;border-radius:8px;padding:9px 10px;font-weight:750;box-shadow:0 4px 10px rgba(22,109,118,.2)}
-.brand-name{font-size:1.05rem;font-weight:700;color:#173b43}.brand-sub{font-size:.78rem;color:#6b8087}
-.summary-label{margin:.9rem 0 .45rem;color:#58717a;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
-.type-label{margin:1.1rem 0 .45rem;color:#58717a;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.brand{flex-direction:column;text-align:center;gap:12px}
+.brand-icon{width:100%;min-height:80px;display:grid;place-items:center;background:radial-gradient(ellipse at center,#fff9c1 0%,#ffe754 55%,#ffd51c 100%);color:#142447;border-radius:10px;padding:14px 10px;font-size:1.3rem;font-weight:750}
+.brand-icon span,.brand-name span{color:#e9670b}
+.brand-name{font-size:1.3rem;font-weight:750;color:#fff}.brand-sub{font-size:.65rem;color:#b5c1d8;letter-spacing:.07em;text-transform:uppercase}
+.summary-label{margin:.9rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.type-label{margin:1.1rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .table-scroll{max-height:470px;overflow:auto;border:1px solid #dee6ed;border-radius:10px;background:#fff}
 .desk-table{border-collapse:collapse;min-width:100%;font-size:.88rem}
-.desk-table th{position:sticky;top:0;background:#203e50;color:#fff;text-align:left;padding:12px;white-space:nowrap}
+.desk-table th{position:sticky;top:0;background:#f5f7fc;color:#47607f;text-align:left;padding:12px;white-space:nowrap;border-bottom:1px solid #dfe6f1}
 .desk-table td{padding:10px 12px;border-bottom:1px solid #eef1f4;white-space:nowrap}
 .desk-table tbody tr:nth-child(even){background:#fafcfd}
 .yes{background:#e2f3eb;color:#17613e;border-radius:5px;padding:3px 9px;font-weight:600}
 .no{background:#fff0ec;color:#a04b34;border-radius:5px;padding:3px 9px}
 .small-note{font-size:.85rem;color:#647789}
-@media(max-width:720px){.block-container{padding:1rem}h1{font-size:1.65rem!important}[data-testid="stMetricValue"]{font-size:1.55rem}}
+@media(max-width:720px){.block-container{padding:4.5rem 1rem 2rem}h1{font-size:1.65rem!important}[data-testid="stMetricValue"]{font-size:1.55rem}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -587,7 +599,7 @@ view_cleared = bool(st.session_state.get("view_cleared", False))
 display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
-    st.markdown('<div class="brand"><div class="brand-icon">VD</div><div><div class="brand-name">Vendor Workspace</div><div class="brand-sub">Documents, organised.</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand"><div class="brand-icon"><div><span>HOSP</span>kart.com</div></div><div><div class="brand-name"><span>HOSP</span>kart.com</div><div class="brand-sub">Vendor &amp; document operations</div></div></div>', unsafe_allow_html=True)
     navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
     page_map = {item: item for item in navigation}
     captions = [
@@ -803,8 +815,8 @@ elif page == "Companies & documents":
                 st.download_button("Download " + company + " documents ZIP", value[1], export_filename(company,"Documents","zip"), "application/zip", type="primary", width="stretch", key="company_zip_download")
             st.caption("Excel and ZIP filenames include the selected company name. The ZIP includes its checklist and document folders.")
             for category in DOCUMENT_TYPES + ["Other documents"]:
-                rows = company_docs[company_docs.types.map(lambda ts: category in ts if category in DOCUMENT_TYPES else not ts)]
-                available = int(rows.available.sum())
+                rows = documents_for_category(company_docs, category)
+                available = int(rows["available"].sum())
                 yes_no = "Yes" if available else "No"
                 label = f"{category}  |  {yes_no}  |  {available} file(s)" if category in DOCUMENT_TYPES else f"Other documents  |  {available} file(s)"
                 category_panel = st.expander(label, key=f"company_category_{selected}_{category}", on_change="rerun")
