@@ -105,4 +105,14 @@ input,select,textarea{border-color:var(--line);min-height:38px}
 th{background:#f5f7fc;color:#47607f}th,td{border-bottom-color:#e9eef7}tbody tr.click:hover{background:#f5f8ff}
 .seg{padding:4px;gap:3px;background:#edf1f7;border:0}.seg button{border:0;border-radius:7px}.seg button.on{background:#fff;color:var(--ink);box-shadow:0 2px 6px rgba(20,45,85,.08)}
 .cmp>div{background:#f8faff}.bar{background:#edf1f7}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.organizer-intro{display:flex;align-items:center;justify-content:space-between;gap:20px}
+.organizer-intro p{margin:6px 0 0;max-width:720px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#142447}.btn.primary:hover{background:#f3964b}
+.organizer-workflow .card{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.organizer-workflow p{margin:0;flex:1}.workflow-number{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--accent-s);color:var(--accent-d);font-weight:600}
+.company-link{border:0;background:transparent;padding:0;min-height:28px;color:var(--info);text-align:left}.company-link:hover{background:transparent;text-decoration:underline}
+.ocr-warning{color:var(--warn)}
+@media(max-width:1100px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.g4{grid-template-columns:1fr}.organizer-intro{align-items:flex-start;flex-direction:column}}
 @media(max-width:900px){.brand{flex-direction:row;text-align:left;padding:0 4px}.brand-mark{width:110px;min-height:48px;font-size:16px}.brand strong{font-size:17px}.top{padding:14px}.side{padding:14px}#view{padding:0 14px 40px}}

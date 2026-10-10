@@ -160,60 +160,72 @@ const STEPS = [["source", "Choose source"], ["source", "Scan files"], ["preview"
 const PAGE = {};
 PAGE.overview = async () => {
   const st = S.status, t = st.totals, p = st.progress;
-  const sum = await api("/api/summary");
-  const srcSet = st.config.source_kind === "drive" ? !!st.config.drive_folder : !!st.config.local_input_dir;
-  const done = [srcSet, t.files > 0, t.records > 0, t.records > 0, t.records > 0 && t.pending_reviews === 0, false];
-  const next = done.findIndex(d => !d);
-  const steps = STEPS.map(([pg, l], i) => html`<a class="step ${done[i] ? "done" : i === next ? "next" : ""}" href="#/${pg}"><i>${done[i] ? "✓" : i + 1}</i>${l}</a>`);
-  const auto = (sum.status.find(s => s.label === "auto_matched")?.n || 0) + (sum.status.find(s => s.label === "verified_mapping")?.n || 0);
-  const matched = sum.status.filter(s => ["auto_matched", "verified_mapping", "needs_review", "user_accepted"].includes(s.label)).reduce((a, b) => a + b.n, 0);
-  const kpi = (v, l, cls = "") => html`<div class="card kpi ${cls}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const sourceSet = st.config.source_kind === "drive" ? !!st.config.drive_folder : !!st.config.local_input_dir;
+  const ocrReady = st.config.ocr_enabled && st.tools.tesseract;
+  const kpi = (value, label) => html`<div class="card kpi"><div class="v">${value}</div><div class="l">${label}</div></div>`;
   $("#view").innerHTML = html`
-    <div class="steps" aria-label="Workflow">${steps}</div>
-    <div class="grid g6" style="margin-bottom:16px">
-      ${kpi(num(t.files_processed) + " / " + num(t.files), "Files processed")}${kpi(num(t.records), "Records extracted")}${kpi(num(t.entities), "Master entities")}
-      ${kpi(pct(auto, matched), "Matched automatically")}${kpi(num(t.pending_reviews), "Waiting for review", t.pending_reviews ? "warn" : "")}${kpi(num(t.errors), "Processing errors", t.errors ? "bad" : "")}
+    <div class="card organizer-intro"><div><h2>Your files, organized by company</h2><p class="muted">Read company details from Excel, PDF, JPG, PNG, CSV, Word and text. Original files keep their format and contents.</p></div><a class="btn primary" href="#/source">Import files</a></div>
+    <div class="grid g4" style="margin-bottom:16px">
+      ${kpi(num(t.files_processed) + " / " + num(t.files), "Files read")}${kpi(num(t.entities), "Companies")}${kpi(num(t.records), "Company records")}${kpi(num(t.pending_reviews), "Matches to check")}
     </div>
-    <div class="card"><div class="h"><h2>Pipeline</h2><div class="row">
-      <button class="primary" id="btnRun" ${p.running ? "disabled" : ""}>${t.records ? "Resume / process new files" : "Start processing"}</button>
-      <button id="btnStop" ${p.running ? "" : "disabled"}>Stop</button><button class="danger" id="btnReset" ${p.running ? "disabled" : ""}>Reset dashboard data</button></div></div>
-      <div id="stages">${raw(stagesHtml(p))}</div></div>
-    ${t.records ? html`<div class="grid g2">
-      <div class="card"><h2>Match confidence</h2><div class="chart"><canvas id="c1" aria-label="Records by confidence band"></canvas></div></div>
-      <div class="card"><h2>Outcome per record</h2><div class="chart"><canvas id="c2" aria-label="Records by outcome"></canvas></div></div>
-      <div class="card"><h2>Master entities by state</h2><div class="chart"><canvas id="c3" aria-label="Entities by state"></canvas></div></div>
-      <div class="card"><h2>Most common data-quality findings</h2>${sum.quality.length ? html`<table><tbody>${sum.quality.map(q => html`<tr><td>${q.label.replace(/_/g, " ")}</td><td>${sevTag(q.severity)}</td><td class="num">${num(q.n)}</td></tr>`)}</tbody></table>` : html`<p class="muted">Nothing flagged.</p>`}</div>
-    </div>` : html`<div class="card empty"><h3>No data processed yet</h3><p>Point the app at a folder (or Google Drive), scan it, preview a sample, then start processing.<br>New here? Try the built-in synthetic demo files first.</p>
-      <div class="row" style="justify-content:center"><button class="primary" id="btnDemo">Use demo data</button><a class="btn" href="#/source">Choose my own source</a></div></div>`}`.__raw;
-  $("#btnRun")?.addEventListener("click", guard(async event => {
-    // Disable immediately: status polling has not yet observed the new run,
-    // so leaving this enabled allowed repeat clicks to show a confusing
-    // "run already in progress" error.
-    event.currentTarget.disabled = true;
-    event.currentTarget.textContent = "Starting…";
-    await post("/api/run");
-    toast("Started");
-    // Re-render right away with the running state instead of waiting for the
-    // first polling cycle, which keeps the cards, Stop button, and stages in sync.
-    await route();
+    <div class="grid g3 organizer-workflow">
+      <div class="card"><span class="workflow-number">1</span><h2>Import</h2><p class="muted">Choose a folder or upload files. ZIP folders are supported too.</p><a class="btn" href="#/source">Choose files</a></div>
+      <div class="card"><span class="workflow-number">2</span><h2>Read files</h2><p class="muted">Find company names and details across all supported file types.</p><button class="primary" id="btnRun" ${p.running ? "disabled" : ""}>${p.running ? "Reading files…" : t.records ? "Read new files / resume" : "Read files"}</button></div>
+      <div class="card"><span class="workflow-number">3</span><h2>Company folders</h2><p class="muted">Copy original documents into each company's folder.</p><button id="btnOrganizeDashboard" ${p.running || !t.files ? "disabled" : ""}>Create company folders</button></div>
+    </div>
+    <div class="card"><div class="h"><h2>${p.running ? "Reading progress" : "File reading"}</h2>${p.running ? html`<button id="btnStop">Pause</button>` : html`<a href="#/source">View all files</a>`}</div><div id="stages">${raw(stagesHtml(p))}</div>
+      <p class="small ${ocrReady ? "muted" : "ocr-warning"}">${ocrReady ? "Image reading is ready: JPG, PNG and scanned PDFs use OCR." : "JPG, PNG and scanned PDFs need OCR. Enable OCR in Workspace settings and install Tesseract to read their contents."}</p>
+      ${t.files_failed ? html`<p class="small ocr-warning">${num(t.files_failed)} file(s) could not be read. <a href="#/source">Check files and retry</a>.</p>` : ""}
+    </div>
+    <div class="card"><div class="h"><h2>Companies</h2><div class="row"><a class="btn" href="#/entities">View all companies</a><button id="btnCompanyZip" ${p.running || !t.files ? "disabled" : ""}>Download company folders</button></div></div>
+      <label class="f" for="companyQuickSearch">Search companies<input id="companyQuickSearch" placeholder="Company name or phone" type="search"></label>
+      <div id="overviewCompanies" style="margin-top:14px"></div>
+      <p class="small muted">A document containing several companies is copied unchanged to each matching folder. Files without an identified company are kept separately for review.</p>
+      <div id="companyFolderResult" role="status" aria-live="polite"></div>
+    </div>
+    ${t.pending_reviews ? html`<div class="card row sb"><div><h2>Check uncertain matches</h2><p class="muted">Confirm which company these records belong to.</p></div><a class="btn" href="#/review">Review ${num(t.pending_reviews)} matches</a></div>` : ""}`.__raw;
+  $("#btnRun").addEventListener("click", guard(async event => {
+    if (!sourceSet) { location.hash = "#/source"; return; }
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = "Starting…";
+    try { await post("/api/scan"); await post("/api/run"); toast("Reading files started"); await route(); }
+    finally { if (button.isConnected) { button.disabled = false; button.textContent = "Read files"; } }
   }));
-  $("#btnStop")?.addEventListener("click", guard(async () => { await post("/api/stop"); toast("Stopping after the current batch - progress is saved"); }));
-  $("#btnReset")?.addEventListener("click", guard(async () => {
-    if (await confirmBox("Reset dashboard data", "This clears all imported dashboard data, generated matches, review items, and saved decisions. Your original files are not deleted.", "Reset dashboard", true)) {
-      await post("/api/reset", { scope: "all" });
-      toast("Dashboard data reset");
-      route();
-    }
+  $("#btnStop")?.addEventListener("click", guard(async () => { await post("/api/stop"); toast("Pausing after the current batch. Progress is saved."); }));
+  $("#btnOrganizeDashboard").addEventListener("click", guard(async event => {
+    const button = event.currentTarget; button.disabled = true; button.textContent = "Creating folders…";
+    try {
+      const result = await post("/api/organize-files");
+      $("#companyFolderResult").innerHTML = html`<p><strong>${num(result.company_folders)} company folders</strong> · ${num(result.files_copied)} original files copied.</p><p class="small mono">${result.folder}</p>${result.skipped ? html`<p class="ocr-warning">${num(result.skipped)} file(s) were unavailable. Check the source folder.</p>` : ""}`.__raw;
+      toast("Company folders are ready");
+    } finally { button.disabled = false; button.textContent = "Create company folders"; }
   }));
-  $("#btnDemo")?.addEventListener("click", guard(async () => { await post("/api/demo/prepare"); toast("Demo files created and selected"); await post("/api/run"); startPolling(); route(); }));
-  if (t.records) {
-    const col = { "Very High": "#1b7f4b", High: "#0b7a75", "Possible Match": "#d8963a", "Manual Review": "#c2570c", "Probably Different": "#b42318", "n/a": "#8b93a3" };
-    S.charts.push(new Chart($("#c1"), { type: "bar", data: { labels: sum.bands.map(b => b.label), datasets: [{ data: sum.bands.map(b => b.n), backgroundColor: sum.bands.map(b => col[b.label] || "#4d5b73"), borderRadius: 4 }] }, options: chartOpts() }));
-    S.charts.push(new Chart($("#c2"), { type: "doughnut", data: { labels: sum.status.map(s => (STATUS[s.label] || [s.label])[0]), datasets: [{ data: sum.status.map(s => s.n), backgroundColor: sum.status.map(s => STATUS_COL[s.label] || "#8b93a3") }] }, options: { ...chartOpts(false), cutout: "58%", plugins: { legend: { position: "right", labels: { boxWidth: 12, font: { family: "IBM Plex Sans" } } } } } }));
-    S.charts.push(new Chart($("#c3"), { type: "bar", data: { labels: sum.by_state.map(b => b.label), datasets: [{ data: sum.by_state.map(b => b.n), backgroundColor: "#0b7a75", borderRadius: 4 }] }, options: { ...chartOpts(), indexAxis: "y" } }));
-  }
+  $("#btnCompanyZip").addEventListener("click", guard(async event => {
+    const button = event.currentTarget; button.disabled = true; button.textContent = "Preparing download…";
+    try {
+      const result = await post("/api/export/structured-zip");
+      const url = new URL("/api/exports/download", location.origin); url.searchParams.set("file", result.file);
+      const token = sessionStorage.getItem(TOKEN_KEY); if (token) url.searchParams.set("token", token);
+      const link = document.createElement("a"); link.href = url; link.download = result.file; link.click();
+      toast(`${num(result.files)} original files packaged`);
+    } finally { button.disabled = false; button.textContent = "Download company folders"; }
+  }));
+  let timer;
+  $("#companyQuickSearch").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(guard(loadOverviewCompanies), 250); });
+  await loadOverviewCompanies();
   if (p.running) startPolling();
 };
+let overviewSearchRequest = 0;
+async function loadOverviewCompanies() {
+  const input = $("#companyQuickSearch"), box = $("#overviewCompanies");
+  if (!input || !box) return;
+  const request = ++overviewSearchRequest;
+  const result = await api(`/api/entities?search=${encodeURIComponent(input.value)}&limit=20`);
+  if (request !== overviewSearchRequest || !box.isConnected) return;
+  box.innerHTML = result.items.length ? html`<p class="small muted">Showing ${num(result.items.length)} of ${num(result.total)} companies</p><div class="tw"><table><thead><tr><th>Company</th><th>City</th><th>Phone</th><th class="num">Records</th><th class="num">Source files</th></tr></thead><tbody>${result.items.map(e => html`<tr><td><button class="company-link" data-company="${e.master_entity_id}">${e.standard_name}</button></td><td>${e.city || "—"}</td><td>${e.phone || "—"}</td><td class="num">${num(e.record_count)}</td><td class="num">${num(e.source_file_count)}</td></tr>`)}</tbody></table></div>`.__raw : html`<div class="empty">${input.value ? "No matching companies." : "Import and read your files to see companies here."}</div>`.__raw;
+  $$('[data-company]', box).forEach(button => button.addEventListener("click", guard(() => openEntity(button.dataset.company))));
+}
 function chartOpts(scales = true) {
   Chart.defaults.font.family = "'IBM Plex Sans', system-ui, sans-serif";
   const o = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
@@ -221,7 +233,7 @@ function chartOpts(scales = true) {
   return o;
 }
 function stagesHtml(p) {
-  if (!p.stages.length) return `<p class="muted">Idle. The pipeline is resumable: stopping (or a crash) never loses finished work, and new files are picked up on the next run.</p>`;
+  if (!p.stages.length) return `<p class="muted">Ready. Choose your files, then click Read files. You can pause and resume without losing completed work.</p>`;
   return p.stages.map(s => html`<div class="stage"><span class="n">${s.name}</span><div class="bar"><i style="width:${s.status === "done" || s.status === "skipped" ? 100 : s.total ? Math.min(100, 100 * s.done / s.total) : 0}%"></i></div>
     <span class="small muted" style="text-align:right">${s.status}${s.total ? " " + num(s.done) + "/" + num(s.total) : ""}</span><small>${s.message}</small></div>`).map(x => x.__raw).join("") +
     (p.error ? `<div class="note ${p.error.startsWith("Stopped") ? "warn" : "bad"}" style="margin-top:8px">${esc(p.error)}</div>` : "");
@@ -425,7 +437,7 @@ const openEntity = guard(async id => {
     <h3>Names found for this entity (${e.alias_details.length})</h3><table class="small"><thead><tr><th>As written</th><th class="num">Times</th><th>How it was matched</th><th>First seen</th></tr></thead><tbody>${e.alias_details.map(a => html`<tr><td>${a.alias}${a.verified ? html` <span class="tag t-acc">verified</span>` : ""}</td><td class="num">${a.occurrences}</td><td>${a.match_method}</td><td class="muted">${a.original_source}</td></tr>`)}</tbody></table>
     <h3 style="margin-top:14px">Source records (traceability)</h3><div class="tw"><table class="small"><thead><tr><th>File</th><th>Where</th><th>Original name</th><th>Outcome</th><th class="num">Conf.</th></tr></thead><tbody>${e.records.map(r => html`<tr><td>${r.source_file}</td><td>${loc(r)} r${r.source_row}</td><td>${r.original_name}</td><td>${statusTag(r.match_status)}</td><td class="num">${score(r.match_score)}</td></tr>`)}</tbody></table></div>`.__raw;
   $("#dclose").onclick = () => { dr.hidden = true; };
-  $("#ren").onclick = guard(async () => { const n = prompt("Standard name:", e.standard_name); if (n && n.trim()) { await post(`/api/entities/${id}/rename`, { standard_name: n.trim() }); toast("Renamed"); loadEntities(); openEntity(id); } });
+  $("#ren").onclick = guard(async () => { const n = prompt("Standard name:", e.standard_name); if (n && n.trim()) { await post(`/api/entities/${id}/rename`, { standard_name: n.trim() }); toast("Renamed"); (S.page === "overview" ? loadOverviewCompanies() : loadEntities()); openEntity(id); } });
   $("#mrg").onclick = guard(async () => {
     const q = prompt("Search for the entity to merge INTO (name or id):"); if (!q) return;
     const r = await api(`/api/entities?search=${encodeURIComponent(q)}&limit=8`);
@@ -433,7 +445,8 @@ const openEntity = guard(async id => {
     const pick = prompt("Merge into which one? Type the number:\n" + opts.map((x, i) => `${i + 1}. ${x.standard_name} (${x.city || "-"}) ${x.master_entity_id}`).join("\n"));
     const t = opts[(+pick || 0) - 1]; if (!t) return;
     if (await confirmBox("Merge entities", `Merge “${e.standard_name}” into “${t.standard_name}”? All its names and records move to the target.`, "Merge", true)) {
-      await post("/api/entities/merge", { source_id: id, target_id: t.master_entity_id }); toast("Merged"); dr.hidden = true; loadEntities();
+      await post("/api/entities/merge", { source_id: id, target_id: t.master_entity_id }); toast("Merged"); dr.hidden = true;
+      if (S.page === "overview") await route(); else await loadEntities();
     }
   });
 });

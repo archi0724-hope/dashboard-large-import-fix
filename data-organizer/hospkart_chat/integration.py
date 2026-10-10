@@ -13,7 +13,7 @@ import time
 
 import pandas as pd
 
-from .hospkart_agent import HospKartAgent
+from .hospkart_agent import HospKartAgent, ConversationState
 from .hospkart_rag_setup import HospKartRAG
 
 ROOT = Path(__file__).resolve().parent
@@ -83,7 +83,7 @@ def vendor_frame(records: pd.DataFrame) -> pd.DataFrame:
 
 
 class CatalogueSource:
-    def __init__(self, store, csv_path: Path):
+    def __init__(self, store, csv_path: Path | None):
         self.store, self.csv_path = store, csv_path
         self.signature = None
         self.frame = pd.DataFrame()
@@ -91,7 +91,7 @@ class CatalogueSource:
         self.loaded_at = 0.0
 
     def refresh(self):
-        csv_stamp = self.csv_path.stat().st_mtime_ns if self.csv_path.exists() else None
+        csv_stamp = self.csv_path.stat().st_mtime_ns if self.csv_path and self.csv_path.exists() else None
         local_stamps = () if self.store.cloud else tuple(
             p.stat().st_mtime_ns if p.exists() else None
             for p in (self.store.db_path, Path(str(self.store.db_path) + "-wal")))
@@ -111,7 +111,8 @@ class CatalogueSource:
             frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
         frame["_names"] = frame["product_name"].astype(str).str.lower()
         frame["_lookup"] = (frame["product_name"].astype(str) + " " + frame["vendor_name"].astype(str)
-                            + " " + frame["product_sku"].astype(str) + " " + frame["category"].astype(str)).str.lower()
+                            + " " + frame["product_sku"].astype(str) + " " + frame["category"].astype(str)
+                            + " " + frame["specs"].astype(str)).str.lower()
         self.frame, self.signature = frame, signature
         self.loaded_at = time.monotonic()
 
@@ -141,7 +142,7 @@ class CatalogueSource:
 
 @lru_cache(maxsize=4)
 def catalogue_source(data_dir: str, database_url: str, csv_path: str):
-    return CatalogueSource(open_vendor_store(data_dir, database_url), Path(csv_path))
+    return CatalogueSource(open_vendor_store(data_dir, database_url), Path(csv_path) if csv_path else None)
 
 
 class LiveCatalogueRAG(HospKartRAG):
@@ -184,11 +185,62 @@ class LiveCatalogueRAG(HospKartRAG):
     def source_status(self):
         self.source.refresh()
         return {"vendor_records": self.source.vendor_count, "hospkart_records": self.source.hospkart_count,
-                "retrieval": "live catalogue keyword search", "candidate_limit": 3000}
+                "retrieval": "live uploaded catalogue search", "candidate_limit": 3000,
+                "reference_catalogue_enabled": self.source.csv_path is not None}
 
 
 class MergedAgent(HospKartAgent):
+    def _document_answer(self, query):
+        if not re.search(r"\b(?:documents?|checklist|gst|pan|udyam|iso|cancelled cheque|form 16|aadhar)\b", query, re.I):
+            return None
+        # GST on a quotation is a tax request, not a request for a vendor file.
+        if re.search(r"\b(?:quote|quotation|invoice|discount|price|pricing)\b", query, re.I):
+            return None
+        documents = self.rag.source.store.documents()
+        if documents.empty:
+            return "No vendor documents have been uploaded. Upload your documents in the Vendor dashboard first."
+        normalized = " ".join(re.findall(r"[a-z0-9]+", query.lower()))
+        names = documents["company_name"].fillna("").astype(str)
+        named = names.map(lambda name: bool(name.strip()) and
+                         " ".join(re.findall(r"[a-z0-9]+", name.lower())) in normalized)
+        if named.any():
+            documents = documents.loc[named]
+        else:
+            stop = {"show", "me", "the", "for", "of", "all", "my", "uploaded", "list", "has", "have", "does",
+                    "which", "what", "please", "vendor", "vendors", "company", "companies", "document", "documents",
+                    "checklist", "gst", "pan", "card", "udyam", "iso", "cancelled", "cheque", "form", "16", "aadhar"}
+            tokens = set(re.findall(r"[a-z0-9]+", query.lower())) - stop
+            if tokens:
+                mask = names.map(lambda name: tokens.issubset(set(re.findall(r"[a-z0-9]+", name.lower()))))
+                documents = documents.loc[mask]
+        category_patterns = {"GST": r"\bgst\b", "PAN Card": r"\bpan\b", "ISO": r"\biso\b",
+                             "Udyam": r"\budyam\b", "Cancelled Cheque": r"\bcancelled cheque\b",
+                             "Form 16": r"\bform 16\b", "Aadhar": r"\baadhar\b"}
+        categories = {kind for kind, pattern in category_patterns.items() if re.search(pattern, normalized)}
+        if categories:
+            documents = documents.loc[documents["types"].map(lambda types: bool(categories.intersection(types)))]
+        if documents.empty:
+            return "No matching document was found in your uploaded dashboard data. Check the company name and document checklist."
+        lines = ["Your uploaded vendor documents (classification only; document validity is not verified):"]
+        for row in documents.head(20).itertuples():
+            status = "Stored file available" if row.available else "Stored file missing; re-upload required"
+            lines.append(f"- {row.company_name or 'Unassigned company'} | {', '.join(row.types) or 'Unclassified'} | {status} | Source: {row.original_path}")
+        if len(documents) > 20:
+            lines.append(f"Showing 20 of {len(documents)} documents. Open Companies & documents for the complete list.")
+        return "\n".join(lines)
+
     def handle_query(self, user_query, options=None):
+        self.rag.source.refresh()
+        generation = (self.rag.source.signature, self.rag.source.loaded_at)
+        previous = getattr(self, "_data_generation", generation)
+        self._data_generation = generation
+        if previous != generation:
+            # Cached selections must not quote a deleted product or an old price.
+            self.state = ConversationState()
+        if document_answer := self._document_answer(user_query):
+            return document_answer
+        if self.rag.source.frame.empty:
+            return "No searchable catalogue records are available in your uploaded dashboard data. Upload a catalogue or price list, then check Catalogue & prices for extracted products."
         result = super().handle_query(user_query, options)
         if self._infer_intent(user_query) == "search":
             self.rag.prepare(user_query)
@@ -201,6 +253,12 @@ class MergedAgent(HospKartAgent):
         selected = self.state.last_selected_product or {}
         if selected.get("source_file") and self._is_offer_relevant_to_query(selected, user_query):
             result += f"\n\nImported source: {selected['source_file']} (sheet {selected.get('source_sheet', '-')}, row {selected.get('source_row', '-')})."
+        sources = list(dict.fromkeys(
+            hit.get("metadata", {}).get("source_file", "") for hit in self.state.last_search_results
+            if hit.get("metadata", {}).get("source_file")
+        ))
+        if sources:
+            result += "\n\nUploaded sources: " + ", ".join(sources[:10])
         return result
 
 
@@ -218,8 +276,9 @@ def get_session_agent(chat_id: str):
             agent = cached[1]
         else:
             data_dir = vendor_setting("VENDOR_DATA_DIR", str(VENDOR_ROOT / "vendor_data"))
-            source = catalogue_source(data_dir, vendor_setting("DATABASE_URL"),
-                                      os.getenv("HOSPKART_PRODUCT_CSV", str(ROOT / "data" / "hospkart_products.csv")))
+            include_reference = vendor_setting("HOSPKART_INCLUDE_REFERENCE_CATALOGUE", "false").lower() in {"1", "true", "yes"}
+            csv_path = os.getenv("HOSPKART_PRODUCT_CSV", str(ROOT / "data" / "hospkart_products.csv")) if include_reference else ""
+            source = catalogue_source(data_dir, vendor_setting("DATABASE_URL"), csv_path)
             agent = MergedAgent(rag=LiveCatalogueRAG(source), logs_dir=ROOT / "logs", exports_dir=ROOT / "exports" / chat_id)
             agent.ollama_enabled = os.getenv("HOSPKART_USE_OLLAMA", "false").lower() in {"1", "true", "yes"}
         _sessions[chat_id] = (now, agent)

@@ -1293,7 +1293,7 @@ def debug_config() -> tuple[dict[str, object], int]:
         },
         "rag": {
             "vector_db_path": str(g.agent.rag.db_path),
-            "collection": "live-vendor-and-hospkart-catalogue",
+            "collection": "live-uploaded-vendor-data",
             "catalogue": g.agent.rag.source_status(),
         },
         "env": {

@@ -486,7 +486,7 @@ def vendor_ai_format(question: str, results: list[dict]) -> str:
 
 def vendor_ai_page():
     from hospkart_chat.vendor_assistant import render_assistant
-    render_assistant()
+    render_assistant(store)
 
 
 def _store_vendor_ai_search(query: str, response: str, results: list[dict]):

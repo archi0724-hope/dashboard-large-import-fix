@@ -68,6 +68,22 @@ docker compose up --build
 
 ## The dashboard
 
+The Organizer dashboard uses three steps: **Import**, **Read files**, and
+**Company folders**. Search companies directly on the dashboard, open a company
+to see its source records, and download the company folders as a ZIP.
+
+Excel (`.xlsx`, `.xls`, `.xlsm`), PDF, JPG/JPEG and PNG are read in their existing
+formats. Scanned PDFs and images use Tesseract OCR; the dashboard shows whether
+image reading is ready. CSV, Word, text, JSON and other supported image formats
+also use their existing readers. Legacy `.doc` files require LibreOffice.
+
+Company folders contain copies of the original documents, with their contents
+and extensions preserved. A file containing several companies is copied in full
+to each matching company folder. Different files with the same filename are kept
+with a distinguishing suffix. Files with no identified company remain available
+for review instead of being discarded. Company record reports are separate from
+these original documents.
+
 | Page | What it's for |
 |---|---|
 | **Overview** | The 6-step workflow, live progress, and charts once you have data. |

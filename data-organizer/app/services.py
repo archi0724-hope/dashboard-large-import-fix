@@ -18,6 +18,7 @@ from .config import (
 from .database.repository import Repository
 from .export.exporter import Exporter
 from .ingestion.ocr_reader import ocr_available
+from .ingestion.base import file_sha256
 from .logging_setup import LOG_NAMES, audit, get_logger, redact, setup_logging
 from .matching.review import ReviewService
 from .pipeline import LocalSource, Pipeline, Progress, dry_run, make_source
@@ -64,9 +65,11 @@ def _company_folder_from_source_path(source_path: str) -> str:
     parents = parts[:-1]
     if not parents:
         return ""
-    # Archive/Company/[optional subfolder]/file: Archive is not a company.
-    candidates = parents[1:] if len(parents) > 1 else parents
-    generic = {"catalogue", "catalog", "catalogues", "documents", "document", "files", "price list", "prices"}
+    # Recognize archive wrappers without dropping an actual company when the
+    # input is already Company/Documents/file.pdf.
+    wrappers = {"archive", "uploads", "vendor details", "vendors", "companies", "organized vendor data"}
+    candidates = parents[1:] if len(parents) > 1 and parents[0].strip().lower() in wrappers else parents
+    generic = wrappers | {"catalogue", "catalog", "catalogues", "documents", "document", "files", "price list", "prices"}
     for candidate in candidates:
         if candidate.strip().lower() not in generic:
             return candidate.strip()
@@ -249,6 +252,8 @@ class AppState:
 
     def organize_source_files(self) -> dict[str, Any]:
         """Copy source files into company folders without modifying the originals."""
+        if self.progress.running:
+            raise ConfigError("Wait for file reading to finish before organizing company folders")
         root = Path(self.settings.data_dir) / "organized_by_company"
         root.mkdir(parents=True, exist_ok=True)
         input_root = Path(self.cfg.local_input_dir).expanduser()
@@ -271,7 +276,14 @@ class AppState:
         copied = 0
         work_related = 0
         skipped = 0
-        for item in files.values():
+        source_hashes: dict[str, str] = {}
+        def source_hash(source: Path) -> str:
+            key = str(source)
+            if key not in source_hashes:
+                source_hashes[key] = file_sha256(source)
+            return source_hashes[key]
+
+        for file_key, item in files.items():
             try:
                 source = Path(item["path"]) if item["path"] else None
                 if not source or not source.is_file():
@@ -295,40 +307,58 @@ class AppState:
             else:
                 folders = {"Work Related Data/Unmatched"}
             for company in folders:
-                folder = root.joinpath(*[_safe_company_folder(part) for part in company.split("/")])
+                parts = company.split("/") if company.startswith("Work Related Data/") else [company]
+                folder = root.joinpath(*[_safe_company_folder(part) for part in parts])
                 try:
                     folder.mkdir(parents=True, exist_ok=True)
                     destination = folder / source.name
-                    if destination.exists() and destination.stat().st_size == source.stat().st_size:
-                        continue
+                    if destination.exists():
+                        if file_sha256(destination) == source_hash(source):
+                            continue
+                        # Different originals can share both a filename and size.
+                        # Retain each original, including its existing extension.
+                        suffix = hashlib.sha256(file_key.encode()).hexdigest()[:12]
+                        destination = folder / f"{source.stem}__{suffix}{source.suffix}"
+                        if destination.exists():
+                            if file_sha256(destination) == source_hash(source):
+                                continue
+                            destination = folder / f"{source.stem}__{suffix}__{source_hash(source)}{source.suffix}"
+                            if destination.exists() and file_sha256(destination) == source_hash(source):
+                                continue
                     shutil.copy2(source, destination)
                     copied += 1
                     if company.startswith("Work Related Data"):
                         work_related += 1
                 except OSError:
                     skipped += 1
+        if copied:
+            # copy2 preserves old source timestamps, so use a separate change
+            # marker to invalidate previously generated company ZIP downloads.
+            (root / ".updated").touch()
         return {"folder": str(root), "files_copied": copied, "work_related": work_related, "skipped": skipped,
-                "company_folders": len([p for p in root.iterdir() if p.is_dir()])}
+                "company_folders": len([p for p in root.iterdir() if p.is_dir() and p.name != "Work Related Data"])}
 
     def create_structured_zip(self) -> dict[str, Any]:
         """Package company folders in the same root-folder shape as the example ZIP."""
         organized = Path(self.settings.data_dir) / "organized_by_company"
-        if not organized.exists():
-            self.organize_source_files()
+        self.organize_source_files()
         out = effective_output_dir(self.cfg, self.settings)
         out.mkdir(parents=True, exist_ok=True)
         archive = out / "Organized Vendor Data.zip"
         # Building this archive can take hours for a large collection.  A ZIP is
         # written atomically below, so an existing final archive is safe to
         # reuse instead of making the dashboard wait to rebuild it each time.
-        if archive.exists() and zipfile.is_zipfile(archive):
+        updated = organized / ".updated"
+        if archive.exists() and zipfile.is_zipfile(archive) and (
+            not updated.exists() or archive.stat().st_mtime_ns >= updated.stat().st_mtime_ns
+        ):
             with zipfile.ZipFile(archive) as bundle:
                 return {"file": archive.name, "bytes": archive.stat().st_size, "files": len(bundle.infolist()), "cached": True}
         temp = archive.with_suffix(".zip.tmp")
         count = 0
         with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
             for path in sorted(organized.rglob("*")):
-                if not path.is_file():
+                if not path.is_file() or path.name == ".updated":
                     continue
                 relative = path.relative_to(organized).as_posix()
                 bundle.write(path, f"Organized Vendor Data/{relative}")

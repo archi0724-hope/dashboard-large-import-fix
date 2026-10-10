@@ -6,6 +6,7 @@ Words are grouped into lines; a wide horizontal gap inside a line is written as 
 from __future__ import annotations
 
 import shutil
+import os
 from pathlib import Path
 from statistics import median
 from typing import Iterator
@@ -15,10 +16,23 @@ from .base import BaseReader, Block, FileReadError, ReadOptions, TextBlock, Unsu
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 
-def ocr_available(tesseract_cmd: str = "") -> bool:
+def resolve_tesseract(tesseract_cmd: str = "") -> str:
     if tesseract_cmd:
-        return Path(tesseract_cmd).exists()
-    return shutil.which("tesseract") is not None
+        return str(Path(tesseract_cmd)) if Path(tesseract_cmd).is_file() else (shutil.which(tesseract_cmd) or "")
+    if found := shutil.which("tesseract"):
+        return found
+    if os.name == "nt":
+        for root, subdir in ((os.environ.get("LOCALAPPDATA", ""), "Programs/Tesseract-OCR"),
+                             (os.environ.get("ProgramFiles", ""), "Tesseract-OCR")):
+            if root:
+                candidate = Path(root) / subdir / "tesseract.exe"
+                if candidate.is_file():
+                    return str(candidate)
+    return ""
+
+
+def ocr_available(tesseract_cmd: str = "") -> bool:
+    return bool(resolve_tesseract(tesseract_cmd))
 
 
 def _prepare(img):
@@ -36,13 +50,13 @@ def ocr_image(img, options: ReadOptions) -> list[tuple[int, str, dict]]:
     """Run Tesseract on a PIL image -> [(line_no, text, {'ocr_confidence': x})]."""
     import pytesseract
 
-    if options.tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = options.tesseract_cmd
-    if not ocr_available(options.tesseract_cmd):
+    executable = resolve_tesseract(options.tesseract_cmd)
+    if not executable:
         raise UnsupportedFileError(
             "OCR requested but Tesseract is not installed (install it, e.g. `apt install tesseract-ocr`, "
             "or set TESSERACT_CMD)."
         )
+    pytesseract.pytesseract.tesseract_cmd = executable
     prepared = _prepare(img)
     try:
         data = pytesseract.image_to_data(

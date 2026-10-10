@@ -16,10 +16,20 @@ The chatbot API is `POST /chatbot/api/chat`, with a JSON body such as
 HospKart chat reads the same database as the Vendor dashboard, using the
 dashboard's `VENDOR_DATA_DIR` and `DATABASE_URL` settings (including Streamlit
 secrets). New imports and company corrections are picked up on subsequent
-queries (cloud edits refresh within 30 seconds). It also searches the copied HospKart catalogue in
-`hospkart_chat/data/hospkart_products.csv`. The source project is preserved.
-The copied catalogue is local data and is excluded from source control; include
-it when moving the app, or set `HOSPKART_PRODUCT_CSV` to another catalogue.
+queries (cloud edits refresh within 30 seconds). Answers use uploaded dashboard
+catalogue records by default. Vendor AI Assistant displays uploaded-document and
+searchable-record counts. This is live data retrieval, with no model retraining.
+
+Document and checklist questions use the saved company document inventory and
+include original filenames. Classification does not verify certificate validity
+or imply that all document contents have been indexed. Product search and quotes
+use extracted catalogue and price-list records; missing prices are not inferred.
+Cached product selections are cleared when the source data changes.
+
+To also include a separate reference catalogue, explicitly set
+`HOSPKART_INCLUDE_REFERENCE_CATALOGUE=true`. Its default path is
+`hospkart_chat/data/hospkart_products.csv`; `HOSPKART_PRODUCT_CSV` can override it.
+Reference catalogue files are excluded from source control.
 
 Search uses keyword matching over product names, SKUs, categories and vendors,
 then the existing HospKart offer-comparison logic. It ranks up to 3,000 candidate
