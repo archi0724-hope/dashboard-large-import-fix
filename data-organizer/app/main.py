@@ -11,6 +11,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from a2wsgi import WSGIMiddleware
 from hospkart_chat.app import app as chatbot_app
 from pydantic import BaseModel, Field
@@ -25,7 +26,6 @@ from .services import AppState, get_state
 
 STATIC = Path(__file__).parent / "dashboard" / "static"
 VENDOR_SCRIPT = Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py"
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 log = get_logger("application")
 
 # Keep both workspaces in one ASGI process. Streamlit owns the Vendor UI at
@@ -127,22 +127,33 @@ def demo_prepare():
     return J(st().prepare_demo())
 
 
-@app.post("/api/upload")
-async def upload(files: list[UploadFile] = File(...)):
+@app.post("/api/upload", openapi_extra={
+    "requestBody": {"required": True, "content": {"multipart/form-data": {
+        "schema": {"type": "object", "required": ["files"], "properties": {
+            "files": {"type": "array", "items": {"type": "string", "format": "binary"}}
+        }}
+    }}}
+})
+async def upload(request: Request):
     s = st()
     saved = []
     has_archive = False
     skipped_entries = 0
-    for f in files:
-        try:
-            filename = f.filename or "upload"
-            saved.append(s.save_upload_stream(filename, f.file, MAX_UPLOAD_BYTES))
-            if filename.lower().endswith(".zip"):
-                report = s.extract_upload_archive(filename, MAX_UPLOAD_BYTES)
-                skipped_entries += report["skipped"]
-                has_archive = True
-        except ConfigError as exc:
-            raise HTTPException(413, str(exc)) from exc
+    # Starlette otherwise rejects multipart requests after 1,000 files.
+    async with request.form(max_files=float("inf")) as form:
+        files = form.getlist("files")
+        if not files or any(not hasattr(file, "file") for file in files):
+            raise HTTPException(422, "Choose at least one file")
+        for f in files:
+            try:
+                filename = f.filename or "upload"
+                saved.append(await run_in_threadpool(s.save_upload_stream, filename, f.file))
+                if filename.lower().endswith(".zip"):
+                    report = await run_in_threadpool(s.extract_upload_archive, filename)
+                    skipped_entries += report["skipped"]
+                    has_archive = True
+            except ConfigError as exc:
+                raise HTTPException(400, str(exc)) from exc
     source = s.settings.uploads_dir / "_extracted" if has_archive else s.settings.uploads_dir
     s.update_config({"source_kind": "local", "local_input_dir": str(source)})
     return J({"saved": saved, "folder": str(source), "skipped_entries": skipped_entries})
@@ -159,6 +170,11 @@ def reset(body: ResetBody):
 
 
 # ----------------------------------------------------------------------------- files / inspection / dry run
+@app.post("/api/source/uploads")
+def select_uploaded_source():
+    return J(st().select_uploaded_source())
+
+
 @app.post("/api/scan")
 def scan():
     s = st()
@@ -339,6 +355,21 @@ def bulk(body: BulkBody):
 
 
 # ----------------------------------------------------------------------------- export
+class ProductExportBody(BaseModel):
+    reference_files: list[str] = Field(default_factory=list)
+    product_sheet_title: str = Field(default="Products & Prices", min_length=1, max_length=25)
+
+
+@app.post("/api/export/products")
+def export_products(body: ProductExportBody | None = None):
+    return J(st().start_product_export(body.reference_files if body else (), body.product_sheet_title if body else "Products & Prices"))
+
+
+@app.get("/api/export/products/status")
+def product_export_status():
+    return J(st().product_export_status())
+
+
 @app.post("/api/export")
 def export():
     s = st()

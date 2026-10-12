@@ -63,6 +63,9 @@ def _company_folder_from_source_path(source_path: str) -> str:
     """Use a vendor ZIP's existing company folder when a file has no parsed name."""
     parts = [part for part in Path(str(source_path or "")).parts if part not in {"", ".", ".."}]
     parents = parts[:-1]
+    while parents and (parents[0] == "_loose_uploads" or
+                       (parents[0].startswith("upload-") and len(parents[0]) == 19)):
+        parents = parents[1:]
     if not parents:
         return ""
     # Recognize archive wrappers without dropping an actual company when the
@@ -87,8 +90,65 @@ class AppState:
         self.progress = Progress()
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        self._product_export = {"running": False, "done": 0, "total": 0, "message": "", "error": "", "result": None}
+
+    def product_export_status(self):
+        with self._lock:
+            return dict(self._product_export)
+
+    def start_product_export(self, reference_files=(), product_sheet_title="Products & Prices"):
+        from .export.product_workbook import create_product_workbook
+        with self._lock:
+            if self.progress.running:
+                raise ConfigError("Wait for file reading to finish before exporting products")
+            if self._product_export["running"]:
+                return self.product_export_status()
+            cfg = RuntimeConfig.from_dict(self.cfg.to_dict())
+            source = make_source(self.settings, cfg)
+            destination = effective_output_dir(cfg, self.settings) / "Company Products and Prices.xlsx"
+            self._product_export = {"running": True, "done": 0, "total": 0, "message": "Scanning source files", "error": "", "result": None}
+
+            def progress(done, total, filename):
+                with self._lock:
+                    self._product_export.update(done=done, total=total, message=filename)
+
+            def run():
+                try:
+                    result = create_product_workbook(source, self.settings, cfg, destination,
+                                                     _company_folder_from_source_path, progress, reference_files=tuple(reference_files), product_sheet_title=product_sheet_title)
+                    with self._lock:
+                        self._product_export.update(running=False, result=result, message="Workbook ready")
+                except Exception as error:
+                    log.exception("Product workbook export failed")
+                    with self._lock:
+                        self._product_export.update(running=False, error=str(error), message="Export failed")
+
+            threading.Thread(target=run, name="product-workbook", daemon=True).start()
+            return self.product_export_status()
 
     # ------------------------------------------------------------------ config
+    def select_uploaded_source(self):
+        from .ingestion.discovery import scan_local_folder
+        root = self.settings.uploads_dir
+        extracted = root / "_extracted"
+        if extracted.is_dir() and any(file.supported for file in scan_local_folder(extracted)):
+            # Loose uploads belong with the extracted ZIP documents. Retain
+            # their originals and copy them into the managed source directory.
+            from .ingestion.registry import SUPPORTED_EXTENSIONS
+            for file in root.iterdir():
+                if file.is_file() and file.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    destination = extracted / "_loose_uploads" / file.name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if not destination.exists() or file_sha256(destination) != file_sha256(file):
+                        shutil.copy2(file, destination)
+            selected = extracted
+        elif root.is_dir() and any(file.supported for file in scan_local_folder(root)):
+            selected = root
+        else:
+            raise ConfigError("No readable uploaded files found. Open Import files and upload documents or choose a local folder.")
+        self.update_config({"source_kind": "local", "local_input_dir": str(selected)})
+        return {"folder": str(selected), "config": self.cfg.to_dict()}
+
     def update_config(self, data: dict[str, Any]) -> RuntimeConfig:
         with self._lock:
             if self.progress.running:
@@ -179,7 +239,7 @@ class AppState:
         self.update_config({"source_kind": "local", "local_input_dir": str(self.settings.demo_input_dir), "drive_folder": ""})
         return {"folder": str(self.settings.demo_input_dir), "files": len(made) + 3}
 
-    def save_upload_stream(self, filename: str, source: BinaryIO, max_bytes: int) -> str:
+    def save_upload_stream(self, filename: str, source: BinaryIO, max_bytes: int | None = None) -> str:
         safe = Path(filename).name
         if not safe or safe.startswith("."):
             raise ConfigError("Invalid file name")
@@ -194,7 +254,7 @@ class AppState:
                 temp_path = Path(temp.name)
                 while chunk := source.read(8 * 1024 * 1024):
                     written += len(chunk)
-                    if written > max_bytes:
+                    if max_bytes is not None and written > max_bytes:
                         raise ConfigError(f"{safe} is larger than {max_bytes // (1024 ** 3)} GiB")
                     temp.write(chunk)
             temp_path.replace(dest)
@@ -204,7 +264,7 @@ class AppState:
             raise
         return safe
 
-    def extract_upload_archive(self, filename: str, max_uncompressed_bytes: int) -> dict[str, int]:
+    def extract_upload_archive(self, filename: str, max_uncompressed_bytes: int | None = None) -> dict[str, int]:
         archive = self.settings.uploads_dir / Path(filename).name
         if archive.suffix.lower() != ".zip":
             return {"bytes": 0, "skipped": 0}
@@ -223,8 +283,8 @@ class AppState:
                 if member.is_dir():
                     continue
                 extracted += member.file_size
-                if extracted > max_uncompressed_bytes:
-                    raise ConfigError(f"{archive.name} expands beyond the 10 GiB dataset limit")
+                if max_uncompressed_bytes is not None and extracted > max_uncompressed_bytes:
+                    raise ConfigError(f"{archive.name} expands beyond the configured dataset limit")
                 try:
                     relative = _safe_archive_member_path(member.filename)
                 except ConfigError as exc:

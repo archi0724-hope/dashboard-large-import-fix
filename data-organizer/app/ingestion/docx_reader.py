@@ -11,10 +11,13 @@ import tempfile
 from pathlib import Path
 from typing import Iterator
 
-from .base import BaseReader, Block, FileReadError, TableBlock, TextBlock, UnsupportedFileError
+from .base import BaseReader, Block, FileReadError, TableBlock, TextBlock, UnsupportedFileError, file_sha256
 
 
 def convert_doc_to_docx(path: Path, out_dir: Path) -> Path:
+    reading_copy = out_dir / (file_sha256(path) + ".docx")
+    if reading_copy.is_file():
+        return reading_copy
     exe = shutil.which("soffice") or shutil.which("libreoffice")
     if not exe:
         raise UnsupportedFileError("Legacy .doc needs LibreOffice (soffice) to convert it; install it or save the file as .docx")

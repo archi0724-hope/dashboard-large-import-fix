@@ -68,6 +68,17 @@ docker compose up --build
 
 ## The dashboard
 
+**Extract products & download Excel** on the Organizer dashboard reads the
+currently selected input files and creates `Company Products and Prices.xlsx`.
+It runs in the background and shows file progress. The workbook contains
+**Products & Prices**, **Company Contacts**, and **Needs Review**, sorted by
+company, product name and SKU. Price and MRP stay separate; specifications and
+pack sizes are retained. Unclear amounts, missing fields, OCR rows, conflicting
+prices and possible duplicates are flagged. Original documents are unchanged.
+Organizer uploads and ZIP extraction have no application file-size, total-size,
+or file-count cap. Large Excel exports continue onto numbered sheets instead of
+dropping rows when an individual worksheet reaches Excel's format limit.
+
 The Organizer dashboard uses three steps: **Import**, **Read files**, and
 **Company folders**. Search companies directly on the dashboard, open a company
 to see its source records, and download the company folders as a ZIP.

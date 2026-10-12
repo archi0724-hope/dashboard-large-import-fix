@@ -164,6 +164,7 @@ PAGE.overview = async () => {
   const ocrReady = st.config.ocr_enabled && st.tools.tesseract;
   const kpi = (value, label) => html`<div class="card kpi"><div class="v">${value}</div><div class="l">${label}</div></div>`;
   $("#view").innerHTML = html`
+    ${!sourceSet ? html`<div class="card row sb"><div><h2>Choose your source files</h2><p class="muted">Reconnect files already uploaded, or choose a folder under Import files.</p></div><button class="primary" id="useSavedUploads">Use uploaded files</button></div>` : ""}
     <div class="card organizer-intro"><div><h2>Your files, organized by company</h2><p class="muted">Read company details from Excel, PDF, JPG, PNG, CSV, Word and text. Original files keep their format and contents.</p></div><a class="btn primary" href="#/source">Import files</a></div>
     <div class="grid g4" style="margin-bottom:16px">
       ${kpi(num(t.files_processed) + " / " + num(t.files), "Files read")}${kpi(num(t.entities), "Companies")}${kpi(num(t.records), "Company records")}${kpi(num(t.pending_reviews), "Matches to check")}
@@ -177,6 +178,9 @@ PAGE.overview = async () => {
       <p class="small ${ocrReady ? "muted" : "ocr-warning"}">${ocrReady ? "Image reading is ready: JPG, PNG and scanned PDFs use OCR." : "JPG, PNG and scanned PDFs need OCR. Enable OCR in Workspace settings and install Tesseract to read their contents."}</p>
       ${t.files_failed ? html`<p class="small ocr-warning">${num(t.files_failed)} file(s) could not be read. <a href="#/source">Check files and retry</a>.</p>` : ""}
     </div>
+    <div class="card"><div class="h"><h2>Products &amp; prices in Excel</h2><button class="primary" id="btnProductExcel" ${p.running ? "disabled" : ""}>Extract products &amp; download Excel</button></div>
+      <p class="muted">One product per row, sorted by company, product name and SKU. Includes Products &amp; Prices, Company Contacts and Needs Review. Originals stay unchanged.</p>
+      <div id="productExcelStatus" role="status" aria-live="polite"></div></div>
     <div class="card"><div class="h"><h2>Companies</h2><div class="row"><a class="btn" href="#/entities">View all companies</a><button id="btnCompanyZip" ${p.running || !t.files ? "disabled" : ""}>Download company folders</button></div></div>
       <label class="f" for="companyQuickSearch">Search companies<input id="companyQuickSearch" placeholder="Company name or phone" type="search"></label>
       <div id="overviewCompanies" style="margin-top:14px"></div>
@@ -191,6 +195,11 @@ PAGE.overview = async () => {
     button.textContent = "Starting…";
     try { await post("/api/scan"); await post("/api/run"); toast("Reading files started"); await route(); }
     finally { if (button.isConnected) { button.disabled = false; button.textContent = "Read files"; } }
+  }));
+  $("#useSavedUploads")?.addEventListener("click", guard(async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try { await post("/api/source/uploads"); toast("Your uploaded files are selected"); await route(); }
+    finally { if (button.isConnected) button.disabled = false; }
   }));
   $("#btnStop")?.addEventListener("click", guard(async () => { await post("/api/stop"); toast("Pausing after the current batch. Progress is saved."); }));
   $("#btnOrganizeDashboard").addEventListener("click", guard(async event => {
@@ -212,10 +221,36 @@ PAGE.overview = async () => {
     } finally { button.disabled = false; button.textContent = "Download company folders"; }
   }));
   let timer;
+  $("#btnProductExcel").addEventListener("click", guard(async event => {
+    if (!sourceSet) { location.hash = "#/source"; toast("Choose your source files first"); return; }
+    await showProductExport(await post("/api/export/products"), true);
+  }));
   $("#companyQuickSearch").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(guard(loadOverviewCompanies), 250); });
   await loadOverviewCompanies();
+  const existingExport = await api("/api/export/products/status");
+  if (existingExport.running || existingExport.result) guard(() => showProductExport(existingExport))();
   if (p.running) startPolling();
 };
+async function showProductExport(job, downloadWhenReady = false) {
+  const button = $("#btnProductExcel"), statusBox = $("#productExcelStatus");
+  if (!button || !statusBox) return;
+  button.disabled = true;
+  try {
+    while (job.running && statusBox.isConnected) {
+      statusBox.textContent = `Reading ${num(job.done)} / ${num(job.total)} source files: ${job.message}`;
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      job = await api("/api/export/products/status");
+    }
+    if (!statusBox.isConnected) return;
+    if (job.error) throw new Error(job.error);
+    if (!job.result) return;
+    const result = job.result;
+    const url = new URL("/api/exports/download", location.origin); url.searchParams.set("file", result.file);
+    const token = sessionStorage.getItem(TOKEN_KEY); if (token) url.searchParams.set("token", token);
+    statusBox.innerHTML = html`<p>${num(result.products)} product rows, ${num(result.contacts)} contacts, ${num(result.review_items)} review items. All ${num(result.files)} source files accounted for.</p><a class="btn primary" href="${url.href}" download>Download company-wise Excel</a>`.__raw;
+    if (downloadWhenReady) $("a", statusBox).click();
+  } finally { if (button.isConnected) button.disabled = false; }
+}
 let overviewSearchRequest = 0;
 async function loadOverviewCompanies() {
   const input = $("#companyQuickSearch"), box = $("#overviewCompanies");
@@ -260,25 +295,36 @@ PAGE.source = async () => {
   const fileRows = files => files.map(f => html`<tr><td>${f.source_path}</td><td>${f.ext}</td><td class="num">${bytes(f.size_bytes)}</td><td>${fileTag(f.status)}</td><td class="num">${num(f.records_extracted)}</td><td class="small muted">${f.error || f.notes || ""}</td></tr>`).map(x => x.__raw).join("");
   const fileTable = (files, empty) => files.length ? html`<div class="tw"><table><thead><tr><th>File</th><th>Type</th><th class="num">Size</th><th>Status</th><th class="num">Records</th><th>Notes</th></tr></thead><tbody>${raw(fileRows(files))}</tbody></table></div>` : html`<div class="empty">${empty}</div>`;
   const mode = cfg.source_kind;
+  const sourceReady = mode === "drive" ? !!cfg.drive_folder : !!cfg.local_input_dir;
   const tab = S.srcTab || (mode === "drive" ? "drive" : "local");
   $("#view").innerHTML = html`
     <div class="card"><div class="h"><h2>Where are your files?</h2>
       <div class="seg" role="tablist">${[["local", "Local folder"], ["drive", "Google Drive"], ["upload", "Upload files"], ["demo", "Demo data"]].map(([k, l]) => html`<button role="tab" data-tab="${k}" class="${tab === k ? "on" : ""}">${l}</button>`)}</div></div>
+      <div class="row" style="margin-bottom:12px"><button id="useSavedUploadsSource">Use uploaded files</button><span class="small muted">Reconnect the documents already saved in this workspace.</span></div>
       <div id="srcbody">${tab === "local" ? html`<div class="stack"><label class="f">Input folder (read-only - sub-folders are included)
         <input id="inpath" value="${cfg.source_kind === "local" ? cfg.local_input_dir : ""}" placeholder="/path/to/your/files" style="width:100%"></label>
         <div class="row"><button class="primary" id="saveSrc">Use this folder</button><span class="muted small">Your files are never modified. Results go to the output folder (${cfg.output_dir || "data/output"}).</span></div></div>`
       : tab === "drive" ? html`<div class="stack"><label class="f">Google Drive folder URL or ID<input id="drvurl" value="${cfg.drive_folder}" placeholder="https://drive.google.com/drive/folders/..." style="width:100%"></label>
         <div class="note ${ds.ready_to_connect ? "" : "warn"}">${ds.ready_to_connect ? "Credentials found - the app can read this folder (read-only scope)." : "Not authorised yet. Run  python -m app drive-auth  once in a terminal (needs secrets/client_secret.json), or configure a service account. Full steps are in the README."}</div>
         <div class="row"><button class="primary" id="saveDrv">Use this Drive folder</button></div></div>`
-      : tab === "upload" ? html`<div class="stack"><input type="file" id="upfiles" multiple><div class="row"><button class="primary" id="doUp">Upload &amp; use</button><span class="muted small">Upload one vendor ZIP or files. ZIP company folders are kept together. Max 10 GB each.</span></div></div>`
+      : tab === "upload" ? html`<div class="stack"><input type="file" id="upfiles" multiple><div class="row"><button class="primary" id="doUp">Upload &amp; use</button><span class="muted small">Upload ZIPs or files. ZIP company folders are kept together. No application file-size or file-count cap.</span></div></div>`
       : html`<div class="stack"><p class="muted">Creates ~11 synthetic files (Excel, legacy .xls, CSV, PDF, Word, text, a scanned image, a corrupt file, a duplicate…) with deliberately messy names such as <em>SMS HOSPITAL JAIPUR</em> / <em>S.M.S. Hospital</em> / <em>Sawai Man Singh Hospital</em>.</p><div class="row"><button class="primary" id="mkDemo">Create demo files &amp; use them</button></div></div>`}</div></div>
-    <div class="card"><div class="h"><h2>Files</h2><div class="row"><button id="btnScan">Scan folder</button><button id="btnInspect">Inspect structure</button><button class="primary" id="btnOrganize">Organize into company folders</button></div></div>
+    <div class="card"><div class="h"><h2>Files</h2><div class="row"><button id="btnScan" ${sourceReady ? "" : "disabled"}>Scan folder</button><button id="btnInspect" ${sourceReady ? "" : "disabled"}>Inspect structure</button><button class="primary" id="btnOrganize" ${inv.length ? "" : "disabled"}>Organize into company folders</button></div></div>
       <h3>Processable files <span class="muted small">${num(processable.length)}</span></h3>
       ${fileTable(processable, "No processable files listed yet. Choose a source above, then press Scan folder.")}
       ${others.length ? html`<details style="margin-top:18px"><summary><strong>Others</strong> <span class="muted small">${num(others.length)} unsupported files</span></summary>${fileTable(others, "No unsupported files.")}</details>` : ""}</div>
     <div id="inspectbox"></div>`.__raw;
   $$("[data-tab]").forEach(b => b.addEventListener("click", () => { S.srcTab = b.dataset.tab; PAGE.source(); }));
-  $("#saveSrc")?.addEventListener("click", guard(async () => { await api("/api/config", { method: "PUT", body: { source_kind: "local", local_input_dir: $("#inpath").value.trim() } }); toast("Source saved"); route(); }));
+  $("#useSavedUploadsSource").addEventListener("click", guard(async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try { await post("/api/source/uploads"); toast("Your uploaded files are selected"); S.srcTab = "local"; await route(); }
+    finally { if (button.isConnected) button.disabled = false; }
+  }));
+  $("#saveSrc")?.addEventListener("click", guard(async () => {
+    const path = $("#inpath").value.trim();
+    if (!path) { toast("Enter a folder path or click Use uploaded files", true); return; }
+    await api("/api/config", { method: "PUT", body: { source_kind: "local", local_input_dir: path } }); toast("Source saved"); route();
+  }));
   $("#saveDrv")?.addEventListener("click", guard(async () => { await api("/api/config", { method: "PUT", body: { source_kind: "drive", drive_folder: $("#drvurl").value.trim() } }); toast("Drive folder saved"); route(); }));
   $("#mkDemo")?.addEventListener("click", guard(async () => { await post("/api/demo/prepare"); S.srcTab = "local"; toast("Demo files ready"); route(); }));
   $("#doUp")?.addEventListener("click", guard(async () => {

@@ -144,7 +144,7 @@ def make_source(settings: Settings, cfg: RuntimeConfig):
     # files and show unrelated data in the dashboard.
     root = cfg.local_input_dir
     if not root:
-        raise ConfigError("No input folder configured. Set a local folder or a Google Drive folder in the configuration.")
+        raise ConfigError("Choose Import files to select a folder, or click Use uploaded files to reconnect your saved uploads.")
     return LocalSource(root)
 
 
