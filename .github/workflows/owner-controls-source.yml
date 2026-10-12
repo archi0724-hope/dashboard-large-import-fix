@@ -1,0 +1,24 @@
+name: Owner controls source bundle
+
+on:
+  push:
+    branches: [feature/owner-access-controls-v2]
+    paths: ['.github/workflows/owner-controls-source.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package tracked source only
+        run: git archive --format=zip --output=/tmp/dashboard-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-source
+          path: /tmp/dashboard-source.zip
+          retention-days: 1
+          if-no-files-found: error
