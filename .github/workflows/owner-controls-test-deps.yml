@@ -18,7 +18,8 @@ jobs:
         with:
           python-version: '3.13'
       - name: Download public test dependencies for offline verification
-        run: python -m pip download --only-binary=:all: -r requirements.txt pytest --dest /tmp/test-wheels
+        run: |
+          python -m pip download --only-binary=:all: -r requirements.txt pytest --dest /tmp/test-wheels
       - uses: actions/upload-artifact@v4
         with:
           name: owner-controls-test-wheels
