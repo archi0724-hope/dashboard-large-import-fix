@@ -1,0 +1,27 @@
+name: Owner controls test dependencies
+
+on:
+  push:
+    branches: [feature/owner-access-controls-v2]
+    paths: ['.github/workflows/owner-controls-test-deps.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download public test dependencies for offline verification
+        run: python -m pip download --only-binary=:all: -r requirements.txt pytest --dest /tmp/test-wheels
+      - uses: actions/upload-artifact@v4
+        with:
+          name: owner-controls-test-wheels
+          path: /tmp/test-wheels
+          retention-days: 1
+          if-no-files-found: error
