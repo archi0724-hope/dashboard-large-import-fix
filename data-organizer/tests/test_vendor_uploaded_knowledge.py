@@ -42,6 +42,11 @@ def test_actual_upload_is_available_to_an_existing_assistant(tmp_path):
 
     result = import_documents(store, [Upload()], forced_company="Acme Supplies", retain_archive=False)
     assert result.saved_files == 1 and not result.issues
+    assert result.catalogue_records_pending == 1
+    assert "No searchable catalogue records" in agent.handle_query("ZX123")
+    imported = store.product_imports()[0]
+    row = store.product_import_rows(imported["id"])[0]
+    store.decide_product_import_row(row["id"], "approve")
     answer = agent.handle_query("ZX123")
     assert "Acme Supplies" in answer and "125.00" in answer
     assert "Acme price list.csv" in answer

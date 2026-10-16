@@ -16,6 +16,8 @@ class ImportResult:
     review_files: int = 0
     total_companies: int = 0
     total_stored_files: int = 0
+    catalogue_records_pending: int = 0
+    duplicate_catalogue_rows: int = 0
     issues: list[dict] = field(default_factory=list)
     company_names: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -57,7 +59,15 @@ def import_documents(store, uploads, forced_company: str = "", read_pdf_text: bo
                             kind, records = extract_records(path, content)
                             if kind:
                                 store.add_document_types(document_id, ["Price" if kind == "price" else "Catalogue"])
-                            store.save_product_records(document_id, records)
+                                if decision.company_name:
+                                    staged = store.stage_product_records(document_id, records)
+                                    result.catalogue_records_pending += staged["staged"]
+                                    result.duplicate_catalogue_rows += staged["duplicates"]
+                                elif records:
+                                    result.issues.append({
+                                        "File": path,
+                                        "Reason": "Catalogue rows need a confirmed vendor assignment before they can be approved or published.",
+                                    })
                         result.saved_files += int(added)
                         result.duplicate_files += int(not added)
                         result.review_files += int(added and decision.needs_review)

@@ -26,6 +26,13 @@ or imply that all document contents have been indexed. Product search and quotes
 use extracted catalogue and price-list records; missing prices are not inferred.
 Cached product selections are cleared when the source data changes.
 
+Use **Organizer → Catalogue approval** for vendor-linked Excel/CSV price lists.
+Extracted records remain pending until reviewed; approval publishes them to the
+same Vendor catalogue queried by search and the assistant. Re-imports for the
+same vendor do not create a second pending batch, and approved price changes are
+recorded with their source file and row. This is human-reviewed data retention,
+not an automatic model-training or retraining pipeline.
+
 To also include a separate reference catalogue, explicitly set
 `HOSPKART_INCLUDE_REFERENCE_CATALOGUE=true`. Its default path is
 `hospkart_chat/data/hospkart_products.csv`; `HOSPKART_PRODUCT_CSV` can override it.

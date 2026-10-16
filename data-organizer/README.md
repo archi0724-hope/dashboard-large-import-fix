@@ -101,11 +101,39 @@ these original documents.
 | **Source & files** | Choose a local folder / Google Drive folder / upload / demo data, scan it, and inspect exactly how each file was understood (detected header row, column → field mapping, sample rows) *before* committing to a full run. |
 | **Preview (dry run)** | Runs the real pipeline on a small sample in a throw-away database — nothing is saved — so you can sanity-check the standardisation first. |
 | **Manual review** | One card at a time: the record found vs. the suggested master entity, a full evidence checklist, and Accept / Reject / New entity. Decisions are remembered (`user_decisions`) and auto-applied to future files. Keyboard: `A` accept, `R` reject, `N` new entity, `J`/`K` next/previous. |
+| **Catalogue approval** | Upload an Excel/CSV price list for an existing vendor, review and correct extracted rows, then explicitly approve or reject each row. Approved products become searchable by the Vendor dashboard and assistant; price changes are retained in an audit history. |
 | **Master data** | Every resolved entity: aliases, contact info, conflicting data flagged, full record-level traceability, rename / merge. |
 | **Quality & duplicates** | Duplicate groups (exact name+phone, exact name+registration ID, identical rows, near-duplicate entities) — reported, never auto-deleted — plus data-quality findings and processing errors. |
 | **Export** | Pick formats (xlsx/csv/json/parquet) and optional grouping (by state/district/city/type/category/source/year) into sub-folders, then download. |
 | **Settings** | Matching thresholds, automatic-matching / manual-review toggles, OCR, and reset. |
 | **Logs** | Tail of the five log files (application, extraction, matching, errors, audit). |
+
+### Catalogue approval and price history
+
+The Organizer's **Catalogue approval** page writes to the same local SQLite /
+configured PostgreSQL store used by the Vendor dashboard. Select an existing
+vendor ID, upload a `.csv`, `.xlsx`, or `.xls` file (100 MB maximum), and review
+the detected rows. Common product, SKU, price, unit, pack-size, and category
+headers are recognized; individual fields can be corrected before approval.
+The uploaded source file remains in the Vendor document store.
+
+Rows stay out of catalogue search until explicitly approved. Repeated uploads
+for the same vendor are idempotent. Matching product/SKU/package rows show the
+existing price; approving a changed price updates the searchable record and
+adds a source-linked entry to price history. Exact repeats are marked duplicate,
+and rows that match multiple listings must be corrected or rejected. The page
+offers import metrics, recent price history, and a cleaned CSV download.
+
+Catalogue rows extracted from the Vendor dashboard's existing document-upload
+workflow are also staged for approval. Older product records remain visible for
+backward compatibility. Authentication is shared at dashboard level: set
+`DASHBOARD_TOKEN` for Organizer API access and `APP_PASSWORD` for the Vendor
+dashboard before exposing the service; neither setting provides per-vendor
+accounts or role-based access control.
+
+This approval flow is not a machine-learning training pipeline. Approved rows
+and price corrections are stored and audited, but there is no scheduled model
+evaluation, retraining, model promotion, or rollback workflow yet.
 
 ## Command line
 

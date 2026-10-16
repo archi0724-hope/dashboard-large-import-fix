@@ -4,12 +4,17 @@
 """
 from __future__ import annotations
 
+import csv
 import math
+import os
+import sys
+from functools import lru_cache
+from io import StringIO
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from a2wsgi import WSGIMiddleware
@@ -74,6 +79,8 @@ async def guard(request: Request, call_next):
         return JSONResponse({"detail": str(exc)}, status_code=400)
     except ReviewError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=400)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
     except KeyError as exc:
         return JSONResponse({"detail": f"Not found: {exc}"}, status_code=404)
     except FileNotFoundError as exc:
@@ -87,6 +94,24 @@ async def guard(request: Request, call_next):
 
 def J(data: Any) -> JSONResponse:
     return JSONResponse(_clean(data))
+
+
+@lru_cache(maxsize=1)
+def catalogue_store():
+    vendor_dashboard_dir = str(VENDOR_SCRIPT.parent)
+    if vendor_dashboard_dir not in sys.path:
+        sys.path.insert(0, vendor_dashboard_dir)
+    from vendor_dashboard.storage import Store
+
+    try:
+        database_url = str(streamlit.secrets.get("DATABASE_URL", os.environ.get("DATABASE_URL", "")))
+        data_dir = str(streamlit.secrets.get("VENDOR_DATA_DIR", os.environ.get(
+            "VENDOR_DATA_DIR", str(VENDOR_SCRIPT.parent / "vendor_data")
+        )))
+    except (FileNotFoundError, streamlit.errors.StreamlitSecretNotFoundError):
+        database_url = os.environ.get("DATABASE_URL", "")
+        data_dir = os.environ.get("VENDOR_DATA_DIR", str(VENDOR_SCRIPT.parent / "vendor_data"))
+    return Store(Path(data_dir), database_url)
 
 
 # ----------------------------------------------------------------------------- status / config
@@ -157,6 +182,142 @@ async def upload(request: Request):
     source = s.settings.uploads_dir / "_extracted" if has_archive else s.settings.uploads_dir
     s.update_config({"source_kind": "local", "local_input_dir": str(source)})
     return J({"saved": saved, "folder": str(source), "skipped_entries": skipped_entries})
+
+
+@app.get("/api/catalogue/vendors")
+def catalogue_vendors():
+    vendors = catalogue_store().vendors()
+    return J([{"vendor_id": row.canonical_id, "company_name": row.company_name}
+              for row in vendors.itertuples(index=False)])
+
+
+@app.post("/api/catalogue/imports")
+async def create_catalogue_import(request: Request):
+    from catalogue_extraction import extract_records
+    from vendor_core import Decision
+
+    max_bytes = 100 * 1024 * 1024
+    async with request.form() as form:
+        upload_file = form.get("file")
+        vendor_id = str(form.get("vendor_id") or "").strip()
+        if not upload_file or not hasattr(upload_file, "read"):
+            raise HTTPException(422, "Choose a catalogue file.")
+        filename = str(upload_file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if Path(filename).suffix.casefold() not in {".xlsx", ".xls", ".csv"}:
+            raise HTTPException(415, "Catalogue imports support .xlsx, .xls, and .csv files.")
+        content = await upload_file.read(max_bytes + 1)
+        if not content:
+            raise HTTPException(422, "The selected file is empty.")
+        if len(content) > max_bytes:
+            raise HTTPException(413, "Catalogue files must be 100 MB or smaller.")
+
+    store = catalogue_store()
+    vendors = await run_in_threadpool(store.vendors)
+    matches = vendors[vendors.canonical_id.astype(str) == vendor_id]
+    if matches.empty:
+        raise HTTPException(422, "Select a vendor that already exists in the verified vendor list.")
+    vendor_name = str(matches.iloc[0].company_name)
+    kind, records = await run_in_threadpool(extract_records, filename, content)
+    if not records:
+        raise HTTPException(422, "No catalogue rows could be extracted. Check the file format and product-name column.")
+
+    decision = Decision(
+        company_name=vendor_name,
+        document_types=("Price" if kind == "price" else "Catalogue",),
+        method="Organizer catalogue import",
+        reason="Extracted catalogue rows require review before publication.",
+    )
+    await run_in_threadpool(store.save_document, filename, content, decision, "Organizer catalogue approval")
+    document_id = await run_in_threadpool(store.document_id_for, filename, content, vendor_name)
+    if document_id is None:
+        raise RuntimeError("The original catalogue file was not retained; no rows were staged.")
+    staged = await run_in_threadpool(store.stage_product_records, document_id, records)
+    return J({
+        **staged,
+        "filename": filename,
+        "vendor_id": vendor_id,
+        "vendor_name": vendor_name,
+        "records_extracted": len(records),
+        "duplicate_upload": staged["staged"] == 0,
+        "message": "Rows are held for review and are not visible in product search until approved.",
+    })
+
+
+@app.get("/api/catalogue/imports")
+def catalogue_imports():
+    return J({"items": catalogue_store().product_imports()})
+
+
+@app.get("/api/catalogue/imports/{import_id}/rows")
+def catalogue_import_rows(import_id: int, status: str = "pending", limit: int = 200, offset: int = 0):
+    if status not in {"pending", "approved", "duplicate", "rejected", "all"}:
+        raise HTTPException(422, "Invalid catalogue review status.")
+    rows = catalogue_store().product_import_rows(import_id, "" if status == "all" else status, limit, offset)
+    return J({"items": rows, "limit": limit, "offset": offset})
+
+
+class CatalogueRowEdit(BaseModel):
+    changes: dict[str, Any] = Field(min_length=1)
+
+
+@app.patch("/api/catalogue/import-rows/{row_id}")
+def edit_catalogue_row(row_id: int, body: CatalogueRowEdit):
+    return J(catalogue_store().edit_product_import_row(row_id, body.changes))
+
+
+class CatalogueRowDecision(BaseModel):
+    action: Literal["approve", "reject"]
+
+
+@app.post("/api/catalogue/import-rows/{row_id}/decide")
+def decide_catalogue_row(row_id: int, body: CatalogueRowDecision):
+    return J(catalogue_store().decide_product_import_row(row_id, body.action))
+
+
+@app.get("/api/catalogue/metrics")
+def catalogue_metrics():
+    return J(catalogue_store().product_import_metrics())
+
+
+@app.get("/api/catalogue/price-history")
+def catalogue_price_history(limit: int = 100, offset: int = 0):
+    return J({"items": catalogue_store().product_price_history(limit=limit, offset=offset)})
+
+
+@app.get("/api/catalogue/imports/{import_id}/export.csv")
+def export_catalogue_import(import_id: int, status: str = "all"):
+    if status not in {"pending", "approved", "duplicate", "rejected", "all"}:
+        raise HTTPException(422, "Invalid catalogue export status.")
+    store = catalogue_store()
+    columns = ["status", "company_name", "product_name", "sku", "price", "currency", "unit", "pack_size",
+               "product_category", "brand", "source_file", "source_sheet", "source_page", "source_row", "decision"]
+
+    def content():
+        first = StringIO()
+        writer = csv.writer(first)
+        writer.writerow(columns)
+        yield first.getvalue()
+        offset = 0
+        while True:
+            rows = store.product_import_rows(import_id, "" if status == "all" else status, 500, offset)
+            if not rows:
+                break
+            for item in rows:
+                record = item["record"]
+                line = StringIO()
+                csv.writer(line).writerow([
+                    item["status"], record.get("company_name", ""), record.get("product_name", ""),
+                    record.get("sku", ""), record.get("price"), record.get("currency", ""),
+                    record.get("unit", ""), record.get("pack_size", ""), record.get("product_category", ""),
+                    record.get("brand", ""), record.get("source_file", ""), item["source_sheet"],
+                    item["source_page"], item["source_row"], item["decision"],
+                ])
+                yield line.getvalue()
+            offset += len(rows)
+
+    list(store.product_import_rows(import_id, status if status != "all" else "", 1))
+    return StreamingResponse(content(), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="catalogue-import-{import_id}.csv"'})
 
 
 class ResetBody(BaseModel):
