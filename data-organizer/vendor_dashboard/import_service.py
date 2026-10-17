@@ -6,6 +6,62 @@ import pandas as pd
 from vendor_core import ArchiveLimits, classify, discover_folder_companies, iter_uploads, company_key, clean_company, upload_stream
 from catalogue_extraction import extract_records
 
+
+def import_catalogue_workbook(store, vendor_name: str, filename: str, content: bytes) -> dict[str, int | str]:
+    """Import a manually selected spreadsheet and publish its rows to the shared catalogue."""
+    if not content:
+        raise ValueError("The selected catalogue file is empty.")
+    from vendor_core import Decision
+
+    decision = Decision(
+        company_name=vendor_name,
+        document_types=("Catalogue",),
+        method="Manual catalogue workbook upload",
+        reason="Original workbook retained from the Vendor catalogue page.",
+    )
+    store.save_document(filename, content, decision, source_batch="Manual catalogue workbook upload")
+    document_id = store.document_id_for(filename, content, vendor_name)
+    if document_id is None:
+        raise RuntimeError("The original catalogue workbook was not retained.")
+
+    kind, records = extract_records(filename, content)
+    if not records:
+        raise ValueError("Original workbook was retained, but no product rows were detected. Check the product-name and price columns.")
+    store.add_document_types(document_id, ["Price" if kind == "price" else "Catalogue"])
+    staged = store.stage_product_records(document_id, records)
+    if not staged["import_id"]:
+        raise RuntimeError("The catalogue workbook produced no import batch.")
+
+    published = duplicates = pending_review = 0
+    offset = 0
+    while True:
+        rows = store.product_import_rows(staged["import_id"], limit=500, offset=offset)
+        if not rows:
+            break
+        offset += len(rows)
+        for row in rows:
+            if row["status"] != "pending":
+                continue
+            try:
+                result = store.decide_product_import_row(row["id"], "approve", user="vendor-catalogue-upload")
+            except ValueError:
+                pending_review += 1
+                continue
+            if result["status"] == "approved":
+                published += 1
+            elif result["status"] == "duplicate":
+                duplicates += 1
+
+    return {
+        "import_id": staged["import_id"],
+        "records_extracted": len(records),
+        "published": published,
+        "duplicates": duplicates + staged["duplicates"],
+        "pending_review": pending_review,
+        "duplicate_upload": staged["staged"] == 0 and published == 0 and pending_review == 0,
+    }
+
+
 @dataclass
 class ImportResult:
     source: str

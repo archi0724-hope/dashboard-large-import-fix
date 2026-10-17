@@ -225,3 +225,61 @@ def test_approved_catalogue_can_be_searched_and_downloaded_as_sorted_excel(clien
     workbook = load_workbook(BytesIO(export.content), read_only=True, data_only=True)
     sheet = workbook["Approved catalogue"]
     assert [sheet.cell(row=row, column=2).value for row in (2, 3)] == ["Alcohol swabs", "Zinc oxide"]
+
+
+def test_manual_vendor_workbook_upload_publishes_and_updates_shared_catalogue(vendor_store, monkeypatch):
+    store, _ = vendor_store
+    vendor_dir = Path(__file__).resolve().parents[1] / "vendor_dashboard"
+    monkeypatch.syspath_prepend(str(vendor_dir))
+    from import_service import import_catalogue_workbook
+
+    def workbook(price):
+        output = BytesIO()
+        pd.DataFrame([{
+            "Product Name": "Surgical gloves",
+            "SKU": "SG-100",
+            "Price": price,
+            "Unit": "box",
+            "Pack Size": "box of 100",
+        }]).to_excel(output, index=False)
+        return output.getvalue()
+
+    original_workbook = workbook(125)
+    revised_workbook = workbook(145)
+    first = import_catalogue_workbook(store, "Acme Supplies", "vendor-prices.xlsx", original_workbook)
+    assert first["published"] == 1
+    assert store.product_records("SG-100")["price"].tolist() == [125]
+    assert store.product_import_rows(first["import_id"])[0]["status"] == "approved"
+
+    revised = import_catalogue_workbook(store, "Acme Supplies", "vendor-prices-revised.xlsx", revised_workbook)
+    assert revised["published"] == 1
+    assert revised["pending_review"] == 0
+    records = store.product_records("SG-100")
+    assert records["price"].tolist() == [145]
+    history = store.product_price_history(product_record_id=int(records.iloc[0]["id"]))
+    assert [(item["old_price"], item["new_price"]) for item in history] == [(125, 145)]
+
+    duplicate = import_catalogue_workbook(store, "Acme Supplies", "vendor-prices-revised.xlsx", revised_workbook)
+    assert duplicate["duplicate_upload"] is True
+    assert store.product_records("SG-100")["price"].tolist() == [145]
+
+
+def test_vendor_catalogue_page_exposes_manual_workbook_upload(tmp_path, monkeypatch):
+    vendor_dir = Path(__file__).resolve().parents[1] / "vendor_dashboard"
+    monkeypatch.syspath_prepend(str(vendor_dir))
+    monkeypatch.setenv("VENDOR_DATA_DIR", str(tmp_path / "ui-vendor-data"))
+    for name in ("DATABASE_URL", "APP_PASSWORD", "CLOUD_DEPLOYMENT"):
+        monkeypatch.setenv(name, "")
+    storage = importlib.import_module("storage")
+    store = storage.Store(tmp_path / "ui-vendor-data")
+    store.upsert_vendors(pd.DataFrame({"company_name": ["Acme Supplies"]}))
+
+    from streamlit.testing.v1 import AppTest
+
+    page = AppTest.from_file(str(vendor_dir / "app.py")).run(timeout=30)
+    assert not page.exception
+    page.radio(key="page").set_value("Catalogue & prices").run(timeout=30)
+
+    assert not page.exception
+    assert any("Manually upload an Excel catalogue or price list" in item.label for item in page.expander)
+    assert any("Upload and merge into shared catalogue" in item.label for item in page.button)

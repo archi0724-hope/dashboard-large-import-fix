@@ -130,6 +130,18 @@ approved-catalogue search with an Excel download. Approval writes directly to
 the shared Vendor product store, so published products are available in Vendor
 search without a separate synchronization job.
 
+On the Vendor dashboard's **Catalogue & prices** page, the **Manually upload an
+Excel catalogue or price list** panel lets you choose an existing vendor and
+upload `.xlsx`, `.xls`, or `.csv` (up to 100 MB). Clicking **Upload and merge
+into shared catalogue** publishes detected rows immediately to the same
+catalogue that feeds Vendor product search and the company-wise Excel export.
+Existing products matched by SKU/product, pack, and unit are updated in place;
+changed prices are added to price history, and repeat uploads are deduplicated.
+Rows that match multiple existing listings are not published automatically:
+they remain in Organizer catalogue approval for correction. The uploaded
+workbook is retained as the source file and is not overwritten; download the
+generated company-wise workbook to get the integrated catalogue.
+
 Catalogue rows extracted from the Vendor dashboard's existing document-upload
 workflow are also staged for approval. Older product records remain visible for
 backward compatibility. Authentication is shared at dashboard level: set

@@ -37,6 +37,13 @@ approved price changes are recorded with their source file and row. Approved
 records are searchable reference data, not machine-learning training: there is
 no automatic retraining pipeline.
 
+For a direct manual spreadsheet upload, open **Vendor → Catalogue & prices**,
+select the existing vendor, and use **Upload and merge into shared catalogue**.
+That explicit action immediately publishes unambiguous rows to Vendor search
+and the company-wise Excel export. The uploaded workbook is retained unchanged;
+the combined workbook is generated on download. Conflicting matches stay in
+Organizer review, and changed prices remain in the audit history.
+
 To also include a separate reference catalogue, explicitly set
 `HOSPKART_INCLUDE_REFERENCE_CATALOGUE=true`. Its default path is
 `hospkart_chat/data/hospkart_products.csv`; `HOSPKART_PRODUCT_CSV` can override it.

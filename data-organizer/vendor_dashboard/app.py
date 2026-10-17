@@ -22,7 +22,7 @@ import pandas as pd
 import streamlit as st
 
 import exports as exports_module
-from import_service import import_documents
+from import_service import import_catalogue_workbook, import_documents
 from drive_import import DiskUpload, download_drive_zip
 import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
@@ -863,6 +863,72 @@ elif page == "Companies & documents":
 elif page == "Catalogue & prices":
     st.subheader("Catalogue and price records")
     st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
+    with st.expander("Manually upload an Excel catalogue or price list", expanded=False):
+        st.caption(
+            "Choose an existing vendor and an .xlsx, .xls, or .csv file. The source file is retained; "
+            "valid rows are merged into the shared catalogue immediately, and the company-wise Excel export "
+            "will include the new catalogue data."
+        )
+        import_vendors = vendors.drop_duplicates("company_key").sort_values(
+            "company_name", key=lambda values: values.str.casefold()
+        )
+        if import_vendors.empty:
+            st.info("Add a vendor on the Upload documents page before importing a catalogue.")
+        else:
+            vendor_names = dict(zip(import_vendors.company_key, import_vendors.company_name))
+            selected_vendor = st.selectbox(
+                "Add catalogue rows to vendor",
+                import_vendors.company_key.tolist(),
+                format_func=vendor_names.get,
+                key="manual_catalogue_vendor",
+            )
+            catalogue_file = st.file_uploader(
+                "Select Excel or CSV catalogue",
+                type=["xlsx", "xls", "csv"],
+                key="manual_catalogue_file",
+                help="Maximum file size: 100 MB. Product-name and price columns are detected from common header names.",
+            )
+            if st.button(
+                "Upload and merge into shared catalogue",
+                type="primary",
+                disabled=catalogue_file is None,
+                key="manual_catalogue_upload",
+            ):
+                st.session_state.pop("manual_catalogue_result", None)
+                content = catalogue_file.getvalue()
+                if len(content) > 100 * 1024 * 1024:
+                    st.error("Catalogue files must be 100 MB or smaller.")
+                else:
+                    try:
+                        result = import_catalogue_workbook(
+                            store,
+                            vendor_names[selected_vendor],
+                            catalogue_file.name,
+                            content,
+                        )
+                    except (ValueError, RuntimeError, OSError) as error:
+                        logging.getLogger(__name__).exception(
+                            "Manual catalogue upload failed for vendor %s and file %s",
+                            selected_vendor,
+                            catalogue_file.name,
+                        )
+                        st.error(str(error))
+                    else:
+                        st.session_state["manual_catalogue_result"] = result
+                        st.rerun()
+            if result := st.session_state.get("manual_catalogue_result"):
+                if result["duplicate_upload"]:
+                    st.info("This workbook was already imported for this vendor; no duplicate records were added.")
+                else:
+                    st.success(
+                        f"Published {result['published']:,} rows to the shared catalogue; "
+                        f"{result['duplicates']:,} duplicate rows skipped."
+                    )
+                    if result["pending_review"]:
+                        st.warning(
+                            f"{result['pending_review']:,} rows matched multiple existing products and were "
+                            "left unpublished for review in Organizer → Catalogue approval."
+                        )
     export_signature = store.search_index_signature()
     st.download_button(
         "Export company-wise catalogue & prices — Excel",
