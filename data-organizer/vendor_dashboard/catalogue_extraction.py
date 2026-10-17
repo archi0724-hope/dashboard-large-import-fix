@@ -175,6 +175,85 @@ def _image_text(content: bytes) -> str:
         return ""
 
 
+_CHAT_TIMESTAMP = re.compile(
+    r"^\[?(?P<date>\d{1,4}[/-]\d{1,2}[/-]\d{2,4},?\s+\d{1,2}:\d{2}(?:\s*[ap]m)?)\]?\s*[-,]?\s*",
+    re.IGNORECASE,
+)
+_CHAT_PRICE = re.compile(
+    r"(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d+)?)"
+    r"|([\d,]+(?:\.\d+)?)\s*(?:INR\b|Rs\.?|₹)"
+    r"|\b(?:price|rate)\s*(?:is|:|-)?\s*(?:₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def extract_whatsapp_records(filename: str, content: bytes) -> tuple[list[dict], int]:
+    """Extract only same-message product/price pairs; leave ambiguous chat context for review."""
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = content.decode("cp1252", errors="replace")
+
+    records = []
+    skipped = 0
+    for line_number, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        timestamp = _CHAT_TIMESTAMP.match(line)
+        if not timestamp:
+            continue
+        message = line[timestamp.end():].strip()
+        sender, separator, message_body = message.partition(":")
+        if separator:
+            sender = sender.strip()
+            message = message_body.strip()
+        else:
+            sender = ""
+
+        matches = list(_CHAT_PRICE.finditer(message))
+        if not matches:
+            continue
+        if len(matches) != 1:
+            skipped += 1
+            continue
+
+        price_match = matches[0]
+        raw_price = next(value for value in price_match.groups() if value is not None)
+        product_name = (message[:price_match.start()] + " " + message[price_match.end():]).strip(" \t-,:;.")
+        product_name = re.sub(r"\b(?:price|rate|is|for)\b", " ", product_name, flags=re.IGNORECASE)
+        product_name = re.sub(r"\s+", " ", product_name).strip(" \t-,:;.")
+        if len(product_name) < 2 or not re.search(r"[^\W\d_]", product_name, re.UNICODE):
+            skipped += 1
+            continue
+
+        currency = "INR" if re.search(r"₹|\bINR\b|\bRs\.?", message, re.IGNORECASE) else ""
+        records.append({
+            "record_type": "price",
+            "product_name": product_name[:500],
+            "sku": "",
+            "description": message[:8000],
+            "unit": "",
+            "price": float(raw_price.replace(",", "")),
+            "mrp": None,
+            "discount": None,
+            "gst": None,
+            "currency": currency,
+            "brand": "",
+            "product_category": "",
+            "specification": "",
+            "pack_size": "",
+            "moq": "",
+            "availability": "",
+            "source_sheet": sender[:200] or Path(filename).name[:200],
+            "source_page": timestamp.group("date")[:50],
+            "source_row": line_number,
+            "image_reference": "",
+            "extraction_confidence": "medium",
+        })
+    return records, skipped
+
+
 def extract_records(filename: str, content: bytes) -> tuple[str | None, list[dict]]:
     """Return document kind and normalized records; unsupported files return no rows."""
     suffix = Path(filename).suffix.casefold()

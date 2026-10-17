@@ -556,6 +556,11 @@ PAGE.catalogue = async () => {
     api("/api/catalogue/vendors"), api("/api/catalogue/imports"), api("/api/catalogue/metrics"),
     api("/api/catalogue/price-history?limit=25"),
   ]);
+  const productQuery = S.catalogueProductQuery || "";
+  const productVendor = S.catalogueProductVendor || "";
+  const productOffset = S.catalogueProductOffset || 0;
+  const productParams = new URLSearchParams({ query: productQuery, vendor_id: productVendor, limit: "100", offset: String(productOffset) });
+  const products = await api(`/api/catalogue/products?${productParams}`);
   const selectedId = S.catalogueImportId || imports.items[0]?.id;
   const selected = imports.items.find(item => item.id === selectedId);
   const offset = S.catalogueOffset || 0;
@@ -565,6 +570,9 @@ PAGE.catalogue = async () => {
   const card = (value, label, tone = "") => html`<div class="card kpi ${tone}"><div class="v">${num(value)}</div><div class="l">${label}</div></div>`;
   const token = sessionStorage.getItem(TOKEN_KEY);
   const exportUrl = selected ? `/api/catalogue/imports/${selected.id}/export.csv?status=all${token ? "&token=" + encodeURIComponent(token) : ""}` : "";
+  const productExportParams = new URLSearchParams({ query: productQuery, vendor_id: productVendor });
+  if (token) productExportParams.set("token", token);
+  const productExportUrl = `/api/catalogue/products/export.xlsx?${productExportParams}`;
   $("#view").innerHTML = html`
     <div class="grid g6" style="margin-bottom:16px">
       ${card(metrics.imports, "Catalogue uploads")}${card(metrics.extracted, "Extracted rows")}
@@ -573,11 +581,12 @@ PAGE.catalogue = async () => {
     </div>
     <div class="card"><h2>Upload a catalogue or price list</h2>
       <p class="muted">Rows stay out of product search until explicitly approved. Original files are retained for traceability.</p>
+      <p class="muted small">Approved records become verified reference data for Vendor search and the assistant. Unapproved uploads are never training data; automatic AI model retraining is not enabled.</p>
       ${vendors.length ? html`<div class="row">
         <label class="f">Verified vendor<select id="catalogueVendor">${vendors.map(v => html`<option value="${v.vendor_id}">${v.company_name} · ${v.vendor_id}</option>`)}</select></label>
-        <label class="f">Excel or CSV file<input id="catalogueFile" type="file" accept=".xlsx,.xls,.csv"></label>
+        <label class="f">Excel, CSV, WhatsApp TXT or ZIP<input id="catalogueFile" type="file" accept=".xlsx,.xls,.csv,.txt,.zip"></label>
         <button class="primary" id="catalogueUpload">Upload for review</button>
-      </div><p class="muted small">Common product columns are detected automatically. You can correct each row before approval. Maximum file size: 100 MB.</p>` :
+      </div><p class="muted small">Common product columns are detected automatically. WhatsApp TXT/ZIP imports only pair a product and price from the same message; review every extracted row. You can correct each row before approval. Maximum file size: 100 MB.</p>` :
       html`<div class="note warn">Add a vendor in the Vendor dashboard before importing catalogue rows. A vendor must be selected by its existing ID; it is never guessed from the file.</div>`}
     </div>
     <div class="card"><div class="h"><h2>Import batches</h2>${selected ? html`<a class="btn sm" href="${exportUrl}">Download cleaned CSV</a>` : ""}</div>
@@ -586,6 +595,26 @@ PAGE.catalogue = async () => {
           <td class="small">${item.uploaded_at}</td><td>${item.status}</td><td>${num(item.pending)}</td><td>${num(item.approved)}</td><td>${num(item.duplicates)}</td>
           <td><button class="sm ${selectedId === item.id ? "primary" : ""}" data-review-import="${item.id}">Review rows</button></td></tr>`)}
       </tbody></table></div>` : html`<div class="empty">No catalogue imports yet.</div>`}
+    </div>
+    <div class="card"><div class="h"><h2>Approved catalogue · available in Vendor search</h2><a class="btn sm" href="${productExportUrl}">Download Excel</a></div>
+      <form id="catalogueProductFilter" class="row">
+        <label class="f">Search product, SKU, vendor, brand or category<input id="catalogueProductQuery" value="${productQuery}"></label>
+        <label class="f">Vendor<select id="catalogueProductVendor"><option value="">All vendors</option>
+          ${vendors.map(v => html`<option value="${v.vendor_id}" ${productVendor === v.vendor_id ? "selected" : ""}>${v.company_name}</option>`)}
+        </select></label>
+        <button class="primary" type="submit">Search approved records</button>
+      </form>
+      ${products.items.length ? html`<div class="tw"><table><thead><tr><th>Vendor</th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Unit / pack</th><th>Source / date</th><th>Updated</th></tr></thead><tbody>
+        ${products.items.map(item => html`<tr><td>${item.company_name}</td><td>${item.product_name}</td><td>${item.sku || "—"}</td>
+          <td>${item.product_category || "—"}</td><td>${item.price == null ? "No verified price" : `${item.currency || ""} ${item.price}`}</td>
+          <td>${[item.unit, item.pack_size].filter(Boolean).join(" / ") || "—"}</td>
+          <td>${item.source_file || "—"}${item.source_page ? ` · ${item.source_page}` : ""}${item.source_row ? ` · row ${item.source_row}` : ""}</td>
+          <td>${item.extracted_at || "—"}</td></tr>`)}
+      </tbody></table></div>
+      <div class="row"><span class="muted small">Showing ${productOffset + 1}–${productOffset + products.items.length} of ${num(products.total)} sorted by vendor, product and price.</span>
+        ${productOffset > 0 ? html`<button class="sm" id="catalogueProductsPrevious">Previous</button>` : ""}
+        ${productOffset + products.items.length < products.total ? html`<button class="sm" id="catalogueProductsNext">Next 100</button>` : ""}
+      </div>` : html`<div class="empty">No approved catalogue records match this search. Approve imported rows to publish them to Vendor search.</div>`}
     </div>
     ${selected ? html`<div class="card"><div class="h"><h2>Review ${selected.filename} · ${selected.company_name}</h2><span class="muted small">${num(selected.pending)} rows pending</span></div>
       <p class="muted small">Approval publishes a row to product search. Any changed price is recorded in history. Missing prices are not inferred.</p>
@@ -630,7 +659,23 @@ PAGE.catalogue = async () => {
     const result = await api("/api/catalogue/imports", { method: "POST", body: form });
     S.catalogueImportId = result.import_id;
     S.catalogueOffset = 0;
-    toast(result.duplicate_upload ? "This file was already imported for that vendor" : `${result.records_extracted} rows staged for approval`);
+    toast(result.duplicate_upload ? "This file was already imported for that vendor" :
+      `${result.records_extracted} rows staged for review${result.messages_needing_review ? ` · ${result.messages_needing_review} ambiguous chat messages skipped` : ""}`);
+    await PAGE.catalogue();
+  }));
+  $("#catalogueProductFilter")?.addEventListener("submit", guard(async event => {
+    event.preventDefault();
+    S.catalogueProductQuery = $("#catalogueProductQuery").value.trim();
+    S.catalogueProductVendor = $("#catalogueProductVendor").value;
+    S.catalogueProductOffset = 0;
+    await PAGE.catalogue();
+  }));
+  $("#catalogueProductsPrevious")?.addEventListener("click", guard(async () => {
+    S.catalogueProductOffset = Math.max(0, productOffset - 100);
+    await PAGE.catalogue();
+  }));
+  $("#catalogueProductsNext")?.addEventListener("click", guard(async () => {
+    S.catalogueProductOffset = productOffset + 100;
     await PAGE.catalogue();
   }));
   $$("[data-review-import]").forEach(button => button.addEventListener("click", () => {

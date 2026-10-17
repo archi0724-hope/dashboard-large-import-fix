@@ -900,6 +900,38 @@ class Store:
             params.append(record_type)
         return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
 
+    def published_catalogue_rows(self, query: str = "", vendor_id: str = "",
+                                 limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+        if limit < 1 or limit > 500 or offset < 0:
+            raise ValueError("Page size must be between 1 and 500 and offset must be non-negative.")
+        clauses, params = [], []
+        if vendor_id:
+            vendor = self.vendors()
+            matches = vendor[vendor.canonical_id.astype(str) == str(vendor_id)]
+            if matches.empty:
+                raise KeyError(vendor_id)
+            clauses.append("p.company_key=?")
+            params.append(str(matches.iloc[0].company_key))
+        if query.strip():
+            term = f"%{query.casefold().strip()}%"
+            clauses.append(
+                "(lower(p.product_name) LIKE ? OR lower(p.sku) LIKE ? OR lower(p.description) LIKE ? "
+                "OR lower(p.company_name) LIKE ? OR lower(p.product_category) LIKE ? OR lower(p.brand) LIKE ?)"
+            )
+            params.extend([term] * 6)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.connection() as db:
+            total = int(db.execute("SELECT COUNT(*) AS n FROM vdd_product_records p" + where, params).fetchone()["n"])
+            rows = db.execute(
+                """SELECT p.*, COALESCE(NULLIF(p.source_file, ''), d.filename) AS source_file
+                   FROM vdd_product_records p LEFT JOIN vdd_documents d ON d.id=p.document_id"""
+                + where
+                + " ORDER BY lower(p.company_name),lower(p.product_name),"
+                  "(p.price IS NULL),p.price,lower(p.sku),p.id LIMIT ? OFFSET ?",
+                params + [int(limit), int(offset)],
+            ).fetchall()
+        return [dict(row) for row in rows], total
+
     def product_record_count(self, query: str = "", record_type: str = "") -> int:
         where, params = self._product_filter(query, record_type)
         with self.connection() as db:

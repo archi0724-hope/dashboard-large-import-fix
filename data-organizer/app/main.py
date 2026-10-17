@@ -8,8 +8,9 @@ import csv
 import math
 import os
 import sys
+import zipfile
 from functools import lru_cache
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from a2wsgi import WSGIMiddleware
 from hospkart_chat.app import app as chatbot_app
+import pandas as pd
 from pydantic import BaseModel, Field
 import streamlit as streamlit
 
@@ -193,7 +195,8 @@ def catalogue_vendors():
 
 @app.post("/api/catalogue/imports")
 async def create_catalogue_import(request: Request):
-    from catalogue_extraction import extract_records
+    store = catalogue_store()
+    from catalogue_extraction import extract_records, extract_whatsapp_records
     from vendor_core import Decision
 
     max_bytes = 100 * 1024 * 1024
@@ -203,23 +206,53 @@ async def create_catalogue_import(request: Request):
         if not upload_file or not hasattr(upload_file, "read"):
             raise HTTPException(422, "Choose a catalogue file.")
         filename = str(upload_file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-        if Path(filename).suffix.casefold() not in {".xlsx", ".xls", ".csv"}:
-            raise HTTPException(415, "Catalogue imports support .xlsx, .xls, and .csv files.")
+        suffix = Path(filename).suffix.casefold()
+        if suffix not in {".xlsx", ".xls", ".csv", ".txt", ".zip"}:
+            raise HTTPException(415, "Catalogue imports support Excel, CSV, WhatsApp TXT, and ZIP files.")
         content = await upload_file.read(max_bytes + 1)
         if not content:
             raise HTTPException(422, "The selected file is empty.")
         if len(content) > max_bytes:
             raise HTTPException(413, "Catalogue files must be 100 MB or smaller.")
 
-    store = catalogue_store()
     vendors = await run_in_threadpool(store.vendors)
     matches = vendors[vendors.canonical_id.astype(str) == vendor_id]
     if matches.empty:
         raise HTTPException(422, "Select a vendor that already exists in the verified vendor list.")
     vendor_name = str(matches.iloc[0].company_name)
-    kind, records = await run_in_threadpool(extract_records, filename, content)
+    skipped_messages = 0
+    records = []
+    if suffix == ".zip":
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                text_files = [item for item in archive.infolist() if not item.is_dir()
+                              and Path(item.filename).suffix.casefold() == ".txt"]
+                if len(text_files) > 200 or sum(item.file_size for item in text_files) > max_bytes:
+                    raise HTTPException(413, "ZIP imports support up to 200 text files and 100 MB extracted text.")
+                for item in sorted(text_files, key=lambda entry: entry.filename.casefold()):
+                    chat_rows, skipped = await run_in_threadpool(
+                        extract_whatsapp_records, item.filename, archive.read(item)
+                    )
+                    for row in chat_rows:
+                        row["source_sheet"] = item.filename[:200]
+                    records.extend(chat_rows)
+                    skipped_messages += skipped
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(422, "The selected ZIP file is invalid or damaged.") from exc
+        kind = "price"
+    elif suffix == ".txt":
+        records, skipped_messages = await run_in_threadpool(extract_whatsapp_records, filename, content)
+        kind = "price"
+        if not records:
+            kind, records = await run_in_threadpool(extract_records, filename, content)
+    else:
+        kind, records = await run_in_threadpool(extract_records, filename, content)
     if not records:
-        raise HTTPException(422, "No catalogue rows could be extracted. Check the file format and product-name column.")
+        raise HTTPException(
+            422,
+            "No reliable product-price rows were found. WhatsApp imports only pair a product and price "
+            "from the same message; add an Excel/CSV catalogue or correct the chat formatting.",
+        )
 
     decision = Decision(
         company_name=vendor_name,
@@ -238,8 +271,10 @@ async def create_catalogue_import(request: Request):
         "vendor_id": vendor_id,
         "vendor_name": vendor_name,
         "records_extracted": len(records),
+        "messages_needing_review": skipped_messages,
         "duplicate_upload": staged["staged"] == 0,
-        "message": "Rows are held for review and are not visible in product search until approved.",
+        "message": "Rows are held for review and are not visible in product search until approved. "
+                   "WhatsApp rows require confirmation; price/product associations are not inferred across messages.",
     })
 
 
@@ -279,6 +314,43 @@ def catalogue_metrics():
     return J(catalogue_store().product_import_metrics())
 
 
+@app.get("/api/catalogue/products")
+def catalogue_products(query: str = "", vendor_id: str = "", limit: int = 100, offset: int = 0):
+    rows, total = catalogue_store().published_catalogue_rows(query, vendor_id, limit, offset)
+    return J({"items": rows, "total": total, "limit": limit, "offset": offset})
+
+
+@app.get("/api/catalogue/products/export.xlsx")
+def export_catalogue_products(query: str = "", vendor_id: str = ""):
+    store = catalogue_store()
+    _, total = store.published_catalogue_rows(query, vendor_id, 1, 0)
+    if total > 100_000:
+        raise HTTPException(413, "Excel export is limited to 100,000 catalogue records. Filter by vendor or search term.")
+    products = []
+    offset = 0
+    while offset < total:
+        rows, _ = store.published_catalogue_rows(query, vendor_id, 500, offset)
+        if not rows:
+            break
+        products.extend(rows)
+        offset += len(rows)
+    columns = ["company_name", "product_name", "sku", "product_category", "brand", "price", "mrp",
+               "currency", "unit", "pack_size", "availability", "source_file", "source_sheet",
+               "source_page", "source_row", "extracted_at"]
+    workbook = BytesIO()
+    with pd.ExcelWriter(
+        workbook,
+        engine="xlsxwriter",
+        engine_kwargs={"options": {"strings_to_formulas": False, "strings_to_urls": False}},
+    ) as writer:
+        pd.DataFrame(products, columns=columns).to_excel(writer, sheet_name="Approved catalogue", index=False)
+    return StreamingResponse(
+        BytesIO(workbook.getvalue()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="approved-catalogue.xlsx"'},
+    )
+
+
 @app.get("/api/catalogue/price-history")
 def catalogue_price_history(limit: int = 100, offset: int = 0):
     return J({"items": catalogue_store().product_price_history(limit=limit, offset=offset)})
@@ -291,6 +363,11 @@ def export_catalogue_import(import_id: int, status: str = "all"):
     store = catalogue_store()
     columns = ["status", "company_name", "product_name", "sku", "price", "currency", "unit", "pack_size",
                "product_category", "brand", "source_file", "source_sheet", "source_page", "source_row", "decision"]
+
+    def safe_cell(value):
+        if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+            return "'" + value
+        return value
 
     def content():
         first = StringIO()
@@ -305,13 +382,13 @@ def export_catalogue_import(import_id: int, status: str = "all"):
             for item in rows:
                 record = item["record"]
                 line = StringIO()
-                csv.writer(line).writerow([
+                csv.writer(line).writerow([safe_cell(value) for value in [
                     item["status"], record.get("company_name", ""), record.get("product_name", ""),
                     record.get("sku", ""), record.get("price"), record.get("currency", ""),
                     record.get("unit", ""), record.get("pack_size", ""), record.get("product_category", ""),
                     record.get("brand", ""), record.get("source_file", ""), item["source_sheet"],
                     item["source_page"], item["source_row"], item["decision"],
-                ])
+                ]])
                 yield line.getvalue()
             offset += len(rows)
 

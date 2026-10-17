@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+from io import BytesIO
 from pathlib import Path
+import zipfile
 
 import pandas as pd
 import pytest
@@ -105,3 +107,121 @@ def test_api_upload_requires_existing_vendor_and_returns_rows_to_review(client, 
     published = client.post(f"/api/catalogue/import-rows/{rows[0]['id']}/decide", json={"action": "approve"})
     assert published.status_code == 200
     assert store.product_records("G1")["price"].tolist() == [125]
+
+    from openpyxl import Workbook
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["Product Name", "SKU", "Price", "Unit"])
+    sheet.append(["Examination gloves", "EG2", 50, "box"])
+    excel_file = BytesIO()
+    workbook.save(excel_file)
+    excel_response = client.post(
+        "/api/catalogue/imports",
+        data={"vendor_id": vendor_id},
+        files={"file": ("price-list.xlsx", excel_file.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert excel_response.status_code == 200
+    excel_rows = store.product_import_rows(excel_response.json()["import_id"])
+    assert excel_rows[0]["record"]["product_name"] == "Examination gloves"
+    assert excel_rows[0]["record"]["price"] == 50
+
+
+def test_whatsapp_extraction_only_pairs_one_price_with_same_message(monkeypatch):
+    vendor_dir = Path(__file__).resolve().parents[1] / "vendor_dashboard"
+    monkeypatch.syspath_prepend(str(vendor_dir))
+    from catalogue_extraction import extract_whatsapp_records
+
+    records, skipped = extract_whatsapp_records(
+        "chat.txt",
+        (
+            "[17/10/24, 9:10 pm] Devansh: Surgical gloves price ₹1,250 per box\n"
+            "[17/10/24, 9:11 pm] Devansh: Gloves ₹100 or ₹200 depending on pack\n"
+            "[17/10/24, 9:12 pm] Devansh: We can deliver tomorrow\n"
+            "[17/10/24, 9:13 pm] Devansh: ₹500\n"
+            "[17/10/24, 9:14 pm] Devansh: Gauze pads 55 INR\n"
+        ).encode("utf-8"),
+    )
+
+    assert len(records) == 2
+    assert skipped == 2
+    assert records[0]["product_name"] == "Surgical gloves per box"
+    assert records[0]["price"] == 1250
+    assert records[0]["source_sheet"] == "Devansh"
+    assert records[0]["source_page"] == "17/10/24, 9:10 pm"
+    assert records[0]["extraction_confidence"] == "medium"
+    assert (records[1]["product_name"], records[1]["price"]) == ("Gauze pads", 55)
+
+
+def test_whatsapp_zip_upload_stages_rows_and_publishes_only_after_approval(client, tmp_path, monkeypatch):
+    from app import main
+
+    main.catalogue_store.cache_clear()
+    monkeypatch.setenv("VENDOR_DATA_DIR", str(tmp_path / "whatsapp-vendor-data"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    store = main.catalogue_store()
+    main.catalogue_store.cache_clear()
+    store.upsert_vendors(pd.DataFrame({"company_name": ["Acme Supplies"]}))
+    vendor_id = store.vendors().iloc[0].canonical_id
+    monkeypatch.setattr(main, "catalogue_store", lambda: store)
+
+    archive = BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(
+            "WhatsApp Chat.txt",
+            "[17/10/24, 9:10 pm] Acme: Surgical gloves price Rs 125 per box\n",
+        )
+    response = client.post(
+        "/api/catalogue/imports",
+        data={"vendor_id": vendor_id},
+        files={"file": ("vendor-chat.zip", archive.getvalue(), "application/zip")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["records_extracted"] == 1
+    assert store.product_records("Surgical gloves").empty
+    rows = store.product_import_rows(payload["import_id"])
+    assert rows[0]["record"]["price"] == 125
+    assert rows[0]["record"]["source_sheet"] == "WhatsApp Chat.txt"
+    assert rows[0]["record"]["source_page"] == "17/10/24, 9:10 pm"
+    assert client.post(
+        f"/api/catalogue/import-rows/{rows[0]['id']}/decide", json={"action": "approve"}
+    ).status_code == 200
+    assert store.product_records("Surgical gloves")["price"].tolist() == [125]
+
+
+def test_approved_catalogue_can_be_searched_and_downloaded_as_sorted_excel(client, tmp_path, monkeypatch):
+    from app import main
+
+    main.catalogue_store.cache_clear()
+    monkeypatch.setenv("VENDOR_DATA_DIR", str(tmp_path / "catalogue-export-data"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    store = main.catalogue_store()
+    main.catalogue_store.cache_clear()
+    store.upsert_vendors(pd.DataFrame({"company_name": ["Acme Supplies"]}))
+    vendor_id = store.vendors().iloc[0].canonical_id
+    monkeypatch.setattr(main, "catalogue_store", lambda: store)
+    upload = client.post(
+        "/api/catalogue/imports",
+        data={"vendor_id": vendor_id},
+        files={"file": ("products.csv", b"Product Name,SKU,Price\nZinc oxide,G2,40\nAlcohol swabs,G1,10\n", "text/csv")},
+    )
+    assert upload.status_code == 200
+    rows = store.product_import_rows(upload.json()["import_id"])
+    for row in rows:
+        assert client.post(
+            f"/api/catalogue/import-rows/{row['id']}/decide", json={"action": "approve"}
+        ).status_code == 200
+
+    response = client.get("/api/catalogue/products", params={"vendor_id": vendor_id})
+    assert response.status_code == 200
+    assert [item["product_name"] for item in response.json()["items"]] == ["Alcohol swabs", "Zinc oxide"]
+    assert response.json()["total"] == 2
+
+    export = client.get("/api/catalogue/products/export.xlsx", params={"vendor_id": vendor_id})
+    assert export.status_code == 200
+    from openpyxl import load_workbook
+    workbook = load_workbook(BytesIO(export.content), read_only=True, data_only=True)
+    sheet = workbook["Approved catalogue"]
+    assert [sheet.cell(row=row, column=2).value for row in (2, 3)] == ["Alcohol swabs", "Zinc oxide"]
