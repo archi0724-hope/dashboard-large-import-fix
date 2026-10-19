@@ -1,4 +1,6 @@
 streamlit[pdf]==1.63.0
+# Direct ASGI route imports; matches Streamlit's existing supported range.
+starlette>=0.46,<2
 pandas==2.2.3
 openpyxl>=3.1.5,<4
 xlrd>=2.0.1,<3
