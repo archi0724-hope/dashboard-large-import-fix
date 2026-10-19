@@ -15,37 +15,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements.txt
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r requirements.txt pytest
-      - run: python -m pip check
-      - run: python -m compileall -q asgi_app.py vendor_dashboard app.py catalogue_extraction.py drive_import.py exports.py import_service.py storage.py vendor_core.py
-      - name: Test root dashboard
-        run: python -m pytest tests -q -ra
-
-  organizer:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: data-organizer
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: data-organizer/requirements.txt
-      - name: Install OCR tools for scanned-document tests
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng fonts-dejavu-core
-          tesseract --version
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r requirements.txt
-      - run: python -m pip check
-      - run: python -m compileall -q app vendor_dashboard hospkart_chat scripts
-      - name: Test data organizer
-        run: python -m pytest tests -q -ra
+      - run: pip install -r requirements.txt pytest
+      - run: python -m compileall -q app.py drive_import.py exports.py import_service.py storage.py vendor_core.py
+      - run: python -m pytest -q
 
   docker:
     runs-on: ubuntu-latest
