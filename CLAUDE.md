@@ -1,6 +1,16 @@
 # CLAUDE.md
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+Read [AGENTS.md](AGENTS.md) first. It is the canonical guide for this project's stack, application boundaries, storage, commands, security rules, approval workflow and verification requirements. Apply it together with the current user request; keep this file consistent when project instructions change.
+
+The principles below supplement that guide. They do not require repeated approval for routine steps already authorized by the user.
+
+## Stack
+
+Python 3.12, Streamlit 1.63.0 and native `st.App`/Starlette host the existing UI and `/api/health` on one port. Existing pandas/export/PDF libraries, SQLite/filesystem locally and PostgreSQL via psycopg remain in place. Ruff lint/format and mypy strict are configured for new scaffold code only; install development dependencies from `requirements-dev.txt`. See [AGENTS.md](AGENTS.md) for exact commands and constraints.
+
+## Architecture
+
+Use one modular monolith. `asgi_app.py` wraps root `app.py`; `vendor_dashboard/web/` contains application composition and public liveness. `vendor_dashboard/domain/`, `services/`, `infrastructure/` and `jobs/` reserve future boundaries; root business modules remain authoritative. Future dependencies point web/jobs -> services -> domain with infrastructure adapters at the edge. `pyproject.toml` configures checks; [docs/architecture.md](docs/architecture.md) and [docs/decisions/](docs/decisions/) hold the design and ADRs. Managed identity, tenant isolation, private objects and a durable worker are planned, not implemented. No system-design document was supplied; requirements and capacity assumptions remain provisional.
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
