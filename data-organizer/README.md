@@ -48,6 +48,21 @@ page (a local folder, a Google Drive folder, or drag-and-drop upload), or from t
 python -m app run --input /path/to/your/files --export
 ```
 
+### Isolated tests and CI
+
+Run tests from this `data-organizer` directory with an environment installed from this application's `requirements.txt`. The root Streamlit dashboard has different pandas/pytest pins and its own `app.py`; do not install both requirement lists in the same environment or collect both suites in one pytest process. Root CI job `organizer` runs this complete test suite separately from dashboard job `test`.
+
+PowerShell commands from `data-organizer` (create the separate environment only if absent):
+
+```powershell
+py -3.12 -m venv ..\.venv-organizer-ci
+..\.venv-organizer-ci\Scripts\python.exe -m pip install -r requirements.txt
+..\.venv-organizer-ci\Scripts\python.exe -m pip check
+..\.venv-organizer-ci\Scripts\python.exe -m pytest tests -q -ra
+```
+
+Put Tesseract with English language data on PATH for OCR coverage. CI installs it and DejaVu fonts on Ubuntu; missing local OCR tools cause explicit test skips that must be reported. CI does not install LibreOffice or claim legacy `.doc` converter verification.
+
 ### System requirements
 
 - Python 3.12 (see `requirements.txt` for pinned package versions)

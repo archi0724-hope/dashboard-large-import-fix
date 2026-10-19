@@ -10,7 +10,7 @@ services:
     volumes:
       - vendor_dashboard_data:/app/vendor_data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/api/health', timeout=3).read()"]
       interval: 30s
       timeout: 5s
       retries: 3
