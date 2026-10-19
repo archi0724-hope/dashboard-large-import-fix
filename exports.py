@@ -1,5 +1,6 @@
 """Formatted, formula-safe Excel and CSV exports."""
 from __future__ import annotations
+from datetime import date
 from io import BytesIO
 import math
 import re
@@ -77,6 +78,97 @@ def finish(sheet):
                 width = sheet.column_dimensions[cell.column_letter].width or 15
                 height = max(height, min(90, 15 * (math.ceil(len(cell.value) / max(width - 2, 1)) + 1)))
         sheet.row_dimensions[row[0].row].height = height
+
+
+RFQ_COLUMNS = [
+    "Item no.", "Item name", "Vendor name", "Vendor option", "Client requirement", "Specifications",
+    "Brand", "Model / item code", "HSN code", "Requested quantity", "Requested unit", "Availability",
+    "Listed stock", "Minimum order", "Listed unit price", "Currency", "Selling unit", "GST (%)",
+    "Price tax basis", "Listed line amount", "Amount before GST", "GST amount", "Amount including GST",
+    "Lead time", "Price valid until", "Delivery / freight terms", "Payment terms", "Warranty", "Status / action",
+]
+RFQ_VENDOR_COLUMNS = [
+    "Item no.", "Vendor option", "Item name", "Vendor name", "Category", "Pack size", "Price type",
+    "GST as stated", "Vendor stock status", "Other price terms", "Vendor contact", "Vendor email",
+    "Vendor phone", "Vendor GSTIN", "Source catalog", "Source location", "Catalog uploaded",
+]
+RFQ_NUMBER_COLUMNS = {
+    "Item no.", "Vendor option", "Requested quantity", "Listed stock", "Minimum order", "Listed unit price",
+    "GST (%)", "Listed line amount", "Amount before GST", "GST amount", "Amount including GST",
+}
+RFQ_MONEY_COLUMNS = {"Listed unit price", "Listed line amount", "Amount before GST", "GST amount", "Amount including GST"}
+
+
+def rfq_workbook_bytes(rows: list[dict], details: dict | None = None) -> bytes:
+    """A shareable catalog-backed RFQ with alternatives, unknowns and provenance."""
+    if OPENPYXL_IMPORT_ERROR is not None:
+        raise RuntimeError("Excel export requires the openpyxl package.") from OPENPYXL_IMPORT_ERROR
+    details = details or {}
+    book = Workbook()
+    book.remove(book.active)
+    book.properties.creator = "Hospkart"
+    book.properties.title = "Hospkart client RFQ"
+    for name, headers in [("RFQ items", RFQ_COLUMNS), ("Vendor details", RFQ_VENDOR_COLUMNS)]:
+        sheet = book.create_sheet(name)
+        widths = [12 if header in {"Item no.", "Vendor option", "Currency", "GST (%)"}
+                  else 42 if header in {"Client requirement", "Item name", "Specifications", "Status / action", "Other price terms"}
+                  else 36 if header == "Availability" else 26 if header in {"Vendor name", "Source catalog", "Vendor email"}
+                  else 20 for header in headers]
+        style_sheet(sheet, headers, widths, "HOSPKART | " + name.upper(),
+                    "Vendor options are alternatives, not a combined order. Stock and prices are catalog listings; confirm the final quote. See RFQ details.")
+        if details.get("Client / hospital") or details.get("RFQ reference"):
+            client_note = f"Client: {details.get('Client / hospital') or 'To be completed'} | RFQ: {details.get('RFQ reference') or 'To be completed'}"
+            write_text(sheet.cell(2, 1), client_note + "\nVendor options are alternatives. Confirm stock and final prices; see RFQ details.")
+        for row_index, record in enumerate(rows, 5):
+            for column_index, header in enumerate(headers, 1):
+                cell = sheet.cell(row_index, column_index)
+                value = record.get(header)
+                if header in RFQ_NUMBER_COLUMNS:
+                    if isinstance(value, (int, float)) and math.isfinite(value):
+                        cell.value = value
+                    else:
+                        cell.comment = Comment("Not stated or not calculable from this catalog. Confirm with vendor; blank does not mean zero.", "Hospkart")
+                    cell.number_format = '#,##0.00####' if header == "Listed unit price" else '#,##0.00' if header in RFQ_MONEY_COLUMNS else '0.##"%"' if header == "GST (%)" else '#,##0.##'
+                else:
+                    write_text(cell, value if value not in (None, "") else "Not stated")
+                    if header in {"HSN code", "Vendor phone", "Vendor GSTIN", "Model / item code"}:
+                        cell.number_format = "@"
+        finish(sheet)
+        sheet.freeze_panes = "D5" if name == "RFQ items" else "C5"
+        sheet.print_options.horizontalCentered = True
+        sheet.print_area = f"A1:{get_column_letter(len(headers))}{sheet.max_row}"
+        if "Availability" in headers:
+            column = headers.index("Availability") + 1
+            for row_index in range(5, sheet.max_row + 1):
+                cell = sheet.cell(row_index, column)
+                color = "E3F0D8" if str(cell.value).startswith("Listed stock covers") else "FBE9E7" if str(cell.value).startswith("Out of stock") else "FFF2CC"
+                cell.fill = PatternFill("solid", fgColor=color)
+    sheet = book.create_sheet("RFQ details")
+    style_sheet(sheet, ["Field", "Details"], [30, 110], "HOSPKART | RFQ DETAILS",
+                "Complete client details and confirm outstanding information before sharing the final quotation.")
+    detail_rows = [("Prepared date", date.today().isoformat())]
+    for field in ("RFQ reference", "Client / hospital", "Client contact", "Client GSTIN", "Delivery location",
+                  "Sales executive", "Executive contact", "Required delivery date", "Client notes"):
+        detail_rows.append((field, details.get(field) or "To be completed"))
+    detail_rows.extend([
+        ("Document status", "Draft RFQ / catalog comparison. Listed vendor prices are not a confirmed Hospkart selling quotation."),
+        ("Vendor alternatives", "Each item number refers to one client requirement. Vendor options are alternatives; do not sum them as a combined order. No grand total is provided across alternatives or currencies."),
+        ("Availability", "Availability comes from uploaded vendor catalogs, not live Hospkart warehouse inventory. Listed stock and MOQ use the selling unit. A catalog match alone does not confirm stock. Confirm quantity and delivery with the vendor."),
+        ("Missing items", "No catalog match means no match for this requirement and budget in the indexed catalogs; it does not prove the item is unavailable. Requirements without matches are retained."),
+        ("Missing values", "Not stated and blank numeric cells mean unknown, not zero. HSN and GST are copied from catalog fields; no tax classification is inferred."),
+        ("GST estimates", "GST amounts are calculated only for an eligible listed price with an explicit GST rate and Inclusive or Exclusive tax basis. Inclusive prices are split into net and GST; Exclusive prices have GST added. Other taxes, discounts and freight are not calculated."),
+        ("Price checks", "Expired, older or conflicting listings, insufficient stock, MOQ conflicts and uncertain currency/unit require confirmation. Their prices remain visible, but line estimates are blank."),
+        ("Catalog coverage", details.get("Catalog coverage") or "Based on the catalogs available to this search."),
+        ("Sources", "Vendor details includes source file, sheet/page/row and catalog upload date. Upload date is not a stock verification date. Vendor contact details are included only when present in the catalog."),
+        ("Editing this workbook", "Amounts are a snapshot of the search; editing quantities or prices in Excel does not recalculate them. Run a new search to regenerate estimates."),
+    ])
+    for row_index, (label, value) in enumerate(detail_rows, 5):
+        write_text(sheet.cell(row_index, 1), label)
+        write_text(sheet.cell(row_index, 2), value)
+    finish(sheet)
+    output = BytesIO()
+    book.save(output)
+    return output.getvalue()
 
 
 def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company: bool = False, aliases: pd.DataFrame | None = None) -> bytes:

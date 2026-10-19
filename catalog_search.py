@@ -17,7 +17,7 @@ import unicodedata
 import zipfile
 from xml.etree import ElementTree
 
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 MAX_BYTES = 32 * 1024 * 1024
 MAX_ROWS = 20000
 MAX_PAGES = 250
@@ -81,7 +81,17 @@ HEADERS = {
     "moq": {"moq", "minimum order", "minimum order quantity"},
     "stock": {"stock", "stock quantity", "available quantity"},
     "availability": {"availability", "stock status"},
-    "contact": {"contact", "phone", "email", "contact details", "vendor contact"},
+    "contact": {"contact", "contact person", "contact details", "vendor contact"},
+    "email": {"email", "email address", "vendor email"},
+    "phone": {"phone", "mobile", "phone number", "vendor phone"},
+    "hsn": {"hsn", "hsn code", "hsn sac", "hsn sac code"},
+    "gst": {"gst", "gst rate", "gst percentage", "tax rate", "tax percentage"},
+    "tax_basis": {"tax basis", "gst basis", "price tax basis", "tax included", "gst included"},
+    "lead_time": {"lead time", "delivery time", "delivery lead time"},
+    "delivery_terms": {"delivery terms", "shipping terms", "freight terms"},
+    "payment_terms": {"payment terms", "payment"},
+    "warranty": {"warranty", "warranty terms"},
+    "vendor_gstin": {"gstin", "vendor gstin", "supplier gstin"},
     "valid_until": {"valid until", "valid till", "expiry date", "price valid until"},
     "terms": {"terms", "tax delivery terms", "tax and delivery", "price terms"},
 }
@@ -93,6 +103,32 @@ def cell_text(value) -> str:
     if isinstance(value, (date, datetime)):
         return value.date().isoformat() if isinstance(value, datetime) else value.isoformat()
     return str(value).strip()[:2000]
+
+
+def gst_rate(value) -> float | None:
+    """Rates are percentage points (18 or 18%); missing/ambiguous is not zero."""
+    parsed = number(str(value).strip().removesuffix("%").strip())
+    return parsed if parsed is not None and parsed <= 100 else None
+
+
+def tax_basis(value) -> str:
+    text = normalize(value)
+    if text in {"exclusive", "excluded", "extra", "gst extra", "tax extra", "excluding gst", "excluding tax", "no", "exclusive of gst", "exclusive of tax"}:
+        return "Exclusive"
+    if text in {"inclusive", "included", "gst included", "tax included", "including gst", "including tax", "yes", "inclusive of gst", "inclusive of tax"}:
+        return "Inclusive"
+    return ""
+
+
+def excel_value(cell):
+    """Preserve explicit Excel percentages and zero-padded identifiers."""
+    value = cell.value
+    if isinstance(value, (int, float)):
+        if re.fullmatch(r"0(?:\.0+)?%", cell.number_format):
+            return f"{Decimal(str(value)) * 100}%"
+        if re.fullmatch(r"0{2,}", cell.number_format) and value >= 0 and float(value).is_integer():
+            return str(int(value)).zfill(len(cell.number_format))
+    return value
 
 
 def tabular_entries(rows, label: str, notes: list) -> list[dict]:
@@ -124,6 +160,8 @@ def tabular_entries(rows, label: str, notes: list) -> list[dict]:
                      unit=selling_unit(values.get("unit", ""), values.get("pack_size", "")),
                      unit_label=values.get("unit", ""),
                      moq=number(values.get("moq", "")), stock=number(values.get("stock", "")),
+                     gst=gst_rate(values.get("gst", "")), gst_label=values.get("gst", ""),
+                     tax_basis=tax_basis(values.get("tax_basis", "")), tax_basis_label=values.get("tax_basis", ""),
                      location=f"{label}, row {row_number}", kind="product",
                      evidence=" | ".join(f"{key}: {value}" for key, value in values.items() if value),
                      price_note="MRP" if normalize(price_heading) == "mrp" else "Listed price")
@@ -190,7 +228,8 @@ def extract_catalog(filename: str, payload: bytes) -> tuple[list[dict], list[str
         try:
             entries = []
             for sheet in workbook.worksheets[:30]:
-                entries.extend(tabular_entries(sheet.iter_rows(values_only=True), sheet.title, notes))
+                rows = ([excel_value(cell) for cell in row] for row in sheet.iter_rows())
+                entries.extend(tabular_entries(rows, sheet.title, notes))
                 if len(entries) >= MAX_ROWS:
                     notes.append(f"Stopped at {MAX_ROWS:,} products; split this workbook to index all rows.")
                     break
@@ -355,6 +394,33 @@ def match_terms(required: set[str], available: set[str]) -> bool:
     return all(bool(FURNITURE & available) if term == "furniture" else term in available for term in required)
 
 
+UNAVAILABLE = {"out of stock", "unavailable", "discontinued", "no", "not available", "sold out", "not in stock"}
+ON_ORDER = {"backorder", "back order", "on request", "made to order", "preorder", "pre order", "on order"}
+
+
+def availability_status(offer: dict, requirement: Requirement) -> str:
+    """Describe vendor-listed supply; there is no live Hospkart inventory feed."""
+    if any(label in offer.get("status", "") for label in ("Older listing", "Conflicting vendor listings")):
+        return "Confirm with vendor — older or conflicting listing"
+    stated = normalize(offer.get("availability", ""))
+    stock = offer.get("stock")
+    if stated in UNAVAILABLE or stock == 0:
+        return "Out of stock / unavailable (listed)"
+    if stated in ON_ORDER:
+        return "On order / request — confirm delivery"
+    if offer.get("kind") == "excerpt":
+        return "Confirm with vendor"
+    if stock is not None:
+        if not offer.get("unit") or offer["unit"] != requirement.unit:
+            return "Confirm stock unit with vendor"
+        if stock >= requirement.quantity:
+            return "Listed stock covers requested quantity"
+        return "Partial availability — listed stock below quantity"
+    if stated in {"available", "in stock", "yes", "ready stock"}:
+        return "Listed available — confirm quantity"
+    return "Confirm with vendor"
+
+
 def find_offers(entries: list[dict], requirement: Requirement) -> list[dict]:
     def product_identity(entry):
         return tuple(normalize(entry.get(key, "")) for key in
@@ -367,7 +433,9 @@ def find_offers(entries: list[dict], requirement: Requirement) -> list[dict]:
         if entry["kind"] != "product":
             continue
         identity, uploaded = product_identity(entry), entry["uploaded_at"]
-        quote = tuple(entry.get(key) for key in ("price", "moq", "stock", "valid_until", "terms"))
+        quote = tuple(entry.get(key) for key in ("price", "moq", "stock", "availability", "valid_until", "terms",
+                                                "gst", "gst_label", "tax_basis", "tax_basis_label", "hsn",
+                                                "lead_time", "delivery_terms", "payment_terms"))
         latest, quotes = versions.get(identity, ("", set()))
         if uploaded > latest:
             versions[identity] = (uploaded, {quote})
@@ -402,8 +470,10 @@ def find_offers(entries: list[dict], requirement: Requirement) -> list[dict]:
             issues.append(f"Below minimum order of {entry['moq']:g}")
         if entry.get("stock") is not None and entry["stock"] < requirement.quantity:
             issues.append("Listed stock is below requested quantity")
-        if normalize(entry.get("availability", "")) in {"out of stock", "unavailable", "discontinued", "no", "not available"}:
+        if normalize(entry.get("availability", "")) in UNAVAILABLE:
             issues.append("Listed as unavailable")
+        if normalize(entry.get("availability", "")) in ON_ORDER:
+            issues.append("On order / request — confirm delivery and availability")
         if entry.get("valid_until"):
             try:
                 if date.fromisoformat(entry["valid_until"]) < date.today():
@@ -422,7 +492,8 @@ def find_offers(entries: list[dict], requirement: Requirement) -> list[dict]:
         total = float((Decimal(str(price)) * requirement.quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if eligible else None
         # Compare like descriptions/specifications/brands and price terms only.
         basis = tuple(normalize(entry.get(key, "")) for key in
-                      ("product", "specifications", "brand", "model", "currency", "unit", "terms", "price_note"))
+                      ("product", "specifications", "brand", "model", "currency", "unit", "terms", "price_note",
+                       "gst", "gst_label", "tax_basis", "tax_basis_label", "hsn", "delivery_terms", "payment_terms"))
         matches.append({**entry, "quantity": requirement.quantity, "total": total, "eligible": eligible,
                         "status": "; ".join(issues) or "Listed offer — confirm stock and final quote",
                         "comparison_basis": basis, "lowest": False})
@@ -452,13 +523,61 @@ def comparison_rows(requirement: Requirement, offers: list[dict]) -> list[dict]:
              "Specifications": offer.get("specifications", ""), "Brand / model": " / ".join(filter(None, [offer.get("brand"), offer.get("model")])),
              "Listed price": offer["price"], "Currency": offer["currency"] or "Not stated", "Unit": offer["unit"] or offer.get("unit_label") or "Not stated",
              "Requested quantity": requirement.quantity, "Estimated line total": offer["total"],
+             "HSN code": offer.get("hsn", ""), "GST (%)": offer.get("gst"),
+             "GST as stated": offer.get("gst_label", ""),
+             "Price tax basis": offer.get("tax_basis") or offer.get("tax_basis_label", ""),
              "Minimum order": offer.get("moq"), "Listed stock": offer.get("stock"),
+             "Availability": availability_status(offer, requirement), "Vendor stock status": offer.get("availability", ""),
+             "Lead time": offer.get("lead_time", ""), "Delivery terms": offer.get("delivery_terms", ""),
+             "Payment terms": offer.get("payment_terms", ""), "Warranty": offer.get("warranty", ""),
              "Valid until": offer.get("valid_until", ""), "Tax / delivery terms": offer.get("terms", ""),
-             "Contact": offer.get("contact", ""), "Comparison": "Lowest comparable listed price" if offer["lowest"] else "",
+             "Contact": " | ".join(filter(None, [offer.get("contact"), offer.get("email"), offer.get("phone")])),
+             "Comparison": "Lowest comparable listed price" if offer["lowest"] else "",
              "Status": offer["status"], "Source": f"{offer['filename']} · {offer['location']}",
              "Catalog uploaded": offer["uploaded_at"][:10]} for offer in offers]
 
 
-CATALOG_TEMPLATE = ("Product,Specifications,Category,Brand,Model,Price,Currency,Unit,Pack size,MOQ,Stock,Contact,Valid until,Terms\n"
-                    "Office chair,Mesh back,Furniture,Example brand,CHAIR-01,2500,INR,each,,1,50,sales@example.com,2027-12-31,Tax and delivery extra\n"
-                    "Syringe,5ml sterile,Consumables,Example brand,SYR-05,4.5,INR,each,,100,10000,sales@example.com,2027-12-31,Tax and delivery extra\n")
+def rfq_rows(requirement: Requirement, offers: list[dict], item_number: int) -> list[dict]:
+    """Keep every requirement, including missing products, in the RFQ export."""
+    rows = []
+    for option, offer in enumerate(offers or [None], 1):
+        row = {"Item no.": item_number, "Vendor option": option if offer else None,
+               "Client requirement": requirement.text, "Requested quantity": requirement.quantity,
+               "Requested unit": requirement.unit}
+        if offer is None:
+            row.update({"Item name": requirement.text, "Availability": "No catalog match — availability unconfirmed",
+                        "Status / action": "No match for this requirement and budget; ask for a vendor quote."})
+        else:
+            row.update({
+                "Item name": offer["product"], "Vendor name": offer["vendor"],
+                "Specifications": offer.get("specifications", ""), "Brand": offer.get("brand", ""),
+                "Model / item code": offer.get("model", ""), "Category": offer.get("category", ""),
+                "HSN code": offer.get("hsn", ""), "Listed unit price": offer["price"],
+                "Currency": offer["currency"], "Selling unit": offer.get("unit") or offer.get("unit_label", ""),
+                "Pack size": offer.get("pack_size", ""), "GST (%)": offer.get("gst"),
+                "GST as stated": offer.get("gst_label", ""),
+                "Price tax basis": offer.get("tax_basis") or offer.get("tax_basis_label", ""),
+                "Price type": offer.get("price_note", ""), "Listed line amount": offer["total"],
+                "Availability": availability_status(offer, requirement), "Listed stock": offer.get("stock"),
+                "Vendor stock status": offer.get("availability", ""), "Minimum order": offer.get("moq"),
+                "Lead time": offer.get("lead_time", ""), "Delivery / freight terms": offer.get("delivery_terms", ""),
+                "Payment terms": offer.get("payment_terms", ""), "Warranty": offer.get("warranty", ""),
+                "Price valid until": offer.get("valid_until", ""), "Other price terms": offer.get("terms", ""),
+                "Vendor contact": offer.get("contact", ""), "Vendor email": offer.get("email", ""),
+                "Vendor phone": offer.get("phone", ""), "Vendor GSTIN": offer.get("vendor_gstin", ""),
+                "Status / action": offer["status"], "Source catalog": offer["filename"],
+                "Source location": offer["location"], "Catalog uploaded": offer["uploaded_at"][:10],
+            })
+            rate, basis, total = offer.get("gst"), offer.get("tax_basis"), offer["total"]
+            if total is not None and rate is not None and basis in {"Exclusive", "Inclusive"}:
+                amount, fraction = Decimal(str(total)), Decimal(str(rate)) / 100
+                net = amount if basis == "Exclusive" else (amount / (1 + fraction)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                tax = (net * fraction).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if basis == "Exclusive" else amount - net
+                row.update({"Amount before GST": float(net), "GST amount": float(tax), "Amount including GST": float(net + tax)})
+        rows.append(row)
+    return rows
+
+
+CATALOG_TEMPLATE = ("Product,Specifications,Category,Brand,Model,Price,Currency,Unit,Pack size,MOQ,Stock,Availability,HSN Code,GST (%),Tax basis,Contact,Email,Phone,Vendor GSTIN,Lead time,Delivery terms,Payment terms,Warranty,Valid until,Terms\n"
+                    "Office chair,Mesh back,Furniture,Example brand,CHAIR-01,2500,INR,each,,1,50,In stock,,,Exclusive,Example contact,sales@example.com,,,7 days,Freight extra,Confirm with vendor,Confirm with vendor,2027-12-31,Tax and delivery extra\n"
+                    "Syringe,5ml sterile,Consumables,Example brand,SYR-05,4.5,INR,each,,100,10000,In stock,,,Exclusive,Example contact,sales@example.com,,,3 days,Freight extra,Confirm with vendor,Confirm with vendor,2027-12-31,Tax and delivery extra\n")

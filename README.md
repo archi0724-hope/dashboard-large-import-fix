@@ -12,6 +12,7 @@ A Streamlit dashboard for importing vendor documents, searching vendor catalogs 
 - Store local data in SQLite/filesystem or use PostgreSQL for durable hosted storage.
 - Search catalog products by requirement, quantity, specifications and budget.
 - Compare vendor prices with source references, stock/MOQ checks and CSV downloads.
+- Download a formatted Hospkart Excel RFQ with vendor alternatives, GST/HSN, availability, client details and delivery/payment terms.
 - Give the sales team a separate password with access to catalog search only.
 
 ## Sales catalog assistant
@@ -25,13 +26,19 @@ A Streamlit dashboard for importing vendor documents, searching vendor catalogs 
    500 5ml syringes
    ```
 
-4. Review matching vendors, specifications, listed prices, quantities, source locations and catalog upload dates. Download the comparison or open the original catalog evidence.
+4. Review matching vendors, specifications, listed prices, quantities and **Availability**. Expand **Client and sales executive details (optional)** to enter the RFQ reference, hospital/client, contacts, delivery location and notes, then click **Download Excel RFQ**. CSV comparison and source catalog downloads remain available.
+
+The Excel workbook contains **RFQ items**, **Vendor details** and **RFQ details**. It includes requested items even when no catalog matches them. Multiple vendors appear as alternatives for the same item; their prices are not added into a grand total. Item details include HSN, GST, selling unit, quantity, listed price, estimated amounts, stock/MOQ, lead time, validity, delivery/payment terms and warranty. Vendor details retain contacts, GSTIN and source references from sales-visible catalogs.
+
+Availability distinguishes sufficient listed stock, partial stock, unavailable items, stock listed without a quantity, and unknown stock. This is **vendor catalog availability, not live Hospkart warehouse inventory**. A product appearing in a catalog does not by itself confirm stock. Blank numeric cells and `Not stated` mean information must be confirmed; they do not mean zero.
 
 Each message starts a new search. Separate products with new lines or semicolons; quantity defaults to one piece. For packs, use `10 packs of 100 syringes`. This is local keyword/specification matching with common furniture and product synonyms; it needs no external AI key and does not send catalogs to an AI service.
 
 ### Catalog formats and price meaning
 
-- **CSV / XLSX:** one product per row, with `Product`, `Price`, `Currency` and `Unit` columns for price comparison. Optional columns: `Specifications`, `Category`, `Brand`, `Model`, `Pack size`, `MOQ`, `Stock`, `Contact`, `Valid until`, `Terms`. The downloadable template shows the format. Stock and MOQ must use the stated selling unit; dates use `YYYY-MM-DD`.
+- **CSV / XLSX:** one product per row, with `Product`, `Price`, `Currency` and `Unit` columns for price comparison. Optional columns: `Specifications`, `Category`, `Brand`, `Model`/`Item code`, `Pack size`, `MOQ`, `Stock`, `Availability`, `HSN Code`, `GST (%)`, `Tax basis`, `Lead time`, `Delivery terms`, `Payment terms`, `Warranty`, `Contact`, `Email`, `Phone`, `Vendor GSTIN`, `Valid until`, `Terms`. The downloadable template shows the format. Stock and MOQ must use the stated selling unit; dates use `YYYY-MM-DD`.
+- **GST / HSN:** enter the vendor's stated rate as `18` or `18%` for 18%; native Excel percentage cells are also supported. Set `Tax basis` to `Inclusive` or `Exclusive`. Store HSN/item codes and phone numbers as text to preserve leading zeros. Missing HSN/GST are never inferred from the product name. The example template leaves tax rates and HSN blank for you to fill from vendor records.
+- **Excel estimates:** a valid, comparable price plus an explicit GST rate and tax basis produces the net amount, GST amount and amount including GST. Inclusive prices are split without adding tax twice. Unknown tax, ambiguous units, expired/conflicting listings, insufficient stock or MOQ conflicts leave the corresponding estimates blank. Freight, discounts and other charges are not calculated. The workbook is a snapshot; regenerate it after changing the search quantity.
 - **PDF / DOCX / TXT:** searchable text excerpts with page/row references. An explicit single-line offer such as `Office chair | INR 2500 | each` also supplies a listed price. Ambiguous PDF tables remain quote-required evidence.
 - Scans and image-only catalogs need an OCR/text version or a structured price list. Legacy `.doc` and `.xls` need conversion. The setup screen reports unsupported or unreadable files.
 - Price comparisons require stated currency and selling unit. Bare `$` amounts do not establish a currency. A box/pack also requires its size. Currencies are not converted, and pack prices are not silently treated as piece prices.

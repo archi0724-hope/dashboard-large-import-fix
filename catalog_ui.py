@@ -1,12 +1,15 @@
 """Shared catalog screens for the admin dashboard and restricted sales workspace."""
 from __future__ import annotations
 
+from functools import partial
+from hashlib import sha256
+
 import pandas as pd
 import streamlit as st
 
 from catalog_search import (CATALOG_TEMPLATE, catalog_documents, comparison_rows, find_offers,
-                            load_catalog, parse_requirements, refresh_catalog)
-from exports import csv_bytes
+                            load_catalog, parse_requirements, refresh_catalog, rfq_rows)
+from exports import csv_bytes, rfq_workbook_bytes
 
 
 def refresh_search(store, documents):
@@ -22,9 +25,9 @@ def render_catalog_setup(store, documents):
     st.caption("Only available files assigned to a vendor and classified exclusively as Catalogue / Price appear in sales search. Separate mixed catalog/KYC files first. Use Review files to correct the vendor or document type.")
     st.download_button("Download price-list template", CATALOG_TEMPLATE.encode("utf-8-sig"),
                        "Vendor_Price_List_Template.csv", "text/csv", key="catalog_template")
-    st.caption("The template contains fictional examples. Replace them with vendor data. Use one row per product; Price is per stated Unit, Stock and MOQ use that same unit. Add pack size for boxes/packs and use YYYY-MM-DD for Valid until.")
+    st.caption("The template contains fictional examples. Replace them with vendor data. Use one row per product; Price is per stated Unit, Stock and MOQ use that same unit. Add pack size for boxes/packs and use YYYY-MM-DD for Valid until. Fill HSN and GST from the vendor’s records; use 18 or 18% for a rate of 18%, and Inclusive or Exclusive for Tax basis. Leave unknown values blank.")
     with st.expander("Supported catalogs and price comparison"):
-        st.write("CSV and Excel (.xlsx) price lists support Product, Specifications, Category, Brand, Model, Price, Currency, Unit, MOQ, Stock, Contact, Valid until and Terms. These fields provide the most reliable comparisons.")
+        st.write("CSV and Excel (.xlsx) price lists support Product, Specifications, Category, Brand, Model/item code, Price, Currency, Unit, Pack size, MOQ, Stock, Availability, HSN Code, GST (%), Tax basis, Lead time, Delivery terms, Payment terms, Warranty, Contact, Email, Phone, Vendor GSTIN, Valid until and Terms. These fields populate the Excel RFQ and provide the most reliable comparisons.")
         st.write("Text PDFs, Word (.docx) and TXT catalogs provide searchable excerpts with source references. Explicit single-line prices with a currency and unit can be compared; ambiguous price tables require a quote. Scanned images and image-only PDFs need OCR or a structured price list.")
         st.write("Lowest-price labels compare matching descriptions, specifications, brands/models, currencies, selling units and price terms across vendors. Check the original catalog and request a final quote, including tax and delivery.")
     if st.button("Refresh catalog search", key="refresh_catalog", type="primary"):
@@ -45,14 +48,14 @@ def render_catalog_setup(store, documents):
 
 def render_sales_assistant(store, documents, is_admin=False):
     st.title("Sales catalog assistant")
-    st.write("Describe what your customer needs. Find vendors, compare listed prices and open the supporting catalog.")
+    st.write("Describe what your customer needs. Find vendors, check listed availability and download a Hospkart Excel RFQ with prices, GST and HSN codes.")
     entries, reports, pending = load_catalog(store, documents)
     product_count = sum(entry["kind"] == "product" for entry in entries)
     cols = st.columns(3)
     cols[0].metric("Vendors with catalogs", catalog_documents(documents).company_key.nunique())
     cols[1].metric("Catalogs", len(reports))
     cols[2].metric("Priced products", sum(entry["price"] is not None for entry in entries))
-    st.caption("Search saved catalogs · Prices are vendor listings, not live quotes · Currency, unit and specifications stay visible")
+    st.caption("Search saved catalogs · Vendor-listed prices and stock · Live Hospkart warehouse inventory is not connected")
     if not reports:
         st.info("Your catalog library is empty. An administrator can upload vendor catalogs and price lists from Upload documents.")
     elif pending:
@@ -68,6 +71,9 @@ def render_sales_assistant(store, documents, is_admin=False):
     st.session_state.setdefault("sales_messages", [])
     if st.button("New search", key="clear_sales_chat"):
         st.session_state["sales_messages"] = []
+        for key in list(st.session_state):
+            if str(key).startswith("sales_rfq_"):
+                del st.session_state[key]
     prompt = st.chat_input("E.g. 20 office chairs under INR 5000 each; 500 5ml syringes", key="sales_prompt", max_chars=4000)
     if prompt:
         try:
@@ -89,13 +95,14 @@ def render_sales_assistant(store, documents, is_admin=False):
         with st.chat_message("user"):
             st.text(text)
         with st.chat_message("assistant"):
-            rows, all_offers = [], []
+            rows, all_offers, workbook_rows = [], [], []
             for req_index, requirement in enumerate(parse_requirements(text)):
                 st.markdown(f"**Item {req_index + 1}**")
                 st.text(requirement.text)
                 st.caption(f"Quantity: {requirement.quantity:,} · Selling unit: {requirement.unit}" +
                            (f" · Budget per unit: {requirement.currency or 'currency needed'} {requirement.budget:,.2f}" if requirement.budget is not None else ""))
                 offers = find_offers(entries, requirement)
+                workbook_rows.extend(rfq_rows(requirement, offers, req_index + 1))
                 if not offers:
                     st.info("No catalog match for this requirement and budget. Try a broader product name or ask the administrator to add the vendor’s catalog/price list.")
                     continue
@@ -103,7 +110,11 @@ def render_sales_assistant(store, documents, is_admin=False):
                 comparison = comparison_rows(requirement, offers)
                 rows.extend(comparison)
                 all_offers.extend(offers)
-                st.dataframe(pd.DataFrame(comparison).drop(columns=["Requirement"]), hide_index=True, width="stretch")
+                frame = pd.DataFrame(comparison).drop(columns=["Requirement"])
+                first_columns = ["Vendor", "Product / catalog text", "Availability", "Listed stock", "Requested quantity",
+                                 "Listed price", "Currency", "GST (%)", "HSN code"]
+                st.dataframe(frame[first_columns + [column for column in frame if column not in first_columns]],
+                             hide_index=True, width="stretch")
                 for offer in [offer for offer in offers if offer["lowest"]][:3]:
                     st.success(f"Lowest comparable listed price: {offer['vendor']} · {offer['product']} — {offer['currency']} {offer['price']:,.2f} / {offer['unit']}. Estimated line total: {offer['currency']} {offer['total']:,.2f}.")
                 if not any(offer["eligible"] for offer in offers):
@@ -112,6 +123,20 @@ def render_sales_assistant(store, documents, is_admin=False):
                 st.download_button("Download vendor comparison", csv_bytes(pd.DataFrame(rows)), "Vendor_Comparison.csv", "text/csv",
                                    key=f"sales_comparison_{message_index}")
                 st.caption("Line totals multiply listed unit price by requested quantity. Tax and delivery follow the stated terms; unstated charges are not included. Sources and upload dates are included in the download.")
+            if workbook_rows:
+                st.markdown("**Hospkart client RFQ**")
+                st.caption("Excel includes every requested item and matching vendor option, availability, GST/HSN, delivery terms and source details. Missing values stay unconfirmed. Vendor options are alternatives.")
+                rfq_key = f"sales_rfq_{message_index}_{sha256(text.encode()).hexdigest()[:12]}"
+                details = {"Catalog coverage": f"{len(reports)} catalog files; {pending} pending or unindexed files. Check Catalog setup for unreadable or partially indexed files."}
+                with st.expander("Client and sales executive details (optional)"):
+                    columns = st.columns(2)
+                    for index, label in enumerate(("RFQ reference", "Client / hospital", "Client contact", "Client GSTIN",
+                                                   "Delivery location", "Sales executive", "Executive contact", "Required delivery date")):
+                        details[label] = columns[index % 2].text_input(label, key=f"{rfq_key}_{index}", max_chars=300)
+                    details["Client notes"] = st.text_area("Client notes", key=f"{rfq_key}_notes", max_chars=2000)
+                st.download_button("Download Excel RFQ", partial(rfq_workbook_bytes, workbook_rows, details),
+                                   "Hospkart_Client_RFQ.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   key=f"{rfq_key}_download", type="primary", on_click="ignore")
             if all_offers:
                 with st.expander("View catalog evidence and download source"):
                     options = list(range(len(all_offers)))
