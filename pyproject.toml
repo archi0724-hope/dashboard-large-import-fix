@@ -1,0 +1,13 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+include = ["asgi_app.py", "vendor_dashboard/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["asgi_app.py", "vendor_dashboard"]
+follow_imports = "silent"
