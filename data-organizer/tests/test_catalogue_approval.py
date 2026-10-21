@@ -281,5 +281,6 @@ def test_vendor_catalogue_page_exposes_manual_workbook_upload(tmp_path, monkeypa
     page.radio(key="page").set_value("Catalogue & prices").run(timeout=30)
 
     assert not page.exception
-    assert any("Manually upload an Excel catalogue or price list" in item.label for item in page.expander)
-    assert any("Upload and merge into shared catalogue" in item.label for item in page.button)
+    assert len(page.file_uploader) == 1
+    assert page.file_uploader(key="catalogue_manual_workbook").allowed_type == [".xlsx"]
+    assert not any(item.key == "manual_catalogue_upload" for item in page.button)

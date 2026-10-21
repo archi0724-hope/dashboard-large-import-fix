@@ -91,10 +91,56 @@ class AppState:
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
         self._product_export = {"running": False, "done": 0, "total": 0, "message": "", "error": "", "result": None}
+        self._vendor_sync = {"running": False, "done": 0, "total": 0, "message": "", "error": "", "result": None}
 
     def product_export_status(self):
         with self._lock:
             return dict(self._product_export)
+
+    def vendor_sync_status(self):
+        with self._lock:
+            return dict(self._vendor_sync)
+
+    def start_vendor_sync(self, organized_folder: str | Path):
+        with self._lock:
+            if self._vendor_sync["running"]:
+                return dict(self._vendor_sync)
+            root = Path(organized_folder).resolve()
+            if not root.is_dir():
+                raise ConfigError("Create the company folders before syncing them to Vendor.")
+            self._vendor_sync = {
+                "running": True, "done": 0, "total": 0,
+                "message": "Connecting to Vendor storage", "error": "", "result": None,
+            }
+
+            def progress(done: int, total: int, filename: str):
+                with self._lock:
+                    self._vendor_sync.update(done=done, total=total, message=filename)
+
+            def run():
+                try:
+                    from .vendor_sync import sync_organized_company_files
+                    from hospkart_chat.integration import open_vendor_store, vendor_setting
+
+                    data_dir = vendor_setting(
+                        "VENDOR_DATA_DIR",
+                        str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "vendor_data"),
+                    )
+                    store = open_vendor_store(data_dir, vendor_setting("DATABASE_URL"))
+                    result = sync_organized_company_files(root, store, progress)
+                    with self._lock:
+                        self._vendor_sync.update(
+                            running=False, result=result, message="Vendor sync complete"
+                        )
+                except Exception as error:
+                    log.exception("Organizer-to-Vendor sync failed")
+                    with self._lock:
+                        self._vendor_sync.update(
+                            running=False, error=str(error), message="Vendor sync failed"
+                        )
+
+            threading.Thread(target=run, name="organizer-vendor-sync", daemon=True).start()
+            return dict(self._vendor_sync)
 
     def start_product_export(self, reference_files=(), product_sheet_title="Products & Prices"):
         from .export.product_workbook import create_product_workbook

@@ -18,7 +18,7 @@ def test_product_search_with_joined_company_names(tmp_path, monkeypatch, query, 
             (id,company_key,company_name,filename,original_path,file_hash,uploaded_at)
             VALUES(1,'acme','Acme Supplies','catalogue.csv','catalogue.csv','test-doc','2026-10-03')""")
     store.save_product_records(1, [{
-        "record_type": "catalogue", "product_name": "Glove", "sku": "SKU-123",
+        "record_type": "catalogue", "product_name": "Medical glove", "sku": "SKU-123",
         "description": "Sterile gloves",
     }])
 
@@ -27,5 +27,5 @@ def test_product_search_with_joined_company_names(tmp_path, monkeypatch, query, 
     if record_type == "price":
         assert records.empty
     else:
-        assert records["product_name"].tolist() == ["Glove"]
+        assert records["product_name"].tolist() == ["Medical glove"]
         assert records["company_name"].tolist() == ["Acme Supplies"]

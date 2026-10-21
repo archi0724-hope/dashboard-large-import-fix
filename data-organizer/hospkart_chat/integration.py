@@ -1,19 +1,19 @@
 """Live catalogue bridge; document imports stay in the Vendor dashboard database."""
 from __future__ import annotations
 
-from collections import OrderedDict
-from functools import lru_cache
 import importlib.util
 import os
-from pathlib import Path
 import re
 import sys
-from threading import RLock
 import time
+from collections import OrderedDict
+from functools import lru_cache
+from pathlib import Path
+from threading import RLock
 
 import pandas as pd
 
-from .hospkart_agent import HospKartAgent, ConversationState
+from .hospkart_agent import ConversationState, HospKartAgent
 from .hospkart_rag_setup import HospKartRAG
 
 ROOT = Path(__file__).resolve().parent
@@ -89,6 +89,9 @@ class CatalogueSource:
         self.frame = pd.DataFrame()
         self.vendor_count = self.hospkart_count = 0
         self.loaded_at = 0.0
+        self.document_text_signature = None
+        self.document_passages = []
+        self.document_text_issues = []
 
     def refresh(self):
         csv_stamp = self.csv_path.stat().st_mtime_ns if self.csv_path and self.csv_path.exists() else None
@@ -138,6 +141,59 @@ class CatalogueSource:
         matches = frame.loc[relevant].copy()
         matches["_rank"] = score[relevant]
         return matches.sort_values("_rank", ascending=False, kind="stable").head(3000).reset_index(drop=True)
+
+    def searchable_document_passages(self):
+        from catalogue_extraction import extract_document_text
+
+        documents = self.store.documents()
+        signature = tuple(
+            (
+                int(row.id),
+                str(row.file_hash),
+                bool(row.available),
+                int(row.size_bytes or 0),
+                str(row.company_name or ""),
+                str(row.filename or ""),
+                str(row.original_path or ""),
+            )
+            for row in documents.itertuples()
+        )
+        if signature == self.document_text_signature:
+            return self.document_passages, self.document_text_issues
+
+        passages = []
+        issues = []
+        for row in documents.itertuples():
+            if not row.available:
+                continue
+            if int(row.size_bytes or 0) > 25 * 1024 * 1024:
+                issues.append(f"{row.filename}: file exceeds the 25 MB text-search limit")
+                continue
+            payload = self.store.read_bytes(int(row.id))
+            if payload is None:
+                issues.append(f"{row.filename}: stored file is unavailable")
+                continue
+            try:
+                text = extract_document_text(str(row.filename), payload)
+            except (ImportError, KeyError, OSError, ValueError) as error:
+                issues.append(f"{row.filename}: {error}")
+                continue
+            if not text:
+                continue
+            flattened = re.sub(r"\s+", " ", text).strip()
+            for start in range(0, len(flattened), 1000):
+                chunk = flattened[start : start + 1200].strip()
+                if chunk:
+                    passages.append({
+                        "company": str(row.company_name or "Unassigned company"),
+                        "filename": str(row.original_path or row.filename),
+                        "text": chunk,
+                    })
+
+        self.document_passages = passages
+        self.document_text_issues = issues
+        self.document_text_signature = signature
+        return passages, issues
 
 
 @lru_cache(maxsize=4)
@@ -190,8 +246,74 @@ class LiveCatalogueRAG(HospKartRAG):
 
 
 class MergedAgent(HospKartAgent):
+    @staticmethod
+    def _wants_document_content(query: str) -> bool:
+        return bool(re.search(
+            r"\b(?:document|file|certificate|agreement|policy|terms|payment|validity|"
+            r"address|bank|account|license|licence|registration|uploaded|according)\b",
+            query,
+            re.I,
+        ))
+
+    def _document_content_answer(self, query: str) -> str | None:
+        if self._looks_like_quote_request(query):
+            return None
+        terms = {
+            token for token in re.findall(r"[a-z0-9]+", query.casefold())
+            if len(token) > 2 and token not in {
+                "the", "and", "for", "with", "from", "what", "when", "where", "which",
+                "does", "this", "that", "are", "can", "you", "tell", "about", "show",
+                "find", "read", "uploaded", "document", "documents", "file", "files",
+                "according", "please", "have", "has", "their", "your",
+            }
+        }
+        if not terms:
+            return None
+
+        passages, issues = self.rag.source.searchable_document_passages()
+        ranked = []
+        for passage in passages:
+            text = passage["text"]
+            words = set(re.findall(r"[a-z0-9]+", text.casefold()))
+            matched = terms & words
+            if len(matched) < min(2, len(terms)) and not any(len(term) >= 6 for term in matched):
+                continue
+            score = len(matched) * 4
+            score += sum(len(term) for term in matched) // 4
+            ranked.append((score, passage))
+        ranked.sort(key=lambda result: result[0], reverse=True)
+
+        best_by_source = {}
+        for score, passage in ranked:
+            best_by_source.setdefault(passage["filename"], (score, passage))
+        selected = sorted(best_by_source.values(), key=lambda result: result[0], reverse=True)[:3]
+        if selected:
+            lines = [
+                "Relevant excerpts from your uploaded documents (search-based; the model is not fine-tuned):"
+            ]
+            for _, passage in selected:
+                lines.append(
+                    f"- {passage['company']} | Source: {passage['filename']} | "
+                    f"Excerpt: {passage['text'][:700]}"
+                )
+            return "\n".join(lines)
+        if issues:
+            return "I could not search some uploaded files:\n" + "\n".join(f"- {issue}" for issue in issues[:5])
+        if passages:
+            return "I couldn't find matching text in the readable contents of your uploaded documents."
+        if self.rag.source.store.documents().empty:
+            return "No vendor documents have been uploaded. Upload a readable file to test document answers."
+        return (
+            "No readable text was extracted from the uploaded files. "
+            "Try a text-based PDF, DOCX, XLSX, CSV, or TXT file."
+        )
+
     def _document_answer(self, query):
         if not re.search(r"\b(?:documents?|checklist|gst|pan|udyam|iso|cancelled cheque|form 16|aadhar)\b", query, re.I):
+            return None
+        if self._wants_document_content(query) and not re.search(
+            r"\b(?:gst|pan|udyam|iso|cancelled cheque|form 16|aadhar)\b", query, re.I
+        ):
             return None
         # GST on a quotation is a tax request, not a request for a vendor file.
         if re.search(r"\b(?:quote|quotation|invoice|discount|price|pricing)\b", query, re.I):
@@ -208,7 +330,9 @@ class MergedAgent(HospKartAgent):
         else:
             stop = {"show", "me", "the", "for", "of", "all", "my", "uploaded", "list", "has", "have", "does",
                     "which", "what", "please", "vendor", "vendors", "company", "companies", "document", "documents",
-                    "checklist", "gst", "pan", "card", "udyam", "iso", "cancelled", "cheque", "form", "16", "aadhar"}
+                    "checklist", "gst", "pan", "card", "udyam", "iso", "cancelled", "cheque", "form", "16", "aadhar",
+                    "payment", "payments", "terms", "agreement", "policy", "certificate", "validity", "address",
+                    "bank", "account", "license", "licence", "registration", "uploaded", "according", "details"}
             tokens = set(re.findall(r"[a-z0-9]+", query.lower())) - stop
             if tokens:
                 mask = names.map(lambda name: tokens.issubset(set(re.findall(r"[a-z0-9]+", name.lower()))))
@@ -237,8 +361,15 @@ class MergedAgent(HospKartAgent):
         if previous != generation:
             # Cached selections must not quote a deleted product or an old price.
             self.state = ConversationState()
+        content_answer = (
+            self._document_content_answer(user_query)
+            if self._wants_document_content(user_query)
+            else None
+        )
         if document_answer := self._document_answer(user_query):
-            return document_answer
+            return f"{document_answer}\n\n{content_answer}" if content_answer else document_answer
+        if content_answer:
+            return content_answer
         if self.rag.source.frame.empty:
             return "No searchable catalogue records are available in your uploaded dashboard data. Upload a catalogue or price list, then check Catalogue & prices for extracted products."
         result = super().handle_query(user_query, options)

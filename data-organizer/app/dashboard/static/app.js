@@ -173,14 +173,14 @@ PAGE.overview = async () => {
     <div class="grid g3 organizer-workflow">
       <div class="card"><span class="workflow-number">1</span><h2>Import</h2><p class="muted">Choose a folder or upload files. ZIP folders are supported too.</p><a class="btn" href="#/source">Choose files</a></div>
       <div class="card"><span class="workflow-number">2</span><h2>Read files</h2><p class="muted">Find company names and details across all supported file types.</p><button class="primary" id="btnRun" ${p.running ? "disabled" : ""}>${p.running ? "Reading files…" : t.records ? "Read new files / resume" : "Read files"}</button></div>
-      <div class="card"><span class="workflow-number">3</span><h2>Company folders</h2><p class="muted">Copy original documents into each company's folder.</p><button id="btnOrganizeDashboard" ${p.running || !t.files ? "disabled" : ""}>Create company folders</button></div>
+      <div class="card"><span class="workflow-number">3</span><h2>Company folders</h2><p class="muted">Copy original documents into each company's folder and sync the originals and catalogue rows into Vendor.</p><button id="btnOrganizeDashboard" ${p.running || !t.files ? "disabled" : ""}>Create folders &amp; sync to Vendor</button></div>
     </div>
     <div class="card"><div class="h"><h2>${p.running ? "Reading progress" : "File reading"}</h2>${p.running ? html`<button id="btnStop">Pause</button>` : html`<a href="#/source">View all files</a>`}</div><div id="stages">${raw(stagesHtml(p))}</div>
       <p class="small ${ocrReady ? "muted" : "ocr-warning"}">${ocrReady ? "Image reading is ready: JPG, PNG and scanned PDFs use OCR." : "JPG, PNG and scanned PDFs need OCR. Enable OCR in Workspace settings and install Tesseract to read their contents."}</p>
       ${t.files_failed ? html`<p class="small ocr-warning">${num(t.files_failed)} file(s) could not be read. <a href="#/source">Check files and retry</a>.</p>` : ""}
     </div>
     <div class="card"><div class="h"><h2>Products &amp; prices in Excel</h2><button class="primary" id="btnProductExcel" ${p.running ? "disabled" : ""}>Extract products &amp; download Excel</button></div>
-      <p class="muted">One product per row, sorted by company, product name and SKU. Includes Products &amp; Prices, Company Contacts and Needs Review. Originals stay unchanged.</p>
+      <p class="muted">One product per row, sorted by company, product name and SKU. Includes Products &amp; Prices, Company Contacts and Needs Review. The synced catalogue is also exportable from Vendor → Catalogue &amp; prices. Originals stay unchanged.</p>
       <div id="productExcelStatus" role="status" aria-live="polite"></div></div>
     <div class="card"><div class="h"><h2>Companies</h2><div class="row"><a class="btn" href="#/entities">View all companies</a><button id="btnCompanyZip" ${p.running || !t.files ? "disabled" : ""}>Download company folders</button></div></div>
       <label class="f" for="companyQuickSearch">Search companies<input id="companyQuickSearch" placeholder="Company name or phone" type="search"></label>
@@ -207,9 +207,10 @@ PAGE.overview = async () => {
     const button = event.currentTarget; button.disabled = true; button.textContent = "Creating folders…";
     try {
       const result = await post("/api/organize-files");
-      $("#companyFolderResult").innerHTML = html`<p><strong>${num(result.company_folders)} company folders</strong> · ${num(result.files_copied)} original files copied.</p><p class="small mono">${result.folder}</p>${result.skipped ? html`<p class="ocr-warning">${num(result.skipped)} file(s) were unavailable. Check the source folder.</p>` : ""}`.__raw;
-      toast("Company folders are ready");
-    } finally { button.disabled = false; button.textContent = "Create company folders"; }
+      $("#companyFolderResult").innerHTML = html`<p><strong>${num(result.company_folders)} company folders</strong> · ${num(result.files_copied)} original files copied.</p><p class="small mono">${result.folder}</p>${result.skipped ? html`<p class="ocr-warning">${num(result.skipped)} file(s) were unavailable. Check the source folder.</p>` : ""}<p class="small" id="vendorSyncStatus">Syncing originals and catalogue rows into Vendor…</p>`.__raw;
+      watchVendorSync(result.vendor_sync, $("#vendorSyncStatus"));
+      toast("Company folders created; Vendor sync started");
+    } finally { button.disabled = false; button.textContent = "Create folders & sync to Vendor"; }
   }));
   $("#btnCompanyZip").addEventListener("click", guard(async event => {
     const button = event.currentTarget; button.disabled = true; button.textContent = "Preparing download…";
@@ -218,6 +219,7 @@ PAGE.overview = async () => {
       const url = new URL("/api/exports/download", location.origin); url.searchParams.set("file", result.file);
       const token = sessionStorage.getItem(TOKEN_KEY); if (token) url.searchParams.set("token", token);
       const link = document.createElement("a"); link.href = url; link.download = result.file; link.click();
+      if (result.vendor_sync?.running) watchVendorSync(result.vendor_sync);
       toast(`${num(result.files)} original files packaged`);
     } finally { button.disabled = false; button.textContent = "Download company folders"; }
   }));
@@ -242,6 +244,7 @@ async function showProductExport(job, downloadWhenReady = false) {
       await new Promise(resolve => setTimeout(resolve, 1500));
       job = await api("/api/export/products/status");
     }
+
     if (!statusBox.isConnected) return;
     if (job.error) throw new Error(job.error);
     if (!job.result) return;
@@ -251,6 +254,27 @@ async function showProductExport(job, downloadWhenReady = false) {
     statusBox.innerHTML = html`<p>${num(result.products)} product rows, ${num(result.contacts)} contacts, ${num(result.review_items)} review items. All ${num(result.files)} source files accounted for.</p><a class="btn primary" href="${url.href}" download>Download company-wise Excel</a>`.__raw;
     if (downloadWhenReady) $("a", statusBox).click();
   } finally { if (button.isConnected) button.disabled = false; }
+}
+async function watchVendorSync(job, statusTarget = null) {
+  if (!job) return;
+  const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+  while (job.running) {
+    if (statusTarget?.isConnected) statusTarget.textContent = `Syncing ${num(job.done)} / ${num(job.total)}: ${job.message}`;
+    await wait(1500);
+    job = await api("/api/vendor/sync/status");
+  }
+  if (job.error) {
+    if (statusTarget?.isConnected) statusTarget.textContent = `Vendor sync failed: ${job.error}`;
+    else toast(`Vendor sync failed: ${job.error}`);
+    return;
+  }
+  const result = job.result || {};
+  const summary = `${num(result.documents_added)} original documents added, ${num(result.duplicate_documents)} already synced, ${num(result.products_added)} catalogue rows added, ${num(result.unassigned_documents_added)} unassigned.`;
+  if (statusTarget?.isConnected) {
+    statusTarget.innerHTML = html`<span>${summary}</span> <a href="/vendor/">Open Vendor dashboard</a>${result.skipped_count ? html`<p class="ocr-warning">${num(result.skipped_count)} file(s) could not be synced. First issue: ${result.skipped[0].file} — ${result.skipped[0].reason}</p>` : ""}`.__raw;
+  } else {
+    toast(`Vendor sync complete: ${summary}`);
+  }
 }
 let overviewSearchRequest = 0;
 async function loadOverviewCompanies() {
@@ -347,7 +371,7 @@ PAGE.source = async () => {
     }
   }));
   $("#btnScan").addEventListener("click", guard(async e => { e.target.disabled = true; try { const r = await post("/api/scan"); toast(`${r.count} files found`); route(); } finally { e.target.disabled = false; } }));
-  $("#btnOrganize").addEventListener("click", guard(async e => { e.target.disabled = true; e.target.textContent = "Organizing…"; try { const r = await post("/api/organize-files"); toast(`${r.files_copied} files copied into ${r.company_folders} company folders; ${r.work_related} saved as Work Related Data; ${r.skipped} unavailable`); } finally { e.target.disabled = false; e.target.textContent = "Organize into company folders"; } }));
+  $("#btnOrganize").addEventListener("click", guard(async e => { e.target.disabled = true; e.target.textContent = "Organizing…"; try { const r = await post("/api/organize-files"); toast(`${r.files_copied} originals copied into ${r.company_folders} company folders; Vendor sync started`); watchVendorSync(r.vendor_sync); } finally { e.target.disabled = false; e.target.textContent = "Organize into company folders"; } }));
   $("#btnInspect").addEventListener("click", guard(async e => { e.target.disabled = true; e.target.textContent = "Inspecting…"; try { renderInspection((await post("/api/inspect", { max_files: 60 })).files); } finally { e.target.disabled = false; e.target.textContent = "Inspect structure"; } }));
 };
 

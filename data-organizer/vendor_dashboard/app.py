@@ -22,7 +22,7 @@ import pandas as pd
 import streamlit as st
 
 import exports as exports_module
-from import_service import import_catalogue_workbook, import_documents
+from import_service import import_documents
 from drive_import import DiskUpload, download_drive_zip
 import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
@@ -30,13 +30,22 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
 # export or Store class once so the app starts without a manual restart.
-if not getattr(exports_module, "STREAMING_CATALOGUE_EXPORT", False):
+if not hasattr(exports_module, "read_manual_catalogue_workbook"):
     exports_module = importlib.reload(exports_module)
 catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
 csv_bytes = exports_module.csv_bytes
 workbook_bytes = exports_module.workbook_bytes
 
-if not hasattr(storage_module.Store, "product_record_count"):
+MANUAL_CATALOGUE_IMPORT_VERSION = 3
+if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL_CATALOGUE_IMPORT_VERSION or not all(
+    hasattr(storage_module.Store, method)
+    for method in (
+        "product_record_count",
+        "product_classification_counts",
+        "product_review_records",
+        "import_catalogue_workbook",
+    )
+):
     storage_module = importlib.reload(storage_module)
 Store = storage_module.Store
 
@@ -129,11 +138,27 @@ def open_store(data_dir: str, database_url: str, storage_schema: str = "product-
 
 
 try:
+    vendor_data_dir = setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data"))
+    database_url = setting("DATABASE_URL")
+    storage_schema = f"product-records-v5:manual-{MANUAL_CATALOGUE_IMPORT_VERSION}"
     store = open_store(
-        setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data")),
-        setting("DATABASE_URL"),
-        "product-records-v4",
+        vendor_data_dir,
+        database_url,
+        storage_schema,
     )
+    if getattr(store, "manual_catalogue_import_version", 0) != MANUAL_CATALOGUE_IMPORT_VERSION or not all(
+        callable(getattr(store, method, None))
+        for method in (
+            "product_record_count",
+            "product_classification_counts",
+            "product_review_records",
+            "import_catalogue_workbook",
+        )
+    ):
+        open_store.clear()
+        store = open_store(vendor_data_dir, database_url, storage_schema)
+        if not callable(getattr(store, "product_classification_counts", None)):
+            raise RuntimeError("Cached vendor storage does not support catalogue classification.")
 except Exception as error:
     logging.getLogger(__name__).error("Storage initialization failed: %s", type(error).__name__)
     st.error("Storage could not be opened. Check the data folder or your private database settings. No documents were loaded.")
@@ -575,6 +600,11 @@ def execute_delete_all_data():
         st.session_state["reset_error"] = str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else "Delete All Data failed. Close any open files and retry."
 
 
+def clear_manual_catalogue_import():
+    for key in ("manual_catalogue_import_token", "manual_catalogue_import_result", "manual_catalogue_import_error"):
+        st.session_state.pop(key, None)
+
+
 # A reset callback runs before the app reruns, so clear its widget state here before
 # the reset widgets are instantiated again.
 if st.session_state.pop("reset_completed", False):
@@ -862,73 +892,46 @@ elif page == "Companies & documents":
 
 elif page == "Catalogue & prices":
     st.subheader("Catalogue and price records")
-    st.caption("Rows extracted from saved XLSX, XLS, CSV, TXT, PDF and DOCX files. Re-importing the same document is safe and does not duplicate rows.")
-    with st.expander("Manually upload an Excel catalogue or price list", expanded=False):
-        st.caption(
-            "Choose an existing vendor and an .xlsx, .xls, or .csv file. The source file is retained; "
-            "valid rows are merged into the shared catalogue immediately, and the company-wise Excel export "
-            "will include the new catalogue data."
-        )
-        import_vendors = vendors.drop_duplicates("company_key").sort_values(
-            "company_name", key=lambda values: values.str.casefold()
-        )
-        if import_vendors.empty:
-            st.info("Add a vendor on the Upload documents page before importing a catalogue.")
-        else:
-            vendor_names = dict(zip(import_vendors.company_key, import_vendors.company_name))
-            selected_vendor = st.selectbox(
-                "Add catalogue rows to vendor",
-                import_vendors.company_key.tolist(),
-                format_func=vendor_names.get,
-                key="manual_catalogue_vendor",
-            )
-            catalogue_file = st.file_uploader(
-                "Select Excel or CSV catalogue",
-                type=["xlsx", "xls", "csv"],
-                key="manual_catalogue_file",
-                help="Maximum file size: 100 MB. Product-name and price columns are detected from common header names.",
-            )
-            if st.button(
-                "Upload and merge into shared catalogue",
-                type="primary",
-                disabled=catalogue_file is None,
-                key="manual_catalogue_upload",
-            ):
-                st.session_state.pop("manual_catalogue_result", None)
-                content = catalogue_file.getvalue()
-                if len(content) > 100 * 1024 * 1024:
-                    st.error("Catalogue files must be 100 MB or smaller.")
-                else:
-                    try:
-                        result = import_catalogue_workbook(
-                            store,
-                            vendor_names[selected_vendor],
-                            catalogue_file.name,
-                            content,
-                        )
-                    except (ValueError, RuntimeError, OSError) as error:
-                        logging.getLogger(__name__).exception(
-                            "Manual catalogue upload failed for vendor %s and file %s",
-                            selected_vendor,
-                            catalogue_file.name,
-                        )
-                        st.error(str(error))
-                    else:
-                        st.session_state["manual_catalogue_result"] = result
-                        st.rerun()
-            if result := st.session_state.get("manual_catalogue_result"):
-                if result["duplicate_upload"]:
-                    st.info("This workbook was already imported for this vendor; no duplicate records were added.")
-                else:
-                    st.success(
-                        f"Published {result['published']:,} rows to the shared catalogue; "
-                        f"{result['duplicates']:,} duplicate rows skipped."
-                    )
-                    if result["pending_review"]:
-                        st.warning(
-                            f"{result['pending_review']:,} rows matched multiple existing products and were "
-                            "left unpublished for review in Organizer → Catalogue approval."
-                        )
+    st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
+    manual_workbook = st.file_uploader(
+        "Upload manual catalogue & prices (.xlsx)", type=["xlsx"], max_upload_size=2048,
+        key="catalogue_manual_workbook", on_change=clear_manual_catalogue_import,
+        help="Maximum 2 GB and 200,000 scanned product rows. The original workbook is retained for backup; repeated identical uploads are skipped.",
+    )
+    retry_import = False
+    if manual_workbook is not None and st.session_state.get("manual_catalogue_import_error"):
+        retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
+    if manual_workbook is not None:
+        token = (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
+        if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
+            st.session_state["manual_catalogue_import_token"] = token
+            st.session_state.pop("manual_catalogue_import_error", None)
+            try:
+                with st.spinner("Merging manual rows into the catalogue…"):
+                    result = store.import_catalogue_workbook(manual_workbook.name, manual_workbook.getvalue())
+            except Exception as error:
+                logging.getLogger(__name__).exception("Manual catalogue import failed")
+                st.session_state["manual_catalogue_import_error"] = (
+                    str(error) if isinstance(error, (ValueError, RuntimeError, OSError))
+                    else f"Saving failed ({type(error).__name__}). Retry the import; the server log contains the error details."
+                )
+            else:
+                st.session_state["manual_catalogue_import_result"] = result
+                refresh("Manual workbook merged into the saved catalogue.")
+    if st.session_state.get("manual_catalogue_import_error"):
+        st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
+    result = st.session_state.get("manual_catalogue_import_result")
+    if result:
+        st.success(f"Saved {result['added']:,} catalogue row(s); {result['duplicates']:,} already imported row(s) skipped.")
+        st.caption(f"{result['review']:,} row(s) saved to Review files; {result['excluded']:,} medicine/drug row(s) excluded. Manual and automatically extracted rows share the table and Excel export below.")
+    catalogue_counts = store.product_classification_counts()
+    st.caption(
+        "Medical devices, equipment, diagnostics and consumables only; medicines and drugs are excluded. "
+        "Names and price fields are cleaned and checked before display. "
+        f"{catalogue_counts['review']:,} unclear or invalid row(s) are in Review files; "
+        f"{catalogue_counts['excluded']:,} non-drug-scope row(s) are excluded. "
+        "Re-importing the same document is safe and does not duplicate rows."
+    )
     export_signature = store.search_index_signature()
     st.download_button(
         "Export company-wise catalogue & prices — Excel",
@@ -1008,6 +1011,16 @@ elif page == "Uploaded ZIPs":
 
 elif page == "Review files":
     st.subheader("Check unclear documents")
+    product_review = store.product_review_records(limit=1000)
+    if not product_review.empty:
+        st.markdown("### Product rows needing catalogue validation")
+        show_table(product_review.rename(columns={
+            "company_name": "Company", "record_type": "Type", "product_name": "Product",
+            "sku": "SKU", "price": "Price", "currency": "Currency",
+            "source_file": "Source file", "source_sheet": "Sheet",
+            "source_page": "Row/page", "classification_reason": "Review reason",
+        }))
+        st.caption("Rows shown here are hidden from Catalogue & prices, product search, and Excel exports until reviewed.")
     if not review_queue.empty:
         st.markdown("### Company match review queue")
         show_table(review_queue[["detected_name", "possible_company", "canonical_id", "confidence", "evidence", "source", "status"]].rename(columns={"detected_name":"Detected name", "possible_company":"Possible company", "canonical_id":"Company ID", "confidence":"Confidence", "evidence":"Evidence", "source":"Source", "status":"Status"}))

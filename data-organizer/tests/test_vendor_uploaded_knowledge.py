@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from hospkart_chat import integration
 
 
@@ -38,7 +36,7 @@ def test_actual_upload_is_available_to_an_existing_assistant(tmp_path):
         name = "Acme price list.csv"
 
         def getvalue(self):
-            return b"Product,Code,Price,Specification\nZX Glove,ZX123,125,Sterile latex\n"
+            return b"Product,Code,Price,Specification\nZX Glove,ZX123,125,Sterile latex examination gloves\n"
 
     result = import_documents(store, [Upload()], forced_company="Acme Supplies", retain_archive=False)
     assert result.saved_files == 1 and not result.issues
@@ -75,3 +73,54 @@ def test_uploaded_document_questions_do_not_invent_missing_categories(tmp_path):
     assert "validity is not verified" in response
     assert "No matching document" in agent.handle_query("Acme PAN documents")
     assert "No matching document" in agent.handle_query("Unknown Company GST documents")
+
+
+def test_uploaded_document_text_is_searchable_with_a_source_citation(tmp_path):
+    store = integration.open_vendor_store(str(tmp_path / "vendors"), "")
+    from import_service import import_documents
+
+    class Upload:
+        name = "Acme payment policy.txt"
+
+        def getvalue(self):
+            return (
+                b"Payment terms: Acme Supplies requires 30 percent advance. "
+                b"The remaining balance is due within 15 days after delivery."
+            )
+
+    imported = import_documents(
+        store, [Upload()], forced_company="Acme Supplies", retain_archive=False
+    )
+    assert imported.saved_files == 1
+
+    agent = agent_for(integration.CatalogueSource(store, None), tmp_path)
+    answer = agent.handle_query("What are Acme payment terms in the uploaded document?")
+
+    assert "30 percent advance" in answer
+    assert "15 days after delivery" in answer
+    assert "Acme payment policy.txt" in answer
+    assert "not fine-tuned" in answer
+    assert "No matching document" not in answer
+
+
+def test_uploaded_document_search_refreshes_after_an_assistant_is_open(tmp_path):
+    store = integration.open_vendor_store(str(tmp_path / "vendors"), "")
+    source = integration.CatalogueSource(store, None)
+    agent = agent_for(source, tmp_path)
+    assert "No vendor documents have been uploaded" in agent.handle_query(
+        "What are the warranty terms in the uploaded document?"
+    )
+
+    from import_service import import_documents
+
+    class Upload:
+        name = "Acme warranty.txt"
+
+        def getvalue(self):
+            return b"Warranty period: Acme Supplies provides a 24 month warranty."
+
+    import_documents(store, [Upload()], forced_company="Acme Supplies", retain_archive=False)
+
+    answer = agent.handle_query("What is the warranty period in the uploaded document?")
+    assert "24 month warranty" in answer
+    assert "Acme warranty.txt" in answer
