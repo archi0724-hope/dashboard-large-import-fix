@@ -12,6 +12,10 @@ dataframeHeaderBackgroundColor = "#f5f7fc"
 dataframeBorderColor = "#dfe6f1"
 chartCategoricalColors = ["#2f70f5", "#fa811b", "#8246e8", "#17975e", "#c72932"]
 
+[server]
+maxUploadSize = 2048
+maxMessageSize = 2200
+
 [theme.sidebar]
 primaryColor = "#fa811b"
 backgroundColor = "#142447"

@@ -423,7 +423,15 @@ def scan():
 
 @app.post("/api/organize-files")
 def organize_files():
-    return J(st().organize_source_files())
+    state = st()
+    result = state.organize_source_files()
+    result["vendor_sync"] = state.start_vendor_sync(result["folder"])
+    return J(result)
+
+
+@app.get("/api/vendor/sync/status")
+def vendor_sync_status():
+    return J(st().vendor_sync_status())
 
 
 @app.get("/api/inventory")
@@ -621,7 +629,11 @@ def structured_zip():
     s = st()
     if s.progress.running:
         raise ConfigError("Wait for the current run to finish before creating the ZIP")
-    return J(s.create_structured_zip())
+    result = s.create_structured_zip()
+    result["vendor_sync"] = s.start_vendor_sync(
+        Path(s.settings.data_dir) / "organized_by_company"
+    )
+    return J(result)
 
 
 @app.get("/api/exports")

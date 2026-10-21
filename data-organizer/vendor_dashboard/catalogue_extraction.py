@@ -1,16 +1,15 @@
 """Extract catalogue and price-list rows from vendor documents."""
 from __future__ import annotations
 
-from io import BytesIO
-from pathlib import Path
 import hashlib
 import json
 import re
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
+from io import BytesIO
+from pathlib import Path
 
 import pandas as pd
-
 
 HEADER_ALIASES = {
     "product_name": ("product", "item", "description", "name", "particular"),
@@ -165,11 +164,39 @@ def _pdf_text(content: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages[:10])
 
 
+def extract_document_text(filename: str, content: bytes, max_chars: int = 50_000) -> str:
+    """Extract bounded searchable text from an uploaded vendor document."""
+    suffix = Path(filename).suffix.casefold()
+    if suffix in {".txt", ".log", ".csv"}:
+        text = content[:500_000].decode("utf-8-sig", errors="replace")
+    elif suffix == ".pdf":
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(content), strict=False)
+        text = "\n".join(
+            f"[Page {page_number}]\n{page.extract_text() or ''}"
+            for page_number, page in enumerate(reader.pages[:20], 1)
+        )
+    elif suffix == ".docx":
+        text, _ = _docx_rows(content)
+    elif suffix in {".xlsx", ".xls"}:
+        sheets = pd.read_excel(
+            BytesIO(content), sheet_name=None, header=None, dtype=str, nrows=1000
+        )
+        text = "\n".join(
+            f"[Sheet {sheet_name}]\n{frame.fillna('').to_csv(index=False, header=False)}"
+            for sheet_name, frame in sheets.items()
+        )
+    else:
+        return ""
+    return re.sub(r"[ \t]+", " ", text)[:max_chars].strip()
+
+
 def _image_text(content: bytes) -> str:
     """Use optional local OCR when Pillow and pytesseract are installed."""
     try:
-        from PIL import Image
         import pytesseract
+        from PIL import Image
         return pytesseract.image_to_string(Image.open(BytesIO(content)))[:20000]
     except (ImportError, OSError, ValueError):
         return ""

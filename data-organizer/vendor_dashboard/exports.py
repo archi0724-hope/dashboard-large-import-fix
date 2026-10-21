@@ -1,21 +1,28 @@
 """Formatted, formula-safe Excel and CSV exports."""
 from __future__ import annotations
-from io import BytesIO
+
 import math
 import re
+from io import BytesIO
+from pathlib import Path
+from zipfile import BadZipFile
 
 import pandas as pd
+from catalogue_policy import clean_and_classify_product
 
 try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.comments import Comment
+    from openpyxl import Workbook, load_workbook
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+    from openpyxl.comments import Comment
+    from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
+    from openpyxl.utils.exceptions import InvalidFileException
     from openpyxl.workbook.properties import CalcProperties
     OPENPYXL_IMPORT_ERROR = None
 except ModuleNotFoundError as error:
     Workbook = None
+    load_workbook = None
+    InvalidFileException = None
     OPENPYXL_IMPORT_ERROR = error
 
 from vendor_core import DOCUMENT_TYPES, supporting_category
@@ -39,7 +46,10 @@ CATALOGUE_PRICE_COLUMN_OPTIONS = {
     "source_sheet": ("Source Sheet", 20),
     "source_page": ("Source Page", 13),
     "extraction_confidence": ("Extraction Confidence", 22),
+    "conversation_date": ("Date of Conversation", 22),
 }
+MAX_MANUAL_CATALOGUE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_MANUAL_CATALOGUE_ROWS = 200_000
 
 
 def csv_bytes(frame: pd.DataFrame) -> bytes:
@@ -48,6 +58,15 @@ def csv_bytes(frame: pd.DataFrame) -> bytes:
             return "'" + value
         return value
     return frame.map(safe).to_csv(index=False).encode("utf-8-sig")
+
+
+def _export_cell_text(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, int) or (math.isfinite(value) and value.is_integer()):
+            return str(int(value))
+    return ILLEGAL_CHARACTERS_RE.sub("", str(value))
 
 
 def write_text(cell, value):
@@ -257,7 +276,7 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
         sheet.set_row(3, 32)
         sheet.write_row(3, 0, headers, header_format)
         for row_number, record in enumerate(subset[source_columns].itertuples(index=False, name=None), 4):
-            values = ["" if pd.isna(value) else ILLEGAL_CHARACTERS_RE.sub("", str(value)) for value in record]
+            values = [_export_cell_text(value) for value in record]
             sheet.set_row(row_number, 24)
             sheet.write_row(row_number, 0, values, row_formats[row_number % 2])
         sheet.autofilter(3, 0, max(3, len(subset)+3), len(headers)-1)
@@ -270,3 +289,249 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
 
     book.close()
     return output.getvalue()
+
+
+def read_manual_catalogue_workbook(
+    manual_workbook: bytes,
+    filename: str,
+    *,
+    allow_empty: bool = False,
+    source_label: str = "Manual upload",
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Validate manual product rows without changing the uploaded workbook."""
+    if OPENPYXL_IMPORT_ERROR is not None:
+        raise RuntimeError("Excel merge requires the openpyxl package.") from OPENPYXL_IMPORT_ERROR
+    if Path(filename).suffix.casefold() != ".xlsx":
+        raise ValueError("Upload an Excel workbook in .xlsx format.")
+    if not manual_workbook:
+        raise ValueError("The uploaded Excel workbook is empty.")
+    if len(manual_workbook) > MAX_MANUAL_CATALOGUE_BYTES:
+        raise ValueError("The uploaded Excel workbook exceeds the 2 GB limit.")
+
+    try:
+        workbook = load_workbook(BytesIO(manual_workbook), read_only=True, data_only=True)
+    except (BadZipFile, InvalidFileException, OSError, ValueError) as error:
+        raise ValueError("This file is not a readable .xlsx workbook.") from error
+
+    header_aliases = {
+        field: {re.sub(r"[^a-z0-9]+", "", label.casefold())}
+        for field, (label, _) in CATALOGUE_PRICE_COLUMN_OPTIONS.items()
+    }
+    header_aliases.update({
+        "company_name": header_aliases["company_name"] | {
+            "company", "vendor", "vendorname", "supplier", "suppliername",
+            "hospital", "hospitalname", "organization", "organizationname",
+            "organisation", "organisationname", "firm", "firmname", "enterprise",
+        },
+        "product_name": header_aliases["product_name"] | {
+            "product", "products", "productnames", "item", "itemname", "productdescription",
+            "itemdescription", "particular", "particulars",
+        },
+        "sku": header_aliases["sku"] | {"code", "itemcode", "productcode", "model"},
+        "price": header_aliases["price"] | {
+            "rate", "amount", "cost", "unitprice", "dealerprice", "dealerrate",
+            "sellingprice", "salerate", "netprice", "netrate", "rateeach", "productprices",
+        },
+        "conversation_date": {"dateofconversation", "conversationdate"},
+        "mrp": header_aliases["mrp"] | {"maximumretailprice"},
+        "gst": header_aliases["gst"] | {"gstpercent", "tax"},
+        "currency": header_aliases["currency"] | {"currencycode"},
+        "record_type": header_aliases["record_type"] | {"type"},
+        "description": {"notes", "sourcepricetext"},
+        "review_flag": {"reviewflag"},
+        "price_status": {"pricestatus"},
+    })
+    fields_by_header = {
+        alias: field
+        for field, aliases in header_aliases.items()
+        for alias in aliases
+    }
+    valid_sheets = []
+    preferred_sheet_names = {"allcatalogueprices", "productsprices", "vendorproductprices"}
+    preferred_sheet = next(
+        (
+            sheet for sheet in workbook.worksheets
+            if re.sub(r"[^a-z0-9]+", "", sheet.title.casefold()) in preferred_sheet_names
+        ),
+        None,
+    )
+    sheets = [preferred_sheet] if preferred_sheet is not None else workbook.worksheets
+    manual_rows = []
+    review_rows = []
+    excluded_rows = 0
+    manual_source = f"{source_label}: {Path(filename).name}"
+    scanned_rows = 0
+    nonempty_data_rows = 0
+    recognized_empty_generated_workbook = False
+
+    try:
+        for sheet in sheets:
+            header_row = None
+            fields = {}
+            for row_number, values in enumerate(sheet.iter_rows(min_row=1, max_row=30, values_only=True), 1):
+                found = {
+                    fields_by_header[re.sub(r"[^a-z0-9]+", "", str(value).casefold())]: column_number
+                    for column_number, value in enumerate(values)
+                    if value is not None
+                    and re.sub(r"[^a-z0-9]+", "", str(value).casefold()) in fields_by_header
+                }
+                description_column = next(
+                    (
+                        column_number
+                        for column_number, value in enumerate(values)
+                        if value is not None
+                        and re.sub(r"[^a-z0-9]+", "", str(value).casefold()) == "description"
+                    ),
+                    None,
+                )
+                if "product_name" not in found and description_column is not None:
+                    found["product_name"] = description_column
+                elif "product_name" in found and description_column is not None:
+                    found["description"] = description_column
+                if "product_name" in found:
+                    header_row = row_number
+                    fields = found
+                    break
+            if header_row is None:
+                continue
+            normalized_sheet_name = re.sub(r"[^a-z0-9]+", "", sheet.title.casefold())
+            if (
+                normalized_sheet_name == "allcatalogueprices"
+                and "company_name" in fields
+                and "product_name" in fields
+            ):
+                recognized_empty_generated_workbook = True
+            price_sheet = "price" in normalized_sheet_name
+            if "company_name" not in fields:
+                inferred_company = sheet.title.strip()
+                generic_sheet_names = {
+                    "sheet", "products", "productsprices", "catalogue", "catalog",
+                    "pricelist", "prices", "companycontacts", "needsreview",
+                    "fileprocessing", "readme", "allcatalogueprices",
+                }
+                if re.sub(r"[^a-z0-9]+", "", inferred_company.casefold()) in generic_sheet_names:
+                    continue
+                fields["company_name"] = -1
+            valid_sheets.append(sheet.title)
+            if sheet.max_row - header_row > MAX_MANUAL_CATALOGUE_ROWS:
+                raise ValueError("The workbook exceeds the 200,000 scanned product-row limit.")
+            for row_number, values in enumerate(
+                sheet.iter_rows(min_row=header_row + 1, values_only=True),
+                header_row + 1,
+            ):
+                scanned_rows += 1
+                if scanned_rows > MAX_MANUAL_CATALOGUE_ROWS:
+                    raise ValueError("The workbook exceeds the 200,000 scanned product-row limit.")
+                row = {
+                    field: (
+                        sheet.title
+                        if column_number == -1
+                        else values[column_number] if column_number < len(values) else None
+                    )
+                    for field, column_number in fields.items()
+                }
+                if not any(value is not None and str(value).strip() for value in row.values()):
+                    continue
+                nonempty_data_rows += 1
+                company = str(row.get("company_name") or "").strip()
+                product = str(row.get("product_name") or "").strip()
+                record = {
+                    field: "" if value is None else value
+                    for field, value in row.items()
+                }
+                record["company_name"] = company
+                record["product_name"] = product
+                record_type = re.sub(
+                    r"[^a-z]+", " ", str(record.get("record_type") or "").casefold()
+                ).strip()
+                if record_type in {"catalogue", "catalog", "catalog listing", "product", "product listing"}:
+                    record["record_type"] = "catalogue"
+                elif record_type == "price" or "price" in record_type:
+                    record["record_type"] = "price"
+                else:
+                    record["record_type"] = (
+                        "price" if price_sheet or record.get("price") not in (None, "") else "catalogue"
+                    )
+                record["source_file"] = manual_source
+                record["source_sheet"] = sheet.title
+                record["source_page"] = str(row_number)
+                if not company:
+                    review_rows.append({
+                        **record,
+                        "classification_reason": "Company/vendor name is missing.",
+                    })
+                    continue
+                if product and not any(character.isalnum() for character in product):
+                    continue
+                if not any(character.isalnum() for character in product):
+                    review_rows.append({
+                        **record,
+                        "classification_reason": "Product name is empty or not usable.",
+                    })
+                    continue
+                review_markers = ("needs review", "review required", "invalid", "unverified")
+                source_flags = " ".join(
+                    str(record.get(field) or "").casefold()
+                    for field in ("review_flag", "price_status")
+                )
+                if any(marker in source_flags for marker in review_markers):
+                    review_rows.append({
+                        **record,
+                        "classification_reason": "The source workbook flagged this row for review.",
+                    })
+                    continue
+                record, status, reason = clean_and_classify_product(record, allow_price_lists=True)
+                record["classification_reason"] = reason
+                if status == "excluded":
+                    excluded_rows += 1
+                    continue
+                if status == "review":
+                    review_rows.append(record)
+                    continue
+                manual_rows.append(record)
+                if len(manual_rows) > MAX_MANUAL_CATALOGUE_ROWS:
+                    raise ValueError("The workbook exceeds the 200,000 scanned product-row limit.")
+    finally:
+        workbook.close()
+
+    if allow_empty and recognized_empty_generated_workbook and nonempty_data_rows == 0:
+        return pd.DataFrame(), pd.DataFrame(), 0
+    if not valid_sheets:
+        raise ValueError(
+            "No product rows were found. Include Company Name and Product Name columns "
+            "(or aliases such as Vendor/Supplier and Product/Item/Description). Include a "
+            "company-specific worksheet tab name when there is no company column."
+        )
+    if not manual_rows:
+        if nonempty_data_rows == 0:
+            raise ValueError(
+                "The worksheet contains column headers but no product rows. "
+                "Upload the populated workbook or add product rows below the headers."
+            )
+        if not review_rows and not excluded_rows:
+            raise ValueError("No manual product rows were found. Add Company Name and Product Name to at least one row.")
+    manual_frame = pd.DataFrame(manual_rows)
+    review_frame = pd.DataFrame(review_rows)
+    return manual_frame, review_frame, excluded_rows
+
+
+def merge_catalogue_price_workbook_bytes(
+    records: pd.DataFrame,
+    manual_workbook: bytes,
+    filename: str,
+    *,
+    allow_empty: bool = False,
+    source_label: str = "Manual upload",
+) -> tuple[bytes, int, pd.DataFrame, pd.DataFrame, int]:
+    """Build a combined download without modifying the saved catalogue."""
+    manual_frame, review_frame, excluded_rows = read_manual_catalogue_workbook(
+        manual_workbook, filename, allow_empty=allow_empty, source_label=source_label,
+    )
+    combined = pd.concat([records, manual_frame], ignore_index=True, sort=False)
+    return (
+        catalogue_price_workbook_bytes(combined),
+        len(manual_frame),
+        manual_frame,
+        review_frame,
+        excluded_rows,
+    )
