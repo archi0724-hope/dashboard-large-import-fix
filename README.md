@@ -8,6 +8,7 @@ A Streamlit dashboard for importing vendor document ZIP files, building document
 - Validate ZIP size, file count, nesting, compression ratio, and file types before import.
 - Detect vendors and document categories automatically.
 - Review Yes/No checklist status and document-type counts.
+- Preview company PDFs inline, using the original PDF if first-page extraction is unavailable. Downloads retain the original file.
 - Export checklist data as CSV or Excel workbooks.
 - Store local data in SQLite/filesystem or use PostgreSQL for durable hosted storage.
 

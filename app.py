@@ -181,7 +181,8 @@ def show_document_preview(filename: str, payload: bytes):
             st.caption("Fast preview: first page. Download the original file for the complete document.")
             st.pdf(preview)
         else:
-            st.info("This PDF could not be reduced to a first-page preview. Download the original file to view it.")
+            st.caption("Showing the original PDF because a first-page preview is unavailable.")
+            st.pdf(payload)
     elif mime.startswith("image/"):
         st.image(payload, caption=filename, width="stretch")
     elif suffix in {".xlsx", ".xls"}:

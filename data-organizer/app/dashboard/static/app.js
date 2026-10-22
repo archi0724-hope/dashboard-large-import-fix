@@ -83,7 +83,6 @@ const ICON = {
   overview: "M3 13h7V3H3zM14 21h7V11h-7zM3 21h7v-6H3zM14 3v5h7V3z", source: "M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z",
   preview: "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12zM12 15a3 3 0 100-6 3 3 0 000 6z", review: "M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
   entities: "M4 6h16M4 12h16M4 18h10", quality: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z",
-  catalogue: "M4 4h16v16H4zM8 8h8M8 12h8M8 16h5",
   export: "M12 3v12m0 0l-4-4m4 4l4-4M4 21h16", settings: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z",
   logs: "M4 6h16M4 10h16M4 14h10M4 18h7",
 };
@@ -92,7 +91,7 @@ const icon = k => html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 // ---------------------------------------------------------------- state / routing
 const S = { status: null, cfg: null, charts: [], poll: null, page: "overview", workspace: localStorage.getItem("workspace") || "organizer", review: { items: [], total: 0, cur: null, q: "", detail: null } };
 const PAGES = [
-  ["overview", "Dashboard"], ["source", "Import files"], ["preview", "Check & match"], ["review", "Review matches"], ["catalogue", "Catalogue approval"],
+  ["overview", "Dashboard"], ["source", "Import files"], ["preview", "Check & match"], ["review", "Review matches"],
   ["entities", "Companies"], ["quality", "Data quality"], ["export", "Export data"], ["settings", "Workspace settings"], ["logs", "Activity log"],
 ];
 const VENDOR_PAGES = [["vendor", "Vendor dashboard"]];
@@ -572,163 +571,6 @@ PAGE.export = async () => {
     S.cfg = await api("/api/config", { method: "PUT", body: { export_formats: defaults, group_by: [] } });
     toast("Export options reset");
   }));
-};
-
-// ------------------------------------------------------- catalogue approval
-PAGE.catalogue = async () => {
-  const [vendors, imports, metrics, history] = await Promise.all([
-    api("/api/catalogue/vendors"), api("/api/catalogue/imports"), api("/api/catalogue/metrics"),
-    api("/api/catalogue/price-history?limit=25"),
-  ]);
-  const productQuery = S.catalogueProductQuery || "";
-  const productVendor = S.catalogueProductVendor || "";
-  const productOffset = S.catalogueProductOffset || 0;
-  const productParams = new URLSearchParams({ query: productQuery, vendor_id: productVendor, limit: "100", offset: String(productOffset) });
-  const products = await api(`/api/catalogue/products?${productParams}`);
-  const selectedId = S.catalogueImportId || imports.items[0]?.id;
-  const selected = imports.items.find(item => item.id === selectedId);
-  const offset = S.catalogueOffset || 0;
-  const rows = selected
-    ? (await api(`/api/catalogue/imports/${selected.id}/rows?status=pending&limit=200&offset=${offset}`)).items
-    : [];
-  const card = (value, label, tone = "") => html`<div class="card kpi ${tone}"><div class="v">${num(value)}</div><div class="l">${label}</div></div>`;
-  const token = sessionStorage.getItem(TOKEN_KEY);
-  const exportUrl = selected ? `/api/catalogue/imports/${selected.id}/export.csv?status=all${token ? "&token=" + encodeURIComponent(token) : ""}` : "";
-  const productExportParams = new URLSearchParams({ query: productQuery, vendor_id: productVendor });
-  if (token) productExportParams.set("token", token);
-  const productExportUrl = `/api/catalogue/products/export.xlsx?${productExportParams}`;
-  $("#view").innerHTML = html`
-    <div class="grid g6" style="margin-bottom:16px">
-      ${card(metrics.imports, "Catalogue uploads")}${card(metrics.extracted, "Extracted rows")}
-      ${card(metrics.pending, "Awaiting approval", metrics.pending ? "warn" : "")}${card(metrics.approved, "Approved")}
-      ${card(metrics.duplicates, "Duplicate rows")}${card(metrics.price_changes, "Price changes recorded")}
-    </div>
-    <div class="card"><h2>Upload a catalogue or price list</h2>
-      <p class="muted">Rows stay out of product search until explicitly approved. Original files are retained for traceability.</p>
-      <p class="muted small">Approved records become verified reference data for Vendor search and the assistant. Unapproved uploads are never training data; automatic AI model retraining is not enabled.</p>
-      ${vendors.length ? html`<div class="row">
-        <label class="f">Verified vendor<select id="catalogueVendor">${vendors.map(v => html`<option value="${v.vendor_id}">${v.company_name} · ${v.vendor_id}</option>`)}</select></label>
-        <label class="f">Excel, CSV, WhatsApp TXT or ZIP<input id="catalogueFile" type="file" accept=".xlsx,.xls,.csv,.txt,.zip"></label>
-        <button class="primary" id="catalogueUpload">Upload for review</button>
-      </div><p class="muted small">Common product columns are detected automatically. WhatsApp TXT/ZIP imports only pair a product and price from the same message; review every extracted row. You can correct each row before approval. Maximum file size: 100 MB.</p>` :
-      html`<div class="note warn">Add a vendor in the Vendor dashboard before importing catalogue rows. A vendor must be selected by its existing ID; it is never guessed from the file.</div>`}
-    </div>
-    <div class="card"><div class="h"><h2>Import batches</h2>${selected ? html`<a class="btn sm" href="${exportUrl}">Download cleaned CSV</a>` : ""}</div>
-      ${imports.items.length ? html`<div class="tw"><table><thead><tr><th>File</th><th>Vendor</th><th>Uploaded</th><th>Status</th><th>Pending</th><th>Approved</th><th>Duplicates</th><th></th></tr></thead><tbody>
-        ${imports.items.map(item => html`<tr><td>${item.filename}</td><td>${item.company_name} <span class="muted small">${item.company_key}</span></td>
-          <td class="small">${item.uploaded_at}</td><td>${item.status}</td><td>${num(item.pending)}</td><td>${num(item.approved)}</td><td>${num(item.duplicates)}</td>
-          <td><button class="sm ${selectedId === item.id ? "primary" : ""}" data-review-import="${item.id}">Review rows</button></td></tr>`)}
-      </tbody></table></div>` : html`<div class="empty">No catalogue imports yet.</div>`}
-    </div>
-    <div class="card"><div class="h"><h2>Approved catalogue · available in Vendor search</h2><a class="btn sm" href="${productExportUrl}">Download Excel</a></div>
-      <form id="catalogueProductFilter" class="row">
-        <label class="f">Search product, SKU, vendor, brand or category<input id="catalogueProductQuery" value="${productQuery}"></label>
-        <label class="f">Vendor<select id="catalogueProductVendor"><option value="">All vendors</option>
-          ${vendors.map(v => html`<option value="${v.vendor_id}" ${productVendor === v.vendor_id ? "selected" : ""}>${v.company_name}</option>`)}
-        </select></label>
-        <button class="primary" type="submit">Search approved records</button>
-      </form>
-      ${products.items.length ? html`<div class="tw"><table><thead><tr><th>Vendor</th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Unit / pack</th><th>Source / date</th><th>Updated</th></tr></thead><tbody>
-        ${products.items.map(item => html`<tr><td>${item.company_name}</td><td>${item.product_name}</td><td>${item.sku || "—"}</td>
-          <td>${item.product_category || "—"}</td><td>${item.price == null ? "No verified price" : `${item.currency || ""} ${item.price}`}</td>
-          <td>${[item.unit, item.pack_size].filter(Boolean).join(" / ") || "—"}</td>
-          <td>${item.source_file || "—"}${item.source_page ? ` · ${item.source_page}` : ""}${item.source_row ? ` · row ${item.source_row}` : ""}</td>
-          <td>${item.extracted_at || "—"}</td></tr>`)}
-      </tbody></table></div>
-      <div class="row"><span class="muted small">Showing ${productOffset + 1}–${productOffset + products.items.length} of ${num(products.total)} sorted by vendor, product and price.</span>
-        ${productOffset > 0 ? html`<button class="sm" id="catalogueProductsPrevious">Previous</button>` : ""}
-        ${productOffset + products.items.length < products.total ? html`<button class="sm" id="catalogueProductsNext">Next 100</button>` : ""}
-      </div>` : html`<div class="empty">No approved catalogue records match this search. Approve imported rows to publish them to Vendor search.</div>`}
-    </div>
-    ${selected ? html`<div class="card"><div class="h"><h2>Review ${selected.filename} · ${selected.company_name}</h2><span class="muted small">${num(selected.pending)} rows pending</span></div>
-      <p class="muted small">Approval publishes a row to product search. Any changed price is recorded in history. Missing prices are not inferred.</p>
-      ${rows.length ? html`<div class="tw"><table><thead><tr><th>Source</th><th>Product</th><th>SKU</th><th>Price</th><th>Pack</th><th>Unit</th><th>Category</th><th>Match / price check</th><th>Action</th></tr></thead><tbody>
-        ${rows.map(row => {
-          const record = row.record, match = row.existing_match;
-          const conflict = match && !match.ambiguous && match.price !== record.price;
-          const matchView = match?.ambiguous ? html`<span class="tag t-bad">Multiple matches</span>` :
-            match ? html`<span class="small">${match.product_name} · existing ${match.currency || ""} ${match.price ?? "No price"}${conflict ? " → proposed " + (record.price ?? "No price") : " (same price)"}</span>` :
-            html`<span class="muted small">New catalogue row</span>`;
-          return html`<tr data-catalogue-row="${row.id}">
-            <td>${row.source_sheet || row.source_page || "—"}<br><span class="muted small">row ${row.source_row}</span></td>
-            <td><input data-field="product_name" value="${record.product_name || ""}" aria-label="Product name"></td>
-            <td><input data-field="sku" value="${record.sku || ""}" aria-label="SKU"></td>
-            <td><input data-field="price" type="number" min="0" step="any" value="${record.price ?? ""}" aria-label="Price"></td>
-            <td><input data-field="pack_size" value="${record.pack_size || ""}" aria-label="Pack size"></td>
-            <td><input data-field="unit" value="${record.unit || ""}" aria-label="Unit"></td>
-            <td><input data-field="product_category" value="${record.product_category || ""}" aria-label="Category"></td>
-            <td>${matchView}</td><td class="row">
-              <button class="sm primary" data-catalogue-approve="${row.id}" ${match?.ambiguous ? "disabled" : ""}>Approve & publish</button>
-              <button class="sm danger" data-catalogue-reject="${row.id}">Reject</button>
-            </td></tr>`;
-        })}
-      </tbody></table></div>
-      ${selected.pending > offset + rows.length ? html`<button class="sm" id="catalogueMore">Load next 200 pending rows</button>` : ""}
-      ` : html`<div class="empty">No pending rows in this batch. Approved, rejected, and duplicate rows are available in the CSV export.</div>`}
-    </div>` : ""}
-    <div class="card"><h2>Recent approved price history</h2>
-      ${history.items.length ? html`<div class="tw"><table><thead><tr><th>Changed</th><th>Vendor</th><th>Product</th><th>SKU</th><th>Previous</th><th>New</th><th>Source</th><th>Row</th></tr></thead><tbody>
-        ${history.items.map(item => html`<tr><td>${item.changed_at}</td><td>${item.company_name}</td><td>${item.product_name}</td><td>${item.sku}</td>
-          <td>${item.currency} ${item.old_price ?? "—"}</td><td>${item.currency} ${item.new_price ?? "—"}</td><td>${item.source_file}</td><td>${item.source_row}</td></tr>`)}
-      </tbody></table></div>` : html`<div class="empty">No approved price changes recorded yet.</div>`}
-    </div>`.__raw;
-
-  $("#catalogueUpload")?.addEventListener("click", guard(async event => {
-    const file = $("#catalogueFile").files[0], vendorId = $("#catalogueVendor").value;
-    if (!file) return toast("Choose an Excel or CSV file first", true);
-    event.target.disabled = true;
-    const form = new FormData();
-    form.append("vendor_id", vendorId);
-    form.append("file", file);
-    const result = await api("/api/catalogue/imports", { method: "POST", body: form });
-    S.catalogueImportId = result.import_id;
-    S.catalogueOffset = 0;
-    toast(result.duplicate_upload ? "This file was already imported for that vendor" :
-      `${result.records_extracted} rows staged for review${result.messages_needing_review ? ` · ${result.messages_needing_review} ambiguous chat messages skipped` : ""}`);
-    await PAGE.catalogue();
-  }));
-  $("#catalogueProductFilter")?.addEventListener("submit", guard(async event => {
-    event.preventDefault();
-    S.catalogueProductQuery = $("#catalogueProductQuery").value.trim();
-    S.catalogueProductVendor = $("#catalogueProductVendor").value;
-    S.catalogueProductOffset = 0;
-    await PAGE.catalogue();
-  }));
-  $("#catalogueProductsPrevious")?.addEventListener("click", guard(async () => {
-    S.catalogueProductOffset = Math.max(0, productOffset - 100);
-    await PAGE.catalogue();
-  }));
-  $("#catalogueProductsNext")?.addEventListener("click", guard(async () => {
-    S.catalogueProductOffset = productOffset + 100;
-    await PAGE.catalogue();
-  }));
-  $$("[data-review-import]").forEach(button => button.addEventListener("click", () => {
-    S.catalogueImportId = Number(button.dataset.reviewImport);
-    S.catalogueOffset = 0;
-    PAGE.catalogue();
-  }));
-  $("#catalogueMore")?.addEventListener("click", guard(async () => {
-    S.catalogueOffset = (S.catalogueOffset || 0) + 200;
-    await PAGE.catalogue();
-  }));
-  $$("[data-catalogue-approve]").forEach(button => button.addEventListener("click", guard(async () => {
-    const row = button.closest("[data-catalogue-row]"), rowId = Number(row.dataset.catalogueRow);
-    const initial = rows.find(item => item.id === rowId), changes = {};
-    for (const field of ["product_name", "sku", "price", "pack_size", "unit", "product_category"]) {
-      const value = $(`[data-field="${field}"]`, row).value.trim();
-      const previous = initial.record[field] == null ? "" : String(initial.record[field]);
-      if (value !== previous) changes[field] = field === "price" && value === "" ? null : value;
-    }
-    if (Object.keys(changes).length) await api(`/api/catalogue/import-rows/${rowId}`, { method: "PATCH", body: { changes } });
-    const result = await post(`/api/catalogue/import-rows/${rowId}/decide`, { action: "approve" });
-    toast(result.decision);
-    await PAGE.catalogue();
-  })));
-  $$("[data-catalogue-reject]").forEach(button => button.addEventListener("click", guard(async () => {
-    const result = await post(`/api/catalogue/import-rows/${button.dataset.catalogueReject}/decide`, { action: "reject" });
-    toast(result.decision);
-    await PAGE.catalogue();
-  })));
 };
 
 // ---------------------------------------------------------------- settings
