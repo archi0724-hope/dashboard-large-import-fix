@@ -44,24 +44,6 @@ documents, using bounded text extraction; scanned image-only content may require
 OCR. Classification does not verify certificate validity. Cached product
 selections are cleared when the source data changes.
 
-Use **Organizer → Catalogue approval** for vendor-linked Excel/CSV price lists
-or WhatsApp TXT/ZIP exports. Extracted records remain pending until reviewed;
-approval publishes them to the same Vendor catalogue queried by search and the
-assistant. WhatsApp price extraction pairs values only within one message and
-marks rows for human review. The page also lists approved catalogue rows in
-vendor/product/price order and can export the approved catalogue as Excel.
-Re-imports for the same vendor do not create a second pending batch, and
-approved price changes are recorded with their source file and row. Approved
-records are searchable reference data, not machine-learning training: there is
-no automatic retraining pipeline.
-
-For a direct manual spreadsheet upload, open **Vendor → Catalogue & prices**,
-select the existing vendor, and use **Upload and merge into shared catalogue**.
-That explicit action immediately publishes unambiguous rows to Vendor search
-and the company-wise Excel export. The uploaded workbook is retained unchanged;
-the combined workbook is generated on download. Conflicting matches stay in
-Organizer review, and changed prices remain in the audit history.
-
 To also include a separate reference catalogue, explicitly set
 `HOSPKART_INCLUDE_REFERENCE_CATALOGUE=true`. Its default path is
 `hospkart_chat/data/hospkart_products.csv`; `HOSPKART_PRODUCT_CSV` can override it.

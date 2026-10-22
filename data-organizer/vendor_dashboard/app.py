@@ -224,7 +224,8 @@ def show_document_preview(filename: str, payload: bytes):
             st.caption("Fast preview: first page. Download the original file for the complete document.")
             st.pdf(preview)
         else:
-            st.info("This PDF could not be reduced to a first-page preview. Download the original file to view it.")
+            st.caption("Showing the original PDF because a first-page preview is unavailable.")
+            st.pdf(payload)
     elif mime.startswith("image/"):
         st.image(payload, caption=filename, width="stretch")
     elif suffix in {".xlsx", ".xls"}:
@@ -767,12 +768,9 @@ if page == "Upload documents":
         summary = pd.DataFrame([{
             "Companies in upload": last["detected_companies"], "Total vendor head count": last.get("total_companies", len(vendors)),
             "Files processed": last["processed_files"], "New documents": last["saved_files"],
-            "Repeated files": last["duplicate_files"], "Catalogue rows awaiting approval": last.get("catalogue_records_pending", 0),
-            "Repeated catalogue rows": last.get("duplicate_catalogue_rows", 0), "Skipped / failed": len(last["issues"])}])
+            "Repeated files": last["duplicate_files"], "Skipped / failed": len(last["issues"])}])
         show_table(summary)
         st.caption("Source: " + last["source"] + ". Vendor head count is cumulative and unique: existing vendors are counted once, and new vendor names from later ZIPs are added automatically.")
-        if last.get("catalogue_records_pending", 0):
-            st.info("Extracted catalogue and price rows are held for approval in the Organizer dashboard before they appear in product search or Vendor AI Assistant.")
         expected_count = st.session_state.get("expected_count", 0)
         if expected_count and expected_count != last["detected_companies"]:
             st.warning(f"You expected {expected_count} companies; this upload identified {last['detected_companies']}. Check the company list below. Counts are not padded.")

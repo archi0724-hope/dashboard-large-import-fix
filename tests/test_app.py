@@ -74,6 +74,31 @@ def test_password_gate_and_empty_state(tmp_path):
     assert not at.exception and at.metric[0].value=='0'
 
 
+def test_pdf_preview_falls_back_to_original_when_extraction_fails(tmp_path):
+    from pypdf import PdfWriter
+    import streamlit as st
+
+    output = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    writer.write(output)
+    payload = output.getvalue()
+    store = Store(tmp_path)
+    filename = "Alpha Medical/Cancel Cheque.pdf"
+    store.save_document(filename, payload, classify(filename))
+    document_id = int(store.documents().iloc[0]["id"])
+    at = app(tmp_path).run()
+
+    with patch("pypdf.PdfWriter.write", side_effect=ValueError("Cannot extract page")), \
+            patch("streamlit.pdf", wraps=st.pdf) as viewer:
+        next(button for button in at.button if button.label == "👁").click().run()
+
+    assert not at.exception
+    viewer.assert_called_once_with(payload)
+    assert any("Showing the original PDF" in caption.value for caption in at.caption)
+    assert store.read_bytes(document_id) == payload
+
+
 def test_vendor_and_organizer_dashboards_are_available(tmp_path):
     seed(tmp_path)
     at = app(tmp_path).run()
