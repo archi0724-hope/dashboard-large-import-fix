@@ -17,6 +17,12 @@ hashes keep the first reviewed record. Legacy Vendor reset/backup does not inclu
 this separate table. Use PostgreSQL backups for these records.
 
 A single ZIP over 50 GB must stay in Drive; the direct upload cap remains 2 GiB.
+Vendor → Upload documents → Google Drive library embeds the authenticated shared
+library, including Start/Resume, progress, issues and search. It replaces the old
+Google Drive ZIP download form, so existing sessions cannot send a 10+ GB archive
+through the obsolete 5 GiB full-download path. Put new archives in the connected
+folder before starting/resuming. The library indexes the configured folder;
+it does not accept a separate archive link or upload files to Drive for the user.
 Drive range reads support ZIP64 offsets beyond 50 GiB without fetching the entire
 archive. This is covered by a sparse virtual ZIP64 test, not a full 50 GB production
 import. The existing 5,000-entry ZIP cap, 16 MiB directory/read cap and 128 MiB

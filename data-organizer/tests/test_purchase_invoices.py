@@ -156,7 +156,7 @@ def test_worker_failure_deletes_upload_and_releases_slot(client,monkeypatch):
     assert paths and not paths[0].exists()
 
 
-def test_zip64_beyond_50_gib_uses_only_small_remote_reads(monkeypatch):
+def test_zip64_beyond_50_gib_uses_only_small_remote_reads(monkeypatch,tmp_path):
     # A sparse, virtual archive tests real ZIP64 offsets without allocating 51 GiB.
     class Sparse(io.RawIOBase):
         position = 0
@@ -188,7 +188,7 @@ def test_zip64_beyond_50_gib_uses_only_small_remote_reads(monkeypatch):
     sparse = Sparse()
     sparse.seek(51*1024**3)
     with zipfile.ZipFile(sparse,'w',allowZip64=True) as archive:
-        archive.writestr('company/invoice.csv','Invoice No,INV-50GB\n')
+        archive.writestr('company/products.csv','Company,Product,Price\nLarge Medical,Pump,99\n')
     size = sparse.position
     reads = []
 
@@ -199,5 +199,18 @@ def test_zip64_beyond_50_gib_uses_only_small_remote_reads(monkeypatch):
     monkeypatch.setattr(DriveRangeFile,'_range',read_range)
     with DriveRangeFile('syntheticzip123') as remote,archive_members(remote) as archive:
         assert remote.size > 50*1024**3
-        assert archive.read('company/invoice.csv') == b'Invoice No,INV-50GB\n'
+        assert archive.read('company/products.csv') == b'Company,Product,Price\nLarge Medical,Pump,99\n'
     assert sum(reads) < 1024**2
+    from app.drive import indexer
+    from app.drive.index_store import DriveIndex
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'vendor_dashboard'))
+    from vendor_dashboard.storage import Store
+    index = DriveIndex(Store(tmp_path / 'index',initialize=False))
+    monkeypatch.setattr(indexer,'list_public_files',lambda folder:[{
+        'id':'syntheticzip123','name':'large.zip','path':'large.zip','native':False}])
+    indexer.run_index(index.store,'folder123456')
+    assert index.status('folder123456')['status'] == 'done'
+    found = index.search('folder123456','Pump')
+    assert found['total'] == 1
+    assert found['items'][0]['record']['company'] == 'Large Medical'
+    assert sum(reads) < 2 * 1024**2
