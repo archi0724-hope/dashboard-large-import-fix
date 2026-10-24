@@ -1,5 +1,31 @@
 # Organizer preview on Render
 
+## Purchase invoices and large collections
+
+`/purchase-invoices` provides upload → extraction → review/edit → save → search.
+Both dashboards link to it. It accepts PDF, JPG, PNG, XLSX, XLS and CSV, one
+invoice per file, up to 20 MiB; PDFs up to 20 pages and spreadsheets up to
+10,000 rows / 100 columns. A single isolated extraction worker runs with a
+150-second timeout. Textless PDF pages and images use the installed Tesseract.
+Drafts are private to the upload session and expire on eviction or server restart.
+Users must confirm review, supplier and invoice number before saving. Line items
+from PDF/images may need manual entry. Extraction does not calculate missing
+taxes or totals. Original upload bytes are deleted after extraction; keep originals
+in Drive or on the source computer. Reviewed records and source-text copies are
+shared in the additive `vdd_purchase_invoices` PostgreSQL table; duplicate source
+hashes keep the first reviewed record. Legacy Vendor reset/backup does not include
+this separate table. Use PostgreSQL backups for these records.
+
+A single ZIP over 50 GB must stay in Drive; the direct upload cap remains 2 GiB.
+Drive range reads support ZIP64 offsets beyond 50 GiB without fetching the entire
+archive. This is covered by a sparse virtual ZIP64 test, not a full 50 GB production
+import. The existing 5,000-entry ZIP cap, 16 MiB directory/read cap and 128 MiB
+per-document extraction cap still apply. Split larger inventories into ordinary
+independent ZIPs, not multipart `.z01` archives. Source originals stay in Drive,
+and derived records must fit the database quota. OCR-only and unsupported files
+are listed as issues rather than represented as fully extracted. No promise of
+fully searching an arbitrary 50 GB archive on the free preview is made.
+
 Deploy branch `deploy/organizer` using Docker context `data-organizer` and
 Dockerfile `data-organizer/Dockerfile`. The app listens on port 8000; set
 `PORT=8000`. `/` opens the Organizer dashboard, `/vendor/` opens Vendor,

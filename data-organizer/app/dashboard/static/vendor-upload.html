@@ -12,6 +12,8 @@ button:disabled{opacity:.5;cursor:wait}progress{width:100%;height:24px}a{color:#
 <h1>Upload vendor ZIP</h1>
 <p>Select the ZIP from your computer. You do not need a Google Drive link or a file path.</p>
 <p class="muted">Choose one ZIP up to 2 GB.</p>
+<p>ZIP larger than 2 GB, including 50+ GB? Keep it in the connected Google Drive folder and <a id="drive-library" href="/drive-library">open the Drive library</a> to index searchable records without uploading the whole archive to this server.</p>
+<p class="muted">Drive indexing reads supported documents individually. Each ZIP supports up to 5,000 entries; each extracted document up to 128 MB. Larger entries and files needing OCR remain listed with an issue. Searchable records must fit the database allowance. Split archives that exceed the entry limit.</p>
 <p class="muted">Keep this page open. First the ZIP uploads, then its documents are saved. Existing duplicates are skipped.</p>
 <input id="file" type="file" accept=".zip,application/zip" aria-label="Choose ZIP file">
 <button id="start">Upload and save documents</button>
@@ -21,6 +23,7 @@ button:disabled{opacity:.5;cursor:wait}progress{width:100%;height:24px}a{color:#
 </main><script>
 "use strict";
 const token = location.hash.slice(1);
+document.getElementById('drive-library').href='/drive-library'+(token?'#'+token:'');
 history.replaceState(null, "", location.pathname + location.search);
 const fileInput = document.getElementById("file"), start = document.getElementById("start");
 const message = document.getElementById("message"), progress = document.getElementById("progress");

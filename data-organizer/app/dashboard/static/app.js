@@ -93,6 +93,7 @@ const icon = k => html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 const S = { status: null, cfg: null, charts: [], poll: null, page: "overview", workspace: localStorage.getItem("workspace") || "organizer", review: { items: [], total: 0, cur: null, q: "", detail: null } };
 const PAGES = [
   ["drivelibrary", "Google Drive library"],
+  ["purchaseinvoices", "Purchase invoices"],
   ["overview", "Dashboard"], ["source", "Import files"], ["preview", "Check & match"], ["review", "Review matches"], ["catalogue", "Catalogue approval"],
   ["entities", "Companies"], ["quality", "Data quality"], ["export", "Export data"], ["settings", "Workspace settings"], ["logs", "Activity log"],
 ];
@@ -162,6 +163,9 @@ const STEPS = [["source", "Choose source"], ["source", "Scan files"], ["preview"
 const PAGE = {};
 PAGE.drivelibrary = async () => {
   $('#view').innerHTML = '<p><a class="btn primary" href="/drive-library" target="_blank" rel="noopener">Open shared Drive library</a></p><iframe title="Shared Drive library" src="/drive-library" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
+};
+PAGE.purchaseinvoices = async () => {
+  $('#view').innerHTML = '<p><a class="btn primary" href="/purchase-invoices" target="_blank" rel="noopener">Open purchase invoices</a></p><iframe title="Purchase invoices" src="/purchase-invoices" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
 };
 PAGE.overview = async () => {
   const st = S.status, t = st.totals, p = st.progress;
