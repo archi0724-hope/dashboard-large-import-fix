@@ -654,16 +654,6 @@ with st.sidebar:
         captions=captions,
     )
     page = page_map[page_label]
-    st.divider()
-    if store.cloud:
-        st.success("Saved to cloud database")
-        st.caption("Files and records are stored in PostgreSQL.")
-    elif setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}:
-        st.warning("Temporary cloud disk. Set DATABASE_URL for permanent uploads.")
-    else:
-        st.success("Saved on this computer")
-        st.caption("Successful files are in vendor_data/files, temporary work uses vendor_data/temporary, and files that fail during processing are quarantined in vendor_data/failed_files.")
-    st.caption("Vendor workspace · local records protected")
     if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
         st.session_state.clear(); st.rerun()
 
