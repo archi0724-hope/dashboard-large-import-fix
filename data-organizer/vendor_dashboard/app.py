@@ -702,22 +702,29 @@ if page != "🤖 Vendor AI Assistant":
 if page == "Upload documents":
     st.subheader("Upload vendor documents")
     st.write("Upload your company-folders ZIP here. The dashboard will detect companies, classify files, update the Yes / No checklist, and keep existing saved records. Exact repeats are skipped.")
-    source_mode = st.radio("Import source", ["Google Drive ZIP (large files)", "Upload ZIP directly (large files)", "Local ZIP path (large files)", "Upload small files"], horizontal=True, key="import_source")
+    import_sources = ["Upload ZIP directly (large files)", "Google Drive ZIP (large files)", "Upload small files"]
+    hosted = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
+    if not hosted:
+        import_sources.append("Local ZIP path (large files)")
+    if st.session_state.get("import_source") not in import_sources:
+        st.session_state["import_source"] = import_sources[0]
+    source_mode = st.radio("Import source", import_sources, horizontal=True, key="import_source")
     drive_link = ""
     local_zip_path = ""
     uploads = []
     if source_mode == "Local ZIP path (large files)":
-        local_zip_path = st.text_input("ZIP file path on this computer", placeholder=r"C:\Users\you\Downloads\vendors.zip")
-        st.caption("For a large ZIP already on this computer, paste its full Windows path. The file is read directly from disk, so it does not use the browser upload limit.")
+        local_zip_path = st.text_input("ZIP file path on the computer running this app", placeholder=r"C:\Users\you\Downloads\vendors.zip")
+        st.caption("Use a ZIP already on the computer running this app. To send a ZIP from your device, choose Upload ZIP directly.")
     elif source_mode == "Google Drive ZIP (large files)":
         drive_link = st.text_input("Google Drive ZIP link", placeholder="https://drive.google.com/file/d/.../view")
         st.caption("Downloads directly to the server in small chunks, then saves documents one at a time. The link must allow downloads without signing in. Keep the original ZIP in Drive; it will not be copied to Uploaded ZIPs. Transfer speed depends on Drive and your server. Keep this tab open during import.")
     else:
         if source_mode == "Upload ZIP directly (large files)":
-            st.caption("Choose a ZIP directly from your computer. Browser uploads are supported up to 2 GB per file; for larger files, use Local ZIP path or Google Drive.")
+            st.caption("Click Browse files or drag your ZIP here. Wait for the upload to finish, then click Save documents. Keep this tab open during import.")
         else:
-            st.caption("For large ZIPs, use the direct upload, Local ZIP path or Google Drive options above.")
-        uploads = st.file_uploader("Choose document ZIP or files", type=["zip"]+sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS), accept_multiple_files=True, key="document_uploads")
+            st.caption("Choose individual documents from your device. For company-folder ZIPs, choose Upload ZIP directly.")
+        upload_types = ["zip"] if source_mode == "Upload ZIP directly (large files)" else ["zip"]+sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS)
+        uploads = st.file_uploader("Choose ZIP files" if source_mode == "Upload ZIP directly (large files)" else "Choose document files", type=upload_types, accept_multiple_files=True, key="document_uploads")
     with st.expander("Optional settings"):
         single_company = st.text_input("Company for loose files only", key="loose_company", help="Leave blank for company-folder ZIPs. This assigns every selected file to one company.")
         use_pdf = st.checkbox("Read PDF headings for unclear filenames", value=False, help="Optional local text extraction. No OCR or external service. Scans can still need review.")
@@ -732,7 +739,7 @@ if page == "Upload documents":
                 if local_zip_path.strip():
                     local_path = Path(local_zip_path.strip().strip('"'))
                     if not local_path.is_file() or local_path.suffix.lower() != ".zip":
-                        raise ValueError("Enter the full path to an existing .zip file on this computer.")
+                        raise ValueError("Choose an existing .zip on the computer running this app, or use Upload ZIP directly to select a ZIP from your device.")
                     with local_path.open("rb") as local_file:
                         result = import_documents(store, [DiskUpload(local_file, local_path.name)], single_company, use_pdf, show_progress, retain_archive=False)
                 elif drive_link.strip():

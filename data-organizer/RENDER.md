@@ -17,6 +17,11 @@ database. Do not use the preview as the only copy of your records. A persistent
 production setup requires a paid disk and all relevant data paths on it.
 The free plan's 512 MB memory can also limit OCR and large-file processing.
 
+In hosted Vendor uploads, **Upload ZIP directly** is the default and opens the
+browser file picker. The local ZIP path option is available only when
+`CLOUD_DEPLOYMENT` is disabled. Hosted sessions with an old local-path selection
+return to direct upload automatically.
+
 ## PostgreSQL document and catalogue storage
 
 Set `DATABASE_URL` privately in Render, using a PostgreSQL URL with TLS enabled,
