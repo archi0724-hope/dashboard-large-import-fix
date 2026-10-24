@@ -6,12 +6,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 10001 appuser
 
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY app.py vendor_core.py storage.py exports.py import_service.py drive_import.py ./
+COPY app.py vendor_core.py storage.py exports.py catalogue_extraction.py import_service.py drive_import.py ./
 COPY .streamlit ./.streamlit/
 
 RUN mkdir -p /app/vendor_data && chown -R appuser:appuser /app
