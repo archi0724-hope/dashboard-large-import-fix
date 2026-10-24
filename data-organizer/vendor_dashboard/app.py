@@ -667,6 +667,9 @@ with st.sidebar:
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
+if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
+    from app.vendor_zip_upload import issue_upload_token
+    st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:

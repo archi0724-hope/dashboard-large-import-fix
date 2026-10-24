@@ -76,11 +76,16 @@ class Query:
     def execute(self, sql: str, params=()):
         return self.connection.execute(sql.replace("?", "%s") if self.cloud else sql, params)
 
+    def executemany(self, sql: str, params):
+        cursor = self.connection.cursor()
+        cursor.executemany(sql.replace('?', '%s') if self.cloud else sql, params)
+        return cursor
+
 
 class Store:
     manual_catalogue_import_version = 3
 
-    def __init__(self, data_dir: Path, database_url: str = ""):
+    def __init__(self, data_dir: Path, database_url: str = "", *, initialize: bool = True):
         self.data_dir = Path(data_dir).resolve()
         self.files_dir = self.data_dir / "files"
         self.uploads_dir = self.data_dir / "uploaded_zips"
@@ -96,7 +101,8 @@ class Store:
             self.uploads_dir.mkdir(parents=True, exist_ok=True)
             self.temp_dir.mkdir(parents=True, exist_ok=True)
             self.failed_dir.mkdir(parents=True, exist_ok=True)
-        self.initialize()
+        if initialize:
+            self.initialize()
 
     @contextmanager
     def connection(self):

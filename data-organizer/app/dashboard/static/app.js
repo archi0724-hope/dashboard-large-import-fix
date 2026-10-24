@@ -92,6 +92,7 @@ const icon = k => html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 // ---------------------------------------------------------------- state / routing
 const S = { status: null, cfg: null, charts: [], poll: null, page: "overview", workspace: localStorage.getItem("workspace") || "organizer", review: { items: [], total: 0, cur: null, q: "", detail: null } };
 const PAGES = [
+  ["drivelibrary", "Google Drive library"],
   ["overview", "Dashboard"], ["source", "Import files"], ["preview", "Check & match"], ["review", "Review matches"], ["catalogue", "Catalogue approval"],
   ["entities", "Companies"], ["quality", "Data quality"], ["export", "Export data"], ["settings", "Workspace settings"], ["logs", "Activity log"],
 ];
@@ -159,6 +160,9 @@ $$('[data-workspace]').forEach(button => button.addEventListener("click", () => 
 const STEPS = [["source", "Choose source"], ["source", "Scan files"], ["preview", "Preview"], ["overview", "Run"], ["review", "Review"], ["export", "Export"]];
 
 const PAGE = {};
+PAGE.drivelibrary = async () => {
+  $('#view').innerHTML = '<p><a class="btn primary" href="/drive-library" target="_blank" rel="noopener">Open shared Drive library</a></p><iframe title="Shared Drive library" src="/drive-library" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
+};
 PAGE.overview = async () => {
   const st = S.status, t = st.totals, p = st.progress;
   const sourceSet = st.config.source_kind === "drive" ? !!st.config.drive_folder : !!st.config.local_input_dir;

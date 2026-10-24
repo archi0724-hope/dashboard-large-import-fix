@@ -59,6 +59,48 @@ disk is still required to preserve that workspace across redeployments.
 
 ## Connect one public Google Drive folder
 
+### Shared Drive library (originals stay in Drive)
+
+Open **Google Drive library** in Organizer or **Search all Google Drive data**
+in Vendor. These open the same authenticated `/drive-library`, backed by three
+additive PostgreSQL tables (`vdd_drive_entries`, `vdd_drive_records`,
+`vdd_drive_jobs`). Existing stored documents are preserved. Originals are not
+copied into PostgreSQL. A temporary single-document copy is removed after
+indexing. Library rows include their original Drive URL, archive member, sheet,
+row/page and review status. They do not automatically become approved catalogue
+offers or verified vendor records. Different sources may contain repeated rows.
+
+**Index all files / resume** discovers the connected folder, reads ZIP directories
+using bounded HTTPS byte ranges (including ZIP64 archives), then extracts supported
+documents one at a time. This avoids downloading entire multi-gigabyte ZIPs.
+The range reader refuses a server that returns the whole file instead of the
+requested range. ZIP directories are limited to 16 MiB reads and 5,000 entries.
+Documents remain limited to 128 MiB. Original upload/import guards are unchanged.
+
+XLSX extraction streams XML rows and uses temporary SQLite for shared strings,
+instead of loading entire workbooks into a DataFrame. CSV, XLS, PDF text, DOCX,
+TXT/log and JSON lines can also be indexed. PDF image-only pages and image files
+are marked as needing OCR. Native Google documents, 7z and nested ZIP containers
+are shown as unsupported; unsafe/encrypted/oversized members are reported.
+`finished_with_issues` never means that every file's content was extracted.
+
+Rows commit in batches of 200. Resume skips unchanged completed archive members
+and idempotently retains saved rows after interruption. Loose public files are
+re-fetched and SHA-256 checked on an explicit refresh. A PostgreSQL advisory lock
+prevents two indexers processing a folder concurrently. Worker execution runs in
+the app process; after a server restart, press Resume. The rows, inventory and
+progress remain in PostgreSQL. The preview pauses near 850 MiB database usage,
+leaving headroom under the configured 1 GiB quota. Larger extracted indexes can
+still require more database storage. This is an explicit refresh, not a continuous
+Drive mirror. Deleted Drive sources are not automatically removed from the index.
+
+The library uses the Organizer dashboard token or a short-lived signed token
+issued after Vendor sign-in. The latter is passed in a URL fragment, removed
+immediately by the library page and sent in a request header. Keys and credentials
+are never included in the library index. A Vendor backup/reset currently covers
+the existing Vendor document store; the derived Drive library can be rebuilt
+independently from its originals and is not included in those backup archives.
+
 Set `GOOGLE_DRIVE_FOLDER_URL` in Render's private environment settings. Both
 dashboards use this source. When no valid Google credential file exists, the
 app reads publicly shared folder listings and downloads through Google HTTPS
