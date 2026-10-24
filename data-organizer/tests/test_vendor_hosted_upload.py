@@ -1,7 +1,7 @@
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
-import zipfile
 
 from streamlit.testing.v1 import AppTest
 
@@ -25,7 +25,7 @@ def test_hosted_upload_defaults_to_file_picker_and_recovers_stale_path_choice(tm
     page.run(timeout=30)
 
     assert not page.exception
-    assert page.radio(key='import_source').value == 'Upload ZIP directly (large files)'
+    assert page.radio(key='import_source').value == 'Upload ZIP directly (up to 2 GB)'
     assert 'Local ZIP path (large files)' not in page.radio(key='import_source').options
     assert not any(item.key == 'document_uploads' for item in page.file_uploader)
     assert any(item.proto.label == 'Choose ZIP files' for item in page.get('link_button'))
@@ -46,7 +46,7 @@ def test_local_direct_zip_saves_documents_and_skips_duplicate(tmp_path, monkeypa
     with patch('streamlit.file_uploader', return_value=[Upload()]):
         page.run(timeout=30)
         assert not page.exception
-        assert page.radio(key='import_source').value == 'Upload ZIP directly (large files)'
+        assert page.radio(key='import_source').value == 'Upload ZIP directly (up to 2 GB)'
         page.button(key='save_documents').click().run(timeout=30)
         assert not page.exception and not page.error
         assert page.session_state['last_upload']['saved_files'] == 1
@@ -64,35 +64,42 @@ def test_local_app_retains_disk_zip_option(tmp_path, monkeypatch):
     assert any('ZIP file path' in item.label for item in page.text_input)
 
 
-def test_computer_path_in_drive_field_returns_to_zip_picker(tmp_path, monkeypatch):
-    page = dashboard(tmp_path, monkeypatch).run(timeout=30)
-    page.radio(key='import_source').set_value('Google Drive ZIP (large files)').run(timeout=30)
-    page.text_input(key='drive_zip_link').set_value(r'"C:\Users\Archi\Downloads\organized_by_company.zip"').run(timeout=30)
-    assert not page.exception
-    assert page.radio(key='import_source').value == 'Upload ZIP directly (large files)'
-    assert not page.error
-    assert any('organized_by_company.zip' in item.value for item in page.info)
-    assert any(item.proto.label == 'Choose ZIP files' for item in page.get('link_button'))
-
-
-def test_drive_folder_is_explained_before_import(tmp_path, monkeypatch):
-    page = dashboard(tmp_path, monkeypatch).run(timeout=30)
-    page.radio(key='import_source').set_value('Google Drive ZIP (large files)').run(timeout=30)
-    page.text_input(key='drive_zip_link').set_value('https://drive.google.com/drive/folders/abcdefghijk').run(timeout=30)
-    assert not page.exception
-    assert page.button(key='save_documents').disabled
-    assert any('Drive folder' in item.value for item in page.info)
-
-
-def test_connected_drive_zip_picker_uses_actual_file_link(tmp_path, monkeypatch):
+def test_old_drive_download_choice_migrates_to_library_without_downloading(tmp_path, monkeypatch):
     monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_URL', 'https://drive.google.com/drive/folders/connected123')
-    files = [{'id': 'archive12345', 'name': 'company.zip', 'path': 'company.zip',
-              'url': 'https://drive.google.com/file/d/archive12345/view'}]
-    with patch('app.drive.public_drive.list_public_files', return_value=files):
-        page = dashboard(tmp_path, monkeypatch).run(timeout=30)
-        page.radio(key='import_source').set_value('Google Drive ZIP (large files)').run(timeout=30)
-        assert not page.exception
-        page.selectbox(key='connected_drive_zip').select('company.zip').run(timeout=30)
-        assert not page.exception
-        assert page.text_input(key='drive_zip_link').value == files[0]['url']
-        assert not page.button(key='save_documents').disabled
+    page = dashboard(tmp_path, monkeypatch)
+    page.session_state['import_source'] = 'Google Drive ZIP (large files)'
+    page.session_state['drive_zip_link'] = 'https://drive.google.com/file/d/archive12345/view'
+    with patch('app.drive.public_drive.list_public_files') as listing, patch('drive_import.download_drive_zip') as download:
+        page.run(timeout=30)
+    listing.assert_not_called()
+    download.assert_not_called()
+    assert not page.exception
+    assert page.radio(key='import_source').value == 'Google Drive library (10+ GB ZIPs)'
+    assert not page.error
+    assert not any(item.key == 'drive_zip_link' for item in page.text_input)
+    assert not any(item.key == 'save_documents' for item in page.button)
+    frames = page.get('iframe')
+    assert len(frames) == 1
+    assert frames[0].proto.src.startswith('/drive-library#')
+
+
+def test_large_drive_link_entry_is_available_without_preconfigured_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_URL','')
+    monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_ID','')
+    page = dashboard(tmp_path, monkeypatch).run(timeout=30)
+    page.radio(key='import_source').set_value('Google Drive library (10+ GB ZIPs)').run(timeout=30)
+    assert not page.exception
+    assert not any(item.key == 'save_documents' for item in page.button)
+    assert len(page.get('iframe')) == 1
+    assert any('Paste a Google Drive folder or ZIP file link' in item.value for item in page.info)
+
+
+def test_connected_drive_large_zip_stays_in_drive_and_shows_shared_library(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_URL', 'https://drive.google.com/drive/folders/connected123')
+    page = dashboard(tmp_path, monkeypatch).run(timeout=30)
+    assert not page.exception
+    assert page.radio(key='import_source').value == 'Google Drive library (10+ GB ZIPs)'
+    assert any('10 GB or 50+ GB' in item.value for item in page.info)
+    folder = next(item for item in page.get('link_button') if item.proto.label.startswith('1. Open connected Drive'))
+    assert folder.proto.url == 'https://drive.google.com/drive/folders/connected123'
+    assert len(page.get('iframe')) == 1

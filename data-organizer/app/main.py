@@ -31,6 +31,8 @@ from .matching.review import ReviewError
 from .pipeline import make_source
 from .services import AppState, get_state
 from .vendor_zip_upload import router as vendor_upload_router
+from .drive.index_api import router as drive_index_router
+from .purchase_invoices import router as purchase_invoice_router
 
 STATIC = Path(__file__).parent / "dashboard" / "static"
 VENDOR_SCRIPT = Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py"
@@ -48,6 +50,8 @@ app = FastAPI(
     lifespan=vendor_dashboard.lifespan(),
 )
 app.include_router(vendor_upload_router)
+app.include_router(drive_index_router)
+app.include_router(purchase_invoice_router)
 
 
 def _clean(obj: Any) -> Any:
@@ -70,6 +74,8 @@ def st() -> AppState:
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
+    if path.startswith(('/api/drive-index/', '/api/purchase-invoices/')):
+        return await call_next(request)
     if path in {"/healthz", "/vendor-upload"} or path == "/api/vendor-uploads" or path.startswith("/api/vendor-uploads/"):
         return await call_next(request)
     # The mounted Streamlit app owns its own sessions and storage. Do not open
@@ -703,6 +709,17 @@ def download(file: str = Query(...)):
 
 
 # ----------------------------------------------------------------------------- dashboard
+@app.get('/drive-library', include_in_schema=False)
+def drive_library():
+    return FileResponse(STATIC / 'drive-library.html', headers={'Cache-Control':'no-store'})
+
+
+@app.get('/purchase-invoices', include_in_schema=False)
+def purchase_invoices_page():
+    return FileResponse(STATIC / 'purchase-invoices.html', headers={
+        'Cache-Control':'no-store', 'Referrer-Policy':'no-referrer'})
+
+
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})

@@ -1,5 +1,42 @@
 # Organizer preview on Render
 
+## Purchase invoices and large collections
+
+`/purchase-invoices` provides upload → extraction → review/edit → save → search.
+Both dashboards link to it. It accepts PDF, JPG, PNG, XLSX, XLS and CSV, one
+invoice per file, up to 20 MiB; PDFs up to 20 pages and spreadsheets up to
+10,000 rows / 100 columns. A single isolated extraction worker runs with a
+150-second timeout. Textless PDF pages and images use the installed Tesseract.
+Drafts are private to the upload session and expire on eviction or server restart.
+Users must confirm review, supplier and invoice number before saving. Line items
+from PDF/images may need manual entry. Extraction does not calculate missing
+taxes or totals. Original upload bytes are deleted after extraction; keep originals
+in Drive or on the source computer. Reviewed records and source-text copies are
+shared in the additive `vdd_purchase_invoices` PostgreSQL table; duplicate source
+hashes keep the first reviewed record. Legacy Vendor reset/backup does not include
+this separate table. Use PostgreSQL backups for these records.
+
+A single ZIP over 50 GB must stay in Drive; the direct upload cap remains 2 GiB.
+Vendor → Upload documents → Google Drive library embeds the authenticated shared
+library, including Start/Resume, progress, issues and search. It replaces the old
+Google Drive ZIP download form, so existing sessions cannot send a 10+ GB archive
+through the obsolete 5 GiB full-download path. Put new archives in the connected
+folder before starting/resuming. The library indexes the configured folder;
+Users can paste a folder or ZIP file link directly in the embedded library and
+choose **Use link and start indexing**. The normalized selection persists in
+`vdd_drive_sources`; all selections add to the same shared library scope. Switching
+sources preserves existing records. Pause an active job before switching to a
+different source. Direct ZIP links use range reads without a folder scan; the
+file must be an ordinary, readable ZIP. The form does not upload files to Drive.
+Drive range reads support ZIP64 offsets beyond 50 GiB without fetching the entire
+archive. This is covered by a sparse virtual ZIP64 test, not a full 50 GB production
+import. The existing 5,000-entry ZIP cap, 16 MiB directory/read cap and 128 MiB
+per-document extraction cap still apply. Split larger inventories into ordinary
+independent ZIPs, not multipart `.z01` archives. Source originals stay in Drive,
+and derived records must fit the database quota. OCR-only and unsupported files
+are listed as issues rather than represented as fully extracted. No promise of
+fully searching an arbitrary 50 GB archive on the free preview is made.
+
 Deploy branch `deploy/organizer` using Docker context `data-organizer` and
 Dockerfile `data-organizer/Dockerfile`. The app listens on port 8000; set
 `PORT=8000`. `/` opens the Organizer dashboard, `/vendor/` opens Vendor,
@@ -58,6 +95,52 @@ processing database remain local; `DATABASE_URL` does not persist them. A paid
 disk is still required to preserve that workspace across redeployments.
 
 ## Connect one public Google Drive folder
+
+### Shared Drive library (originals stay in Drive)
+
+Open **Google Drive library** in Organizer or **Search all Google Drive data**
+in Vendor. These open the same authenticated `/drive-library`, backed by three
+additive PostgreSQL tables (`vdd_drive_entries`, `vdd_drive_records`,
+`vdd_drive_jobs`). Existing stored documents are preserved. Originals are not
+copied into PostgreSQL. A temporary single-document copy is removed after
+indexing. Library rows include their original Drive URL, archive member, sheet,
+row/page and review status. They do not automatically become approved catalogue
+offers or verified vendor records. Different sources may contain repeated rows.
+
+**Index all files / resume** discovers the connected folder, reads ZIP directories
+using bounded HTTPS byte ranges (including ZIP64 archives), then extracts supported
+documents one at a time. This avoids downloading entire multi-gigabyte ZIPs.
+The range reader refuses a server that returns the whole file instead of the
+requested range. ZIP directories are limited to 16 MiB reads and 5,000 entries.
+Documents remain limited to 128 MiB. Original upload/import guards are unchanged.
+
+XLSX extraction streams XML rows and uses temporary SQLite for shared strings,
+instead of loading entire workbooks into a DataFrame. CSV, XLS, PDF text, DOCX,
+TXT/log and JSON lines can also be indexed. PDF image-only pages and image files
+are marked as needing OCR. Native Google documents, 7z and nested ZIP containers
+are shown as unsupported; unsafe/encrypted/oversized members are reported.
+`finished_with_issues` never means that every file's content was extracted.
+
+Cloud Vendor startup no longer automatically backfills old document bytes when
+the published catalogue is empty. Existing cloud files can be explicitly
+re-imported or indexed through this library; local legacy migration is retained.
+
+Rows commit in batches of 200. Resume skips unchanged completed archive members
+and idempotently retains saved rows after interruption. Loose public files are
+re-fetched and SHA-256 checked on an explicit refresh. A PostgreSQL advisory lock
+prevents two indexers processing a folder concurrently. Worker execution runs in
+the app process; after a server restart, press Resume. The rows, inventory and
+progress remain in PostgreSQL. The preview pauses near 850 MiB database usage,
+leaving headroom under the configured 1 GiB quota. Larger extracted indexes can
+still require more database storage. This is an explicit refresh, not a continuous
+Drive mirror. Deleted Drive sources are not automatically removed from the index.
+
+The library uses the Organizer dashboard token or a short-lived signed token
+issued after Vendor sign-in. The latter is passed in a URL fragment, removed
+immediately by the library page and sent in a request header. Keys and credentials
+are never included in the library index. A Vendor backup/reset currently covers
+the existing Vendor document store; the derived Drive library can be rebuilt
+independently from its originals and is not included in those backup archives.
 
 Set `GOOGLE_DRIVE_FOLDER_URL` in Render's private environment settings. Both
 dashboards use this source. When no valid Google credential file exists, the

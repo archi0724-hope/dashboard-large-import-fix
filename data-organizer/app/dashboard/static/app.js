@@ -92,6 +92,8 @@ const icon = k => html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 // ---------------------------------------------------------------- state / routing
 const S = { status: null, cfg: null, charts: [], poll: null, page: "overview", workspace: localStorage.getItem("workspace") || "organizer", review: { items: [], total: 0, cur: null, q: "", detail: null } };
 const PAGES = [
+  ["drivelibrary", "Google Drive library"],
+  ["purchaseinvoices", "Purchase invoices"],
   ["overview", "Dashboard"], ["source", "Import files"], ["preview", "Check & match"], ["review", "Review matches"], ["catalogue", "Catalogue approval"],
   ["entities", "Companies"], ["quality", "Data quality"], ["export", "Export data"], ["settings", "Workspace settings"], ["logs", "Activity log"],
 ];
@@ -159,6 +161,12 @@ $$('[data-workspace]').forEach(button => button.addEventListener("click", () => 
 const STEPS = [["source", "Choose source"], ["source", "Scan files"], ["preview", "Preview"], ["overview", "Run"], ["review", "Review"], ["export", "Export"]];
 
 const PAGE = {};
+PAGE.drivelibrary = async () => {
+  $('#view').innerHTML = '<p><a class="btn primary" href="/drive-library" target="_blank" rel="noopener">Open shared Drive library</a></p><iframe title="Shared Drive library" src="/drive-library" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
+};
+PAGE.purchaseinvoices = async () => {
+  $('#view').innerHTML = '<p><a class="btn primary" href="/purchase-invoices" target="_blank" rel="noopener">Open purchase invoices</a></p><iframe title="Purchase invoices" src="/purchase-invoices" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
+};
 PAGE.overview = async () => {
   const st = S.status, t = st.totals, p = st.progress;
   const sourceSet = st.config.source_kind === "drive" ? !!st.config.drive_folder : !!st.config.local_input_dir;
@@ -355,11 +363,11 @@ PAGE.source = async () => {
       const button = event.currentTarget; button.disabled = true;
       try {
         const result = await api('/api/drive/files');
-        $('#driveFiles').innerHTML = html`<p>${num(result.files.length)} files found. Select one ZIP to import its contents into Organizer. After reading, use Create folders &amp; sync to Vendor.</p>${result.files.map(file => html`<div class="row"><span>${file.path}</span>${file.name.toLowerCase().endsWith('.zip') ? html`<button data-drive-zip="${file.id}">Import ZIP into Organizer</button>` : ''}</div>`)}<p class="small muted">ZIP limits: 2 GiB download, 5 GiB expanded, 5,000 entries, 128 MB per document.</p>`.__raw;
+        $('#driveFiles').innerHTML = html`<p>${num(result.files.length)} files found. For ZIPs over 2 GB, including 10+ GB, <a href="/drive-library">open the shared Drive library</a> to index without downloading the whole archive.</p><p>To copy a smaller ZIP into Organizer instead, select it below. After reading, use Create folders &amp; sync to Vendor.</p>${result.files.map(file => html`<div class="row"><span>${file.path}</span>${file.name.toLowerCase().endsWith('.zip') ? html`<button data-drive-zip="${file.id}">Copy ZIP into Organizer (up to 2 GB)</button>` : ''}</div>`)}<p class="small muted">Copy limits: 2 GiB download, 5 GiB expanded, 5,000 entries, 128 MB per document.</p>`.__raw;
         $$('[data-drive-zip]').forEach(control => control.addEventListener('click', guard(async () => {
           control.disabled = true; control.textContent = 'Downloading and extracting…';
           try { const imported = await post('/api/drive/import-zip', {file_id: control.dataset.driveZip}); toast(`${imported.saved} imported. Read files, then sync to Vendor.${imported.skipped_entries ? ` ${imported.skipped_entries} unsafe entries skipped.` : ''}`); S.srcTab = 'drive'; await refreshStatus(); route(); }
-          finally { control.disabled = false; control.textContent = 'Import ZIP into Organizer'; }
+          finally { control.disabled = false; control.textContent = 'Copy ZIP into Organizer (up to 2 GB)'; }
         })));
       } finally { button.disabled = false; }
     }));

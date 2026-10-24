@@ -23,7 +23,7 @@ import streamlit as st
 
 import exports as exports_module
 from import_service import import_documents
-from drive_import import DiskUpload, download_drive_zip, drive_file_id
+from drive_import import DiskUpload
 import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
                          documents_for_category, export_filename, filter_checklist, read_vendor_file, supporting_category)
@@ -575,14 +575,6 @@ def refresh(message: str):
     st.rerun()
 
 
-def check_drive_zip_input():
-    value = st.session_state.get("drive_zip_link", "").strip().strip('\"\'')
-    if re.match(r"^[A-Za-z]:[\\/]", value) or value.startswith(("/", "\\\\", "file:")):
-        st.session_state["import_source"] = "Upload ZIP directly (large files)"
-        st.session_state["local_zip_hint"] = re.split(r"[\\/]", value)[-1]
-        st.session_state["drive_zip_link"] = ""
-
-
 def execute_delete_all_data():
     """Run the destructive reset as a widget callback, before the next Streamlit rerun."""
     acknowledged = bool(st.session_state.get("reset_acknowledged"))
@@ -667,6 +659,10 @@ with st.sidebar:
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
+from app.vendor_zip_upload import issue_upload_token
+st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD')))
+if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
+    st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
@@ -709,80 +705,64 @@ if page != "🤖 Vendor AI Assistant":
 
 if page == "Upload documents":
     st.subheader("Upload vendor documents")
-    st.write("Upload your company-folders ZIP here. The dashboard will detect companies, classify files, update the Yes / No checklist, and keep existing saved records. Exact repeats are skipped.")
+    st.write("Upload documents from your computer, or index the connected Google Drive collection. Drive originals stay in Drive; extracted records are searchable by everyone with dashboard access.")
     connected_drive = setting("GOOGLE_DRIVE_FOLDER_URL") or setting("GOOGLE_DRIVE_FOLDER_ID")
     if connected_drive:
         st.caption("Google Drive source folder is configured for Organizer and Vendor.")
-        st.link_button("Open Drive source in Organizer", "/#/source")
-    import_sources = ["Upload ZIP directly (large files)", "Google Drive ZIP (large files)", "Upload small files"]
+    direct_zip = "Upload ZIP directly (up to 2 GB)"
+    drive_library = "Google Drive library (10+ GB ZIPs)"
+    import_sources = [direct_zip, drive_library, "Upload small files"]
     hosted = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
     if not hosted:
         import_sources.append("Local ZIP path (large files)")
-    if st.session_state.get("import_source") not in import_sources:
+    if st.session_state.get("import_source") == "Google Drive ZIP (large files)":
+        st.session_state["import_source"] = drive_library
+    elif st.session_state.get("import_source") == "Upload ZIP directly (large files)":
+        st.session_state["import_source"] = direct_zip
+    elif st.session_state.get("import_source") not in import_sources:
         st.session_state["import_source"] = import_sources[1] if connected_drive else import_sources[0]
     source_mode = st.radio("Import source", import_sources, horizontal=True, key="import_source")
-    streamed_upload = hosted and source_mode == "Upload ZIP directly (large files)"
-    drive_link = ""
-    drive_link_valid = True
+    streamed_upload = hosted and source_mode == direct_zip
+    indexing_drive = source_mode == drive_library
     local_zip_path = ""
     uploads = []
     if source_mode == "Local ZIP path (large files)":
         local_zip_path = st.text_input("ZIP file path on the computer running this app", placeholder=r"C:\Users\you\Downloads\vendors.zip")
         st.caption("Use a ZIP already on the computer running this app. To send a ZIP from your device, choose Upload ZIP directly.")
-    elif source_mode == "Google Drive ZIP (large files)":
-        folder_link = connected_drive or st.session_state.get("drive_zip_link", "")
-        if "/folders/" in folder_link or (connected_drive and folder_link == connected_drive):
-            from app.drive.public_drive import list_public_files
-
-            @st.cache_data(ttl=30, show_spinner=False)
-            def connected_drive_files(folder):
-                return list_public_files(folder)
-
-            try:
-                with st.spinner("Reading the connected Drive folder…"):
-                    source_files = connected_drive_files(folder_link)
-                zip_files = [file for file in source_files if file['name'].lower().endswith('.zip')]
-                selected_drive_zip = st.selectbox("Choose ZIP from connected Drive folder", zip_files,
-                    index=None, format_func=lambda file: file['path'], placeholder="Select a ZIP archive", key="connected_drive_zip")
-                if selected_drive_zip:
-                    st.session_state['drive_zip_link'] = selected_drive_zip['url']
-                st.caption("To read Excel files or organize ZIP contents first, open the Drive source in Organizer. Imports add to the same saved Vendor records.")
-            except Exception:
-                st.info("The folder could not be listed. Check its sharing permissions, or paste a public ZIP file link below.")
-        drive_link = st.text_input("Google Drive ZIP link", placeholder="https://drive.google.com/file/d/.../view", key="drive_zip_link", on_change=check_drive_zip_input)
-        st.caption("Downloads directly to the server in small chunks, then saves documents one at a time. The link must allow downloads without signing in. Keep the original ZIP in Drive; it will not be copied to Uploaded ZIPs. Transfer speed depends on Drive and your server. Keep this tab open during import.")
-        if drive_link.strip():
-            try:
-                drive_file_id(drive_link)
-            except ValueError:
-                drive_link_valid = False
-                if "/folders/" in drive_link:
-                    st.info("This is a Drive folder. Choose a ZIP from the folder picker above, or open Organizer to read its documents.")
-                    st.link_button("Open Organizer", "/")
-                else:
-                    st.info("Paste an HTTPS Google Drive ZIP file link here. For a ZIP on your computer, choose Upload ZIP directly.")
+    elif indexing_drive:
+        st.info("Paste a Google Drive folder or ZIP file link in the field below and click Use link and start indexing. This supports large ZIPs, including 10 GB or 50+ GB, using small range reads.")
+        if connected_drive:
+            from app.config import parse_drive_folder_id
+            folder_url = 'https://drive.google.com/drive/folders/' + parse_drive_folder_id(connected_drive)
+            st.link_button("1. Open connected Drive folder and add your ZIP", folder_url)
+        library_url = '/drive-library#' + issue_upload_token(setting('APP_PASSWORD'))
+        st.link_button("Open Drive library in a new tab", library_url)
+        st.caption("Searchable records are shared in PostgreSQL; originals remain in Drive. The company document checklist covers copied uploads; Drive records appear in this library.")
+        st.iframe(library_url, height=1000)
     else:
         if streamed_upload:
             if hint := st.session_state.pop("local_zip_hint", ""):
                 st.info(f"{hint} is on your computer. Choose it in the file picker on the ZIP upload page.")
-            st.caption("Open the ZIP upload page to choose your file and see transfer and import progress. You do not need to paste a file path.")
-        elif source_mode == "Upload ZIP directly (large files)":
+            st.caption("Choose a ZIP up to 2 GB on the upload page. For larger archives, select Google Drive library above and put the ZIP in the connected folder.")
+        elif source_mode == direct_zip:
             st.caption("Click Browse files or drag your ZIP here. Wait for the upload to finish, then click Save documents. Keep this tab open during import.")
         else:
             st.caption("Choose individual documents from your device. For company-folder ZIPs, choose Upload ZIP directly.")
         if not streamed_upload:
-            upload_types = ["zip"] if source_mode == "Upload ZIP directly (large files)" else ["zip"]+sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS)
-            uploads = st.file_uploader("Choose ZIP files" if source_mode == "Upload ZIP directly (large files)" else "Choose document files", type=upload_types, accept_multiple_files=True, key="document_uploads")
-    with st.expander("Optional settings"):
-        single_company = st.text_input("Company for loose files only", key="loose_company", help="Leave blank for company-folder ZIPs. This assigns every selected file to one company.")
-        use_pdf = st.checkbox("Read PDF headings for unclear filenames", value=False, help="Optional local text extraction. No OCR or external service. Scans can still need review.")
-        expected = st.number_input("Expected company count (0 = not specified)", min_value=0, value=0, step=1)
+            upload_types = ["zip"] if source_mode == direct_zip else ["zip"]+sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS)
+            uploads = st.file_uploader("Choose ZIP files" if source_mode == direct_zip else "Choose document files", type=upload_types, accept_multiple_files=True, key="document_uploads")
+    single_company, use_pdf, expected = '', False, 0
+    if not indexing_drive:
+        with st.expander("Optional settings"):
+            single_company = st.text_input("Company for loose files only", key="loose_company", help="Leave blank for company-folder ZIPs. This assigns every selected file to one company.")
+            use_pdf = st.checkbox("Read PDF headings for unclear filenames", value=False, help="Optional local text extraction. No OCR or external service. Scans can still need review.")
+            expected = st.number_input("Expected company count (0 = not specified)", min_value=0, value=0, step=1)
     if streamed_upload:
         from app.vendor_zip_upload import issue_upload_token
         upload_token = issue_upload_token(setting("APP_PASSWORD"))
         upload_url = "/vendor-upload?company=" + quote_plus(single_company) + "&read_pdf=" + str(use_pdf).lower() + "&expected=" + str(int(expected)) + "#" + upload_token
         st.link_button("Choose ZIP files", upload_url, type="primary", width="stretch")
-    if not streamed_upload and st.button("Save documents", key="save_documents", disabled=not (uploads or drive_link.strip() or local_zip_path.strip()) or not drive_link_valid, type="primary", width="stretch"):
+    if not streamed_upload and not indexing_drive and st.button("Save documents", key="save_documents", disabled=not (uploads or local_zip_path.strip()), type="primary", width="stretch"):
         progress = st.empty()
         with st.spinner("Reading folders and saving documents..."):
             try:
@@ -795,9 +775,6 @@ if page == "Upload documents":
                         raise ValueError("Choose an existing .zip on the computer running this app, or use Upload ZIP directly to select a ZIP from your device.")
                     with local_path.open("rb") as local_file:
                         result = import_documents(store, [DiskUpload(local_file, local_path.name)], single_company, use_pdf, show_progress, retain_archive=False)
-                elif drive_link.strip():
-                    with download_drive_zip(drive_link, lambda n: progress.caption(f"Downloaded {n / 1024**2:,.0f} MB...")) as downloaded:
-                        result = import_documents(store, [downloaded], single_company, use_pdf, show_progress, retain_archive=False)
                 else:
                     result = import_documents(store, uploads, single_company, use_pdf, show_progress)
             except Exception as error:
