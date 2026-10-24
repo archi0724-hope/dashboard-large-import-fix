@@ -30,6 +30,7 @@ from .logging_setup import get_logger
 from .matching.review import ReviewError
 from .pipeline import make_source
 from .services import AppState, get_state
+from .vendor_zip_upload import router as vendor_upload_router
 
 STATIC = Path(__file__).parent / "dashboard" / "static"
 VENDOR_SCRIPT = Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py"
@@ -46,6 +47,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=vendor_dashboard.lifespan(),
 )
+app.include_router(vendor_upload_router)
 
 
 def _clean(obj: Any) -> Any:
@@ -68,6 +70,8 @@ def st() -> AppState:
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
+    if path in {"/healthz", "/vendor-upload"} or path == "/api/vendor-uploads" or path.startswith("/api/vendor-uploads/"):
+        return await call_next(request)
     # The mounted Streamlit app owns its own sessions and storage. Do not open
     # the Organizer database or apply Organizer API authentication to it.
     if path == "/vendor" or path.startswith("/vendor/") or path == "/chatbot" or path.startswith("/chatbot/"):
@@ -96,6 +100,19 @@ async def guard(request: Request, call_next):
 
 def J(data: Any) -> JSONResponse:
     return JSONResponse(_clean(data))
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Public liveness probe; does not open storage or reveal application data."""
+    return {"status": "ok"}
+
+
+@app.get("/vendor-upload", include_in_schema=False)
+def vendor_zip_upload_page():
+    return FileResponse(STATIC / "vendor-upload.html", headers={
+        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+    })
 
 
 @lru_cache(maxsize=1)
@@ -146,6 +163,44 @@ def schema():
 def drive():
     s = st()
     return J(drive_status(s.settings, s.cfg))
+
+
+@app.get("/api/drive/files")
+def drive_files():
+    from .config import parse_drive_folder_id
+    from .drive.public_drive import list_public_files
+    s = st()
+    folder = parse_drive_folder_id(s.cfg.drive_folder or s.settings.drive_folder_id or s.settings.drive_folder_url)
+    return J({"files": list_public_files(folder)})
+
+
+@app.post("/api/drive/import-zip")
+def drive_import_zip(body: dict[str, str]):
+    from .config import parse_drive_folder_id
+    from .drive.public_drive import list_public_files
+    from vendor_dashboard.drive_import import download_drive_zip
+    s = st()
+    if s.progress.running:
+        raise ConfigError("Wait for file reading to finish before importing a Drive ZIP.")
+    folder = parse_drive_folder_id(s.cfg.drive_folder or s.settings.drive_folder_id or s.settings.drive_folder_url)
+    match = next((item for item in list_public_files(folder)
+                  if item['id'] == body.get('file_id') and item['name'].lower().endswith('.zip')), None)
+    if match is None:
+        raise ConfigError("Choose a ZIP from the connected Drive folder.")
+    with download_drive_zip(match['url'], max_bytes=2 * 1024**3) as downloaded:
+        # Validate the entire inventory before saving/extracting anything.
+        with zipfile.ZipFile(downloaded.file) as archive:
+            entries = archive.infolist()
+            if len(entries) > 5000 or sum(item.file_size for item in entries) > 5 * 1024**3:
+                raise ConfigError("Choose a smaller ZIP: maximum 5,000 entries and 5 GiB expanded.")
+            if any(item.file_size > 128 * 1024**2 for item in entries):
+                raise ConfigError("A document in this ZIP exceeds the 128 MB per-document limit.")
+        downloaded.file.seek(0)
+        filename = s.save_upload_stream('drive-' + match['id'] + '.zip', downloaded.file, 2 * 1024**3)
+    report = s.extract_upload_archive(filename, max_uncompressed_bytes=5 * 1024**3)
+    source = s.settings.uploads_dir / '_extracted'
+    s.update_config({'source_kind': 'local', 'local_input_dir': str(source)})
+    return J({'saved': match['name'], 'skipped_entries': report['skipped']})
 
 
 # ----------------------------------------------------------------------------- setup helpers
