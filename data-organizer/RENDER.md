@@ -17,6 +17,22 @@ database. Do not use the preview as the only copy of your records. A persistent
 production setup requires a paid disk and all relevant data paths on it.
 The free plan's 512 MB memory can also limit OCR and large-file processing.
 
+## PostgreSQL document and catalogue storage
+
+Set `DATABASE_URL` privately in Render, using a PostgreSQL URL with TLS enabled,
+then deploy. The embedded Vendor dashboard and Organizer's catalogue approval
+and sync features use this database. Metadata and original document bytes are
+stored together in PostgreSQL. The `psycopg[binary]` driver is included in the
+Organizer requirements.
+
+This setting does not migrate files already uploaded to local storage. Export
+and verify a full Vendor backup before switching an app that contains local
+records, then restore it explicitly into the new database if needed.
+
+Organizer's extraction progress, raw cache, generated folders, logs and DuckDB
+processing database remain local; `DATABASE_URL` does not persist them. A paid
+disk is still required to preserve that workspace across redeployments.
+
 ## Connect one private Google Drive folder
 
 The app already supports read-only private Drive folder scans. The Drive home
