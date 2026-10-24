@@ -82,3 +82,17 @@ def test_drive_folder_is_explained_before_import(tmp_path, monkeypatch):
     assert not page.exception
     assert page.button(key='save_documents').disabled
     assert any('Drive folder' in item.value for item in page.info)
+
+
+def test_connected_drive_zip_picker_uses_actual_file_link(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_URL', 'https://drive.google.com/drive/folders/connected123')
+    files = [{'id': 'archive12345', 'name': 'company.zip', 'path': 'company.zip',
+              'url': 'https://drive.google.com/file/d/archive12345/view'}]
+    with patch('app.drive.public_drive.list_public_files', return_value=files):
+        page = dashboard(tmp_path, monkeypatch).run(timeout=30)
+        page.radio(key='import_source').set_value('Google Drive ZIP (large files)').run(timeout=30)
+        assert not page.exception
+        page.selectbox(key='connected_drive_zip').select('company.zip').run(timeout=30)
+        assert not page.exception
+        assert page.text_input(key='drive_zip_link').value == files[0]['url']
+        assert not page.button(key='save_documents').disabled

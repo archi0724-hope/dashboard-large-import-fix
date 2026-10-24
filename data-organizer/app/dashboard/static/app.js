@@ -330,8 +330,8 @@ PAGE.source = async () => {
         <input id="inpath" value="${cfg.source_kind === "local" ? cfg.local_input_dir : ""}" placeholder="/path/to/your/files" style="width:100%"></label>
         <div class="row"><button class="primary" id="saveSrc">Use this folder</button><span class="muted small">Your files are never modified. Results go to the output folder (${cfg.output_dir || "data/output"}).</span></div></div>`
       : tab === "drive" ? html`<div class="stack"><label class="f">Google Drive folder URL or ID<input id="drvurl" value="${cfg.drive_folder}" placeholder="https://drive.google.com/drive/folders/..." style="width:100%"></label>
-        <div class="note ${ds.ready_to_connect ? "" : "warn"}">${ds.ready_to_connect ? "Credentials found - the app can read this folder (read-only scope)." : "Not authorised yet. Run  python -m app drive-auth  once in a terminal (needs secrets/client_secret.json), or configure a service account. Full steps are in the README."}</div>
-        <div class="row"><button class="primary" id="saveDrv">Use this Drive folder</button></div></div>`
+        <div class="note">${ds.help} Excel and other supported documents are downloaded during Scan. ZIP archives can be selected below.</div>
+        <div class="row"><button class="primary" id="saveDrv">Use this Drive folder</button><button id="listDriveFiles">Show files in connected folder</button></div><div id="driveFiles"></div></div>`
       : tab === "upload" ? html`<div class="stack"><input type="file" id="upfiles" multiple><div class="row"><button class="primary" id="doUp">Upload &amp; use</button><span class="muted small">Upload ZIPs or files. ZIP company folders are kept together. No application file-size or file-count cap.</span></div></div>`
       : html`<div class="stack"><p class="muted">Creates ~11 synthetic files (Excel, legacy .xls, CSV, PDF, Word, text, a scanned image, a corrupt file, a duplicate…) with deliberately messy names such as <em>SMS HOSPITAL JAIPUR</em> / <em>S.M.S. Hospital</em> / <em>Sawai Man Singh Hospital</em>.</p><div class="row"><button class="primary" id="mkDemo">Create demo files &amp; use them</button></div></div>`}</div></div>
     <div class="card"><div class="h"><h2>Files</h2><div class="row"><button id="btnScan" ${sourceReady ? "" : "disabled"}>Scan folder</button><button id="btnInspect" ${sourceReady ? "" : "disabled"}>Inspect structure</button><button class="primary" id="btnOrganize" ${inv.length ? "" : "disabled"}>Organize into company folders</button></div></div>
@@ -351,6 +351,18 @@ PAGE.source = async () => {
     await api("/api/config", { method: "PUT", body: { source_kind: "local", local_input_dir: path } }); toast("Source saved"); route();
   }));
   $("#saveDrv")?.addEventListener("click", guard(async () => { await api("/api/config", { method: "PUT", body: { source_kind: "drive", drive_folder: $("#drvurl").value.trim() } }); toast("Drive folder saved"); route(); }));
+    $("#listDriveFiles")?.addEventListener("click", guard(async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        const result = await api('/api/drive/files');
+        $('#driveFiles').innerHTML = html`<p>${num(result.files.length)} files found. Select one ZIP to import its contents into Organizer. After reading, use Create folders &amp; sync to Vendor.</p>${result.files.map(file => html`<div class="row"><span>${file.path}</span>${file.name.toLowerCase().endsWith('.zip') ? html`<button data-drive-zip="${file.id}">Import ZIP into Organizer</button>` : ''}</div>`)}<p class="small muted">ZIP limits: 2 GiB download, 5 GiB expanded, 5,000 entries, 128 MB per document.</p>`.__raw;
+        $$('[data-drive-zip]').forEach(control => control.addEventListener('click', guard(async () => {
+          control.disabled = true; control.textContent = 'Downloading and extracting…';
+          try { const imported = await post('/api/drive/import-zip', {file_id: control.dataset.driveZip}); toast(`${imported.saved} imported. Read files, then sync to Vendor.${imported.skipped_entries ? ` ${imported.skipped_entries} unsafe entries skipped.` : ''}`); S.srcTab = 'drive'; await refreshStatus(); route(); }
+          finally { control.disabled = false; control.textContent = 'Import ZIP into Organizer'; }
+        })));
+      } finally { button.disabled = false; }
+    }));
   $("#mkDemo")?.addEventListener("click", guard(async () => { await post("/api/demo/prepare"); S.srcTab = "local"; toast("Demo files ready"); route(); }));
   $("#doUp")?.addEventListener("click", guard(async () => {
     const fd = new FormData(); [...$("#upfiles").files].forEach(f => fd.append("files", f));

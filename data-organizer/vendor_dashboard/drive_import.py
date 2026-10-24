@@ -119,7 +119,7 @@ def download_drive_zip(link, progress=None, max_bytes=MAX_DOWNLOAD):
                 length = response.headers.get("Content-Length", "")
                 total = int(length) if length.isdigit() else 0
                 if total > max_bytes:
-                    raise ValueError("Drive ZIP exceeds the 5 GB download limit.")
+                    raise ValueError(f"Drive ZIP exceeds the {max_bytes / 1024**3:g} GiB download limit.")
                 free = shutil.disk_usage(folder).free
                 if total and total + 64 * CHUNK_SIZE > free:
                     raise ValueError("Not enough temporary disk space to download this ZIP.")
@@ -131,7 +131,7 @@ def download_drive_zip(link, progress=None, max_bytes=MAX_DOWNLOAD):
                             continue
                         downloaded += len(chunk)
                         if downloaded > max_bytes:
-                            raise ValueError("Drive ZIP exceeds the 5 GB download limit.")
+                            raise ValueError(f"Drive ZIP exceeds the {max_bytes / 1024**3:g} GiB download limit.")
                         output.write(chunk)
                         if progress and (downloaded <= CHUNK_SIZE or downloaded // CHUNK_SIZE % 8 == 0):
                             progress(downloaded)

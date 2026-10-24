@@ -710,12 +710,16 @@ if page != "🤖 Vendor AI Assistant":
 if page == "Upload documents":
     st.subheader("Upload vendor documents")
     st.write("Upload your company-folders ZIP here. The dashboard will detect companies, classify files, update the Yes / No checklist, and keep existing saved records. Exact repeats are skipped.")
+    connected_drive = setting("GOOGLE_DRIVE_FOLDER_URL") or setting("GOOGLE_DRIVE_FOLDER_ID")
+    if connected_drive:
+        st.caption("Google Drive source folder is configured for Organizer and Vendor.")
+        st.link_button("Open Drive source in Organizer", "/#/source")
     import_sources = ["Upload ZIP directly (large files)", "Google Drive ZIP (large files)", "Upload small files"]
     hosted = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
     if not hosted:
         import_sources.append("Local ZIP path (large files)")
     if st.session_state.get("import_source") not in import_sources:
-        st.session_state["import_source"] = import_sources[0]
+        st.session_state["import_source"] = import_sources[1] if connected_drive else import_sources[0]
     source_mode = st.radio("Import source", import_sources, horizontal=True, key="import_source")
     streamed_upload = hosted and source_mode == "Upload ZIP directly (large files)"
     drive_link = ""
@@ -726,6 +730,25 @@ if page == "Upload documents":
         local_zip_path = st.text_input("ZIP file path on the computer running this app", placeholder=r"C:\Users\you\Downloads\vendors.zip")
         st.caption("Use a ZIP already on the computer running this app. To send a ZIP from your device, choose Upload ZIP directly.")
     elif source_mode == "Google Drive ZIP (large files)":
+        folder_link = connected_drive or st.session_state.get("drive_zip_link", "")
+        if "/folders/" in folder_link or (connected_drive and folder_link == connected_drive):
+            from app.drive.public_drive import list_public_files
+
+            @st.cache_data(ttl=30, show_spinner=False)
+            def connected_drive_files(folder):
+                return list_public_files(folder)
+
+            try:
+                with st.spinner("Reading the connected Drive folder…"):
+                    source_files = connected_drive_files(folder_link)
+                zip_files = [file for file in source_files if file['name'].lower().endswith('.zip')]
+                selected_drive_zip = st.selectbox("Choose ZIP from connected Drive folder", zip_files,
+                    index=None, format_func=lambda file: file['path'], placeholder="Select a ZIP archive", key="connected_drive_zip")
+                if selected_drive_zip:
+                    st.session_state['drive_zip_link'] = selected_drive_zip['url']
+                st.caption("To read Excel files or organize ZIP contents first, open the Drive source in Organizer. Imports add to the same saved Vendor records.")
+            except Exception:
+                st.info("The folder could not be listed. Check its sharing permissions, or paste a public ZIP file link below.")
         drive_link = st.text_input("Google Drive ZIP link", placeholder="https://drive.google.com/file/d/.../view", key="drive_zip_link", on_change=check_drive_zip_input)
         st.caption("Downloads directly to the server in small chunks, then saves documents one at a time. The link must allow downloads without signing in. Keep the original ZIP in Drive; it will not be copied to Uploaded ZIPs. Transfer speed depends on Drive and your server. Keep this tab open during import.")
         if drive_link.strip():
@@ -734,7 +757,7 @@ if page == "Upload documents":
             except ValueError:
                 drive_link_valid = False
                 if "/folders/" in drive_link:
-                    st.info("This is a Drive folder. Open Organizer to read a folder, or use a ZIP file link here.")
+                    st.info("This is a Drive folder. Choose a ZIP from the folder picker above, or open Organizer to read its documents.")
                     st.link_button("Open Organizer", "/")
                 else:
                     st.info("Paste an HTTPS Google Drive ZIP file link here. For a ZIP on your computer, choose Upload ZIP directly.")

@@ -38,7 +38,8 @@ server CPU, per-document processing memory, or the database's storage quota.
 The local ZIP path option is available only when `CLOUD_DEPLOYMENT` is disabled.
 Hosted sessions with an old local-path selection return to direct upload.
 Pasting a computer path into the Drive field also switches to the ZIP picker;
-Drive folder links are directed to Organizer before import can be submitted.
+Drive folder links can list public ZIP archives directly in Vendor, or open
+Organizer to read the folder's documents.
 
 ## PostgreSQL document and catalogue storage
 
@@ -55,6 +56,33 @@ records, then restore it explicitly into the new database if needed.
 Organizer's extraction progress, raw cache, generated folders, logs and DuckDB
 processing database remain local; `DATABASE_URL` does not persist them. A paid
 disk is still required to preserve that workspace across redeployments.
+
+## Connect one public Google Drive folder
+
+Set `GOOGLE_DRIVE_FOLDER_URL` in Render's private environment settings. Both
+dashboards use this source. When no valid Google credential file exists, the
+app reads publicly shared folder listings and downloads through Google HTTPS
+endpoints without a Google sign-in, service-account key, or saved browser cookies.
+Keep public folder permissions at Viewer unless editing is actually intended.
+
+In Organizer, open **Import files → Google Drive**. **Scan folder** refreshes
+supported original documents (up to 128 MB each); downloaded content hashes
+detect edits even when names are unchanged. ZIP files appear in the inventory
+as unsupported containers until explicitly imported. **Show files in connected
+folder** lists ZIP choices; **Import ZIP into Organizer** downloads and extracts
+one archive into uploads, then selects that local source. Read files and use
+**Create folders & sync to Vendor** to share originals and catalogue records.
+ZIP imports allow 2 GiB download, 5 GiB expanded, 5,000 entries, and 128 MB per
+document. Unsafe paths are skipped and reported. Nested ZIPs remain containers.
+
+In Vendor, choose **Upload documents → Google Drive ZIP** and select an archive
+from **Choose ZIP from connected Drive folder**, then **Save documents**. This
+uses existing Vendor deduplication and archive guards. Folder listings refresh
+after 30 seconds. Importing is explicit; the app does not continuously mirror
+Drive changes or write results back to Drive. Vendor writes are shared through
+the configured PostgreSQL database. Organizer's processing workspace remains
+temporary on a free service. Native Google Docs/Sheets require authorized Drive
+access; public mode lists them as unsupported rather than silently omitting them.
 
 ## Connect one private Google Drive folder
 

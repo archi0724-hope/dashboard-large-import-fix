@@ -165,6 +165,44 @@ def drive():
     return J(drive_status(s.settings, s.cfg))
 
 
+@app.get("/api/drive/files")
+def drive_files():
+    from .config import parse_drive_folder_id
+    from .drive.public_drive import list_public_files
+    s = st()
+    folder = parse_drive_folder_id(s.cfg.drive_folder or s.settings.drive_folder_id or s.settings.drive_folder_url)
+    return J({"files": list_public_files(folder)})
+
+
+@app.post("/api/drive/import-zip")
+def drive_import_zip(body: dict[str, str]):
+    from .config import parse_drive_folder_id
+    from .drive.public_drive import list_public_files
+    from vendor_dashboard.drive_import import download_drive_zip
+    s = st()
+    if s.progress.running:
+        raise ConfigError("Wait for file reading to finish before importing a Drive ZIP.")
+    folder = parse_drive_folder_id(s.cfg.drive_folder or s.settings.drive_folder_id or s.settings.drive_folder_url)
+    match = next((item for item in list_public_files(folder)
+                  if item['id'] == body.get('file_id') and item['name'].lower().endswith('.zip')), None)
+    if match is None:
+        raise ConfigError("Choose a ZIP from the connected Drive folder.")
+    with download_drive_zip(match['url'], max_bytes=2 * 1024**3) as downloaded:
+        # Validate the entire inventory before saving/extracting anything.
+        with zipfile.ZipFile(downloaded.file) as archive:
+            entries = archive.infolist()
+            if len(entries) > 5000 or sum(item.file_size for item in entries) > 5 * 1024**3:
+                raise ConfigError("Choose a smaller ZIP: maximum 5,000 entries and 5 GiB expanded.")
+            if any(item.file_size > 128 * 1024**2 for item in entries):
+                raise ConfigError("A document in this ZIP exceeds the 128 MB per-document limit.")
+        downloaded.file.seek(0)
+        filename = s.save_upload_stream('drive-' + match['id'] + '.zip', downloaded.file, 2 * 1024**3)
+    report = s.extract_upload_archive(filename, max_uncompressed_bytes=5 * 1024**3)
+    source = s.settings.uploads_dir / '_extracted'
+    s.update_config({'source_kind': 'local', 'local_input_dir': str(source)})
+    return J({'saved': match['name'], 'skipped_entries': report['skipped']})
+
+
 # ----------------------------------------------------------------------------- setup helpers
 @app.post("/api/demo/prepare")
 def demo_prepare():

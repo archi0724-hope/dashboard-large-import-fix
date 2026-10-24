@@ -133,12 +133,13 @@ class LocalSource:
 
 def make_source(settings: Settings, cfg: RuntimeConfig):
     if cfg.source_kind == "drive":
-        from .drive.google_drive import DriveSource
+        from .drive.google_drive import DriveSource, has_credentials
+        from .drive.public_drive import PublicDriveSource
 
         folder = parse_drive_folder_id(cfg.drive_folder or settings.drive_folder_id or settings.drive_folder_url)
         if not folder:
             raise ConfigError("No Google Drive folder configured. Paste the folder URL in the dashboard or set GOOGLE_DRIVE_FOLDER_URL.")
-        return DriveSource(settings, folder)
+        return DriveSource(settings, folder) if has_credentials(settings) else PublicDriveSource(settings, folder)
     # Runtime configuration is authoritative.  An empty value means the user
     # deliberately cleared the source; never fall back to demo/environment
     # files and show unrelated data in the dashboard.

@@ -99,10 +99,16 @@ def drive_status(settings: Settings, cfg: RuntimeConfig) -> dict[str, Any]:
         "folder_id": folder, "folder_configured": bool(folder),
         "oauth_client_file": settings.google_client_secrets_file.exists(),
         "token_present": settings.google_token_file.exists(),
-        "service_account": bool(settings.google_service_account_file),
-        "ready_to_connect": bool(folder) and (settings.google_token_file.exists() or bool(settings.google_service_account_file)),
-        "help": "Run `python -m app drive-auth` once to authorise (read-only), then press Scan.",
+        "service_account": has_credentials(settings) and bool(settings.google_service_account_file),
+        "ready_to_connect": bool(folder),
+        "access_mode": "authorized" if has_credentials(settings) else "public",
+        "help": "Public folders can be read without Google sign-in. Scan refreshes downloaded documents. Private folders require Google authorization.",
     }
+
+
+def has_credentials(settings: Settings) -> bool:
+    sa = settings.google_service_account_file
+    return bool(sa and Path(sa).is_file()) or settings.google_token_file.is_file()
 
 
 class DriveSource:
