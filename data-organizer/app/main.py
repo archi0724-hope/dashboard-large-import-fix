@@ -68,6 +68,8 @@ def st() -> AppState:
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
+    if path == "/healthz":
+        return await call_next(request)
     # The mounted Streamlit app owns its own sessions and storage. Do not open
     # the Organizer database or apply Organizer API authentication to it.
     if path == "/vendor" or path.startswith("/vendor/") or path == "/chatbot" or path.startswith("/chatbot/"):
@@ -96,6 +98,12 @@ async def guard(request: Request, call_next):
 
 def J(data: Any) -> JSONResponse:
     return JSONResponse(_clean(data))
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Public liveness probe; does not open storage or reveal application data."""
+    return {"status": "ok"}
 
 
 @lru_cache(maxsize=1)
