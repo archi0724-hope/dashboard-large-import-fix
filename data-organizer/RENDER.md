@@ -17,10 +17,28 @@ database. Do not use the preview as the only copy of your records. A persistent
 production setup requires a paid disk and all relevant data paths on it.
 The free plan's 512 MB memory can also limit OCR and large-file processing.
 
-In hosted Vendor uploads, **Upload ZIP directly** is the default and opens the
-browser file picker. The local ZIP path option is available only when
-`CLOUD_DEPLOYMENT` is disabled. Hosted sessions with an old local-path selection
-return to direct upload automatically.
+In hosted Vendor uploads, **Upload ZIP directly → Choose ZIP files** opens a
+dedicated browser picker with transfer progress and background-import progress.
+Its raw upload request streams to a temporary disk file rather than storing the
+whole ZIP in Streamlit's RAM. The existing importer reads that file and saves
+documents to the shared Vendor store. Original ZIP retention is disabled for
+this path; keep the original ZIP on your computer. Temporary uploads are removed
+after import or failure. Completed document writes survive an interrupted import
+in PostgreSQL, and retrying the ZIP uses the existing duplicate rules.
+
+Upload sessions use a three-hour scoped token signed with `APP_PASSWORD`; the
+password itself is not sent to the upload page. The token travels in the URL
+fragment when opening the page and in a request header for API calls, not in
+logged API query strings. One ZIP may upload/import at a time on this instance.
+The service checks size and available disk before and during upload. The ZIP
+limit stays 2 GiB; archive entry, expanded-byte, member-size, traversal and nested
+ZIP safeguards remain unchanged. Disk-backed transfer does not increase free
+server CPU, per-document processing memory, or the database's storage quota.
+
+The local ZIP path option is available only when `CLOUD_DEPLOYMENT` is disabled.
+Hosted sessions with an old local-path selection return to direct upload.
+Pasting a computer path into the Drive field also switches to the ZIP picker;
+Drive folder links are directed to Organizer before import can be submitted.
 
 ## PostgreSQL document and catalogue storage
 

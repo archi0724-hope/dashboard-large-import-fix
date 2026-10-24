@@ -30,6 +30,7 @@ from .logging_setup import get_logger
 from .matching.review import ReviewError
 from .pipeline import make_source
 from .services import AppState, get_state
+from .vendor_zip_upload import router as vendor_upload_router
 
 STATIC = Path(__file__).parent / "dashboard" / "static"
 VENDOR_SCRIPT = Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py"
@@ -46,6 +47,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=vendor_dashboard.lifespan(),
 )
+app.include_router(vendor_upload_router)
 
 
 def _clean(obj: Any) -> Any:
@@ -68,7 +70,7 @@ def st() -> AppState:
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
-    if path == "/healthz":
+    if path in {"/healthz", "/vendor-upload"} or path == "/api/vendor-uploads" or path.startswith("/api/vendor-uploads/"):
         return await call_next(request)
     # The mounted Streamlit app owns its own sessions and storage. Do not open
     # the Organizer database or apply Organizer API authentication to it.
@@ -104,6 +106,13 @@ def J(data: Any) -> JSONResponse:
 def healthz():
     """Public liveness probe; does not open storage or reveal application data."""
     return {"status": "ok"}
+
+
+@app.get("/vendor-upload", include_in_schema=False)
+def vendor_zip_upload_page():
+    return FileResponse(STATIC / "vendor-upload.html", headers={
+        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+    })
 
 
 @lru_cache(maxsize=1)

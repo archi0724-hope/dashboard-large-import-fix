@@ -23,7 +23,7 @@ import streamlit as st
 
 import exports as exports_module
 from import_service import import_documents
-from drive_import import DiskUpload, download_drive_zip
+from drive_import import DiskUpload, download_drive_zip, drive_file_id
 import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
                          documents_for_category, export_filename, filter_checklist, read_vendor_file, supporting_category)
@@ -575,6 +575,14 @@ def refresh(message: str):
     st.rerun()
 
 
+def check_drive_zip_input():
+    value = st.session_state.get("drive_zip_link", "").strip().strip('\"\'')
+    if re.match(r"^[A-Za-z]:[\\/]", value) or value.startswith(("/", "\\\\", "file:")):
+        st.session_state["import_source"] = "Upload ZIP directly (large files)"
+        st.session_state["local_zip_hint"] = re.split(r"[\\/]", value)[-1]
+        st.session_state["drive_zip_link"] = ""
+
+
 def execute_delete_all_data():
     """Run the destructive reset as a widget callback, before the next Streamlit rerun."""
     acknowledged = bool(st.session_state.get("reset_acknowledged"))
@@ -709,27 +717,49 @@ if page == "Upload documents":
     if st.session_state.get("import_source") not in import_sources:
         st.session_state["import_source"] = import_sources[0]
     source_mode = st.radio("Import source", import_sources, horizontal=True, key="import_source")
+    streamed_upload = hosted and source_mode == "Upload ZIP directly (large files)"
     drive_link = ""
+    drive_link_valid = True
     local_zip_path = ""
     uploads = []
     if source_mode == "Local ZIP path (large files)":
         local_zip_path = st.text_input("ZIP file path on the computer running this app", placeholder=r"C:\Users\you\Downloads\vendors.zip")
         st.caption("Use a ZIP already on the computer running this app. To send a ZIP from your device, choose Upload ZIP directly.")
     elif source_mode == "Google Drive ZIP (large files)":
-        drive_link = st.text_input("Google Drive ZIP link", placeholder="https://drive.google.com/file/d/.../view")
+        drive_link = st.text_input("Google Drive ZIP link", placeholder="https://drive.google.com/file/d/.../view", key="drive_zip_link", on_change=check_drive_zip_input)
         st.caption("Downloads directly to the server in small chunks, then saves documents one at a time. The link must allow downloads without signing in. Keep the original ZIP in Drive; it will not be copied to Uploaded ZIPs. Transfer speed depends on Drive and your server. Keep this tab open during import.")
+        if drive_link.strip():
+            try:
+                drive_file_id(drive_link)
+            except ValueError:
+                drive_link_valid = False
+                if "/folders/" in drive_link:
+                    st.info("This is a Drive folder. Open Organizer to read a folder, or use a ZIP file link here.")
+                    st.link_button("Open Organizer", "/")
+                else:
+                    st.info("Paste an HTTPS Google Drive ZIP file link here. For a ZIP on your computer, choose Upload ZIP directly.")
     else:
-        if source_mode == "Upload ZIP directly (large files)":
+        if streamed_upload:
+            if hint := st.session_state.pop("local_zip_hint", ""):
+                st.info(f"{hint} is on your computer. Choose it in the file picker on the ZIP upload page.")
+            st.caption("Open the ZIP upload page to choose your file and see transfer and import progress. You do not need to paste a file path.")
+        elif source_mode == "Upload ZIP directly (large files)":
             st.caption("Click Browse files or drag your ZIP here. Wait for the upload to finish, then click Save documents. Keep this tab open during import.")
         else:
             st.caption("Choose individual documents from your device. For company-folder ZIPs, choose Upload ZIP directly.")
-        upload_types = ["zip"] if source_mode == "Upload ZIP directly (large files)" else ["zip"]+sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS)
-        uploads = st.file_uploader("Choose ZIP files" if source_mode == "Upload ZIP directly (large files)" else "Choose document files", type=upload_types, accept_multiple_files=True, key="document_uploads")
+        if not streamed_upload:
+            upload_types = ["zip"] if source_mode == "Upload ZIP directly (large files)" else ["zip"]+sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS)
+            uploads = st.file_uploader("Choose ZIP files" if source_mode == "Upload ZIP directly (large files)" else "Choose document files", type=upload_types, accept_multiple_files=True, key="document_uploads")
     with st.expander("Optional settings"):
         single_company = st.text_input("Company for loose files only", key="loose_company", help="Leave blank for company-folder ZIPs. This assigns every selected file to one company.")
         use_pdf = st.checkbox("Read PDF headings for unclear filenames", value=False, help="Optional local text extraction. No OCR or external service. Scans can still need review.")
         expected = st.number_input("Expected company count (0 = not specified)", min_value=0, value=0, step=1)
-    if st.button("Save documents", key="save_documents", disabled=not (uploads or drive_link.strip() or local_zip_path.strip()), type="primary", width="stretch"):
+    if streamed_upload:
+        from app.vendor_zip_upload import issue_upload_token
+        upload_token = issue_upload_token(setting("APP_PASSWORD"))
+        upload_url = "/vendor-upload?company=" + quote_plus(single_company) + "&read_pdf=" + str(use_pdf).lower() + "&expected=" + str(int(expected)) + "#" + upload_token
+        st.link_button("Choose ZIP files", upload_url, type="primary", width="stretch")
+    if not streamed_upload and st.button("Save documents", key="save_documents", disabled=not (uploads or drive_link.strip() or local_zip_path.strip()) or not drive_link_valid, type="primary", width="stretch"):
         progress = st.empty()
         with st.spinner("Reading folders and saving documents..."):
             try:
