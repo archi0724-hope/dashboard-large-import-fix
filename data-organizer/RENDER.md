@@ -84,6 +84,10 @@ are marked as needing OCR. Native Google documents, 7z and nested ZIP containers
 are shown as unsupported; unsafe/encrypted/oversized members are reported.
 `finished_with_issues` never means that every file's content was extracted.
 
+Cloud Vendor startup no longer automatically backfills old document bytes when
+the published catalogue is empty. Existing cloud files can be explicitly
+re-imported or indexed through this library; local legacy migration is retained.
+
 Rows commit in batches of 200. Resume skips unchanged completed archive members
 and idempotently retains saved rows after interruption. Loose public files are
 re-fetched and SHA-256 checked on an explicit refresh. A PostgreSQL advisory lock

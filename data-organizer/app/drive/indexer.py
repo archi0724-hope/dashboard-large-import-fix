@@ -105,14 +105,26 @@ def safe_member(name):
     return not (path.is_absolute() or '..' in path.parts or re.match(r'^[A-Za-z]:',name))
 
 
+def top_entry(file,folder):
+    ext = Path(file['name']).suffix.lower()
+    result = {'entry_key':entry_key(file['id']),'folder_id':folder,'drive_id':file['id'],'source_name':file['path'],
+              'size_bytes':0,'version':'public-file','status':'pending','error':''}
+    if ext not in EXTRACTABLE | {'.zip'} or file.get('native'):
+        result.update(status='unsupported',error='Native Google documents need Google authorization.' if file.get('native') else 'This format is visible in the library but cannot be text-indexed. Upload an equivalent ZIP/CSV/XLSX for extraction.')
+    return result
+
+
 def discover(index, folder):
     files = list_public_files(folder)
+    # Persist the whole top-level inventory before any potentially slow archive
+    # request. Users can see every source while ZIP member discovery continues.
+    for offset in range(0,len(files),200):
+        index.discover([top_entry(file,folder) for file in files[offset:offset+200]])
     for file in files:
         if CANCEL.is_set():
             return
         key = entry_key(file['id'])
-        base = {'entry_key':key,'folder_id':folder,'drive_id':file['id'],'source_name':file['path'],
-                'size_bytes':0,'version':'public-file','status':'pending','error':''}
+        base = top_entry(file,folder)
         index.state(folder,'running','Listing '+file['path'],OWNER)
         if file['name'].lower().endswith('.zip'):
             try:
@@ -142,17 +154,6 @@ def discover(index, folder):
             except Exception as error:  # noqa: BLE001 - retain failures per source without aborting the folder
                 index.discover([{**base,'status':'failed','error':str(error) if isinstance(error,ValueError) else 'Cannot read ZIP directory: '+type(error).__name__}])
         else:
-            ext = Path(file['name']).suffix.lower()
-            if ext not in EXTRACTABLE or file.get('native'):
-                base.update(status='unsupported',error='Native Google documents need Google authorization.' if file.get('native') else 'This format is visible in the library but cannot be text-indexed. Upload an equivalent ZIP/CSV/XLSX for extraction.')
-            if not file.get('native'):
-                try:
-                    with DriveRangeFile(file['id']) as remote:
-                        base['size_bytes'] = remote.size
-                except (ValueError,OSError):
-                    # Listing an inaccessible file must still retain its inventory row.
-                    pass
-            index.discover([base])
             if base['status'] == 'pending':
                 # Public loose files have no reliable version in the folder page.
                 # Re-fetch and compare their SHA-256 on each explicit refresh.

@@ -78,6 +78,18 @@ def test_changed_version_removes_stale_rows_and_resume_deduplicates(index):
     assert index.search('folder123456')['total'] == 0
 
 
+def test_top_level_inventory_is_saved_before_slow_archive_requests(index,monkeypatch):
+    files = [{'id':'archive12345','name':'one.zip','path':'one.zip'},
+             {'id':'archive67890','name':'two.zip','path':'two.zip'}]
+    monkeypatch.setattr(indexer,'list_public_files',lambda folder:files)
+    indexer.CANCEL.set()
+    try:
+        indexer.discover(index,'folder123456')
+        assert index.search('folder123456',entries=True)['total'] == 2
+    finally:
+        indexer.CANCEL.clear()
+
+
 def test_full_index_preserves_originals_and_reports_unsafe_and_unsupported(index,monkeypatch):
     payload = BytesIO()
     with zipfile.ZipFile(payload,'w') as archive:
@@ -168,3 +180,27 @@ def test_index_api_requires_auth_before_opening_storage(index,monkeypatch):
     assert client.get('/api/drive-index/status',headers={'X-Upload-Token':scoped}).status_code == 200
     assert client.post('/api/drive-index/pause',headers={'X-Token':'synthetic-drive-token'}).status_code == 200
     indexer.CANCEL.clear()
+
+
+def test_cloud_startup_does_not_reparse_stored_documents_or_publish_pending_rows(monkeypatch):
+    from vendor_dashboard.storage import Store
+
+    class Query:
+        def execute(self,*args): return self
+        def fetchall(self): return []
+        def fetchone(self): return {'n':0}
+
+    @contextmanager
+    def connection(self):
+        yield Query()
+
+    monkeypatch.setattr(Store,'connection',connection)
+    monkeypatch.setattr(Store,'_ensure_canonical_ids',lambda self,db:None)
+    monkeypatch.setattr(Store,'_ensure_product_columns',lambda self,db:None)
+    monkeypatch.setattr(Store,'apply_catalogue_policy',lambda self:None)
+    def unexpected(self):
+        raise AssertionError('Cloud startup must not run document extraction')
+    monkeypatch.setattr(Store,'backfill_product_records',unexpected)
+    store = object.__new__(Store)
+    store.cloud = True
+    store.initialize()

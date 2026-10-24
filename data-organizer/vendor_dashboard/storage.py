@@ -205,7 +205,11 @@ class Store:
         # New imports and explicit backup restores already extract their rows.
         with self.connection() as db:
             product_count = int(db.execute("SELECT COUNT(*) AS n FROM vdd_product_records").fetchone()["n"])
-        if product_count == 0:
+        # Cloud startup must not download/reparse every saved document while
+        # the catalogue is empty or awaiting approval. Besides blocking the UI,
+        # this legacy backfill can bypass the current staged-import workflow.
+        # Local legacy stores retain their original automatic migration.
+        if product_count == 0 and not self.cloud:
             self.backfill_product_records()
         self.apply_catalogue_policy()
 

@@ -34,9 +34,10 @@ class DriveIndex:
         if not entries:
             return
         with self.store.connection() as db:
+            ids = sorted({entry['drive_id'] for entry in entries})
             previous = {row['entry_key']:row['version'] for row in db.execute(
-                'SELECT entry_key,version FROM vdd_drive_entries WHERE folder_id=? AND drive_id=?',
-                (entries[0]['folder_id'],entries[0]['drive_id'])).fetchall()}
+                'SELECT entry_key,version FROM vdd_drive_entries WHERE folder_id=? AND drive_id IN ('+','.join('?' for _ in ids)+')',
+                (entries[0]['folder_id'],*ids)).fetchall()}
             changed = []
             params = []
             for entry in entries:
@@ -98,7 +99,8 @@ class DriveIndex:
     def pending(self, folder):
         with self.store.connection() as db:
             return [dict(row) for row in db.execute('''SELECT * FROM vdd_drive_entries
-                WHERE folder_id=? AND status IN ('pending','failed','reading') ORDER BY size_bytes,entry_key''', (folder,)).fetchall()]
+                WHERE folder_id=? AND status IN ('pending','failed','reading')
+                ORDER BY CASE WHEN member_path='' THEN 1 ELSE 0 END,size_bytes,entry_key''', (folder,)).fetchall()]
 
     def state(self, folder, status, message, owner=''):
         with self.store.connection() as db:
@@ -117,7 +119,7 @@ class DriveIndex:
 
     def search(self, folder, query='', entries=False, offset=0, limit=100):
         table = 'vdd_drive_entries' if entries else 'vdd_drive_records'
-        fields = "lower(source_name || ' ' || member_path || ' ' || error)" if entries else 'search_text'
+        fields = "lower(source_name || ' ' || member_path || ' ' || status || ' ' || error)" if entries else 'search_text'
         params = (folder,'%'+query.casefold()[:200]+'%')
         with self.store.connection() as db:
             total = db.execute(f'SELECT count(*) AS n FROM {table} WHERE folder_id=? AND {fields} LIKE ?',params).fetchone()['n']
