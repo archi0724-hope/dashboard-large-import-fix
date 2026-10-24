@@ -16,7 +16,7 @@ from .public_drive import MAX_DOCUMENT, download_public_file, list_public_files
 from .range_zip import DriveRangeFile, archive_members
 
 OWNER = uuid.uuid4().hex
-LOCK = threading.Lock()
+LOCK = threading.RLock()
 CANCEL = threading.Event()
 ACTIVE = None
 EXTRACTABLE = {'.xlsx','.xls','.csv','.txt','.log','.pdf','.docx','.json'}
@@ -114,8 +114,12 @@ def top_entry(file,folder):
     return result
 
 
-def discover(index, folder):
-    files = list_public_files(folder)
+def discover(index, folder, source=None):
+    if source and source['kind'] == 'zip':
+        files = [{'id':source['id'],'name':'Drive ZIP '+source['id']+'.zip',
+            'path':'Drive ZIP '+source['id']+'.zip','url':source['url']}]
+    else:
+        files = list_public_files(source['id'] if source else folder)
     # Persist the whole top-level inventory before any potentially slow archive
     # request. Users can see every source while ZIP member discovery continues.
     for offset in range(0,len(files),200):
@@ -183,7 +187,7 @@ def source_copy(entry, target):
         target.unlink(missing_ok=True)
 
 
-def run_index(store, folder):
+def run_index(store, folder, source=None):
     index = DriveIndex(store)
     # A session-level lock also prevents a resumed process and old deployment
     # from indexing the same folder concurrently. It releases on disconnect.
@@ -195,8 +199,10 @@ def run_index(store, folder):
                 return
         try:
             index.state(folder,'running','Discovering files and ZIP contents',OWNER)
-            discover(index,folder)
+            discover(index,folder,source)
             for entry in index.pending(folder):
+                if source and source['kind'] == 'zip' and entry['drive_id'] != source['id']:
+                    continue
                 if CANCEL.is_set():
                     index.state(folder,'paused','Paused. Resume continues from saved files and rows.',OWNER)
                     return
@@ -267,11 +273,11 @@ def run_index(store, folder):
                 lease.execute('SELECT pg_advisory_unlock(?)',(key,))
 
 
-def start_index(store, folder):
+def start_index(store, folder, source=None):
     global ACTIVE
     with LOCK:
         if ACTIVE and ACTIVE.is_alive():
             return
         CANCEL.clear()
-        ACTIVE = threading.Thread(target=run_index,args=(store,folder),name='drive-index',daemon=True)
+        ACTIVE = threading.Thread(target=run_index,args=(store,folder,source),name='drive-index',daemon=True)
         ACTIVE.start()

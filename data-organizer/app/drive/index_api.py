@@ -6,12 +6,14 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from ..config import get_settings, parse_drive_folder_id
 from ..vendor_zip_upload import require_upload_token
 from . import indexer
 from .index_store import DriveIndex
+from .source_links import parse_source
 
 
 def authorize(request: Request):
@@ -42,15 +44,43 @@ def folder_id():
     return parse_drive_folder_id(settings.drive_folder_id or settings.drive_folder_url)
 
 
+def selection(index):
+    saved = index.source_selection()
+    if saved:
+        return saved
+    folder = folder_id()
+    source = {'kind':'folder','id':folder,'url':'https://drive.google.com/drive/folders/'+folder} if folder else None
+    return {'scope':folder or 'shared-drive-library','source':source}
+
+
 @router.get('/status')
 def status():
-    return library().status(folder_id())
+    index = library()
+    selected = selection(index)
+    return {**index.status(selected['scope']),'source_link':(selected['source'] or {}).get('url','')}
+
+
+class StartSource(BaseModel):
+    link: str = Field(default='',max_length=2048)
 
 
 @router.post('/start')
-def start():
+def start(body: StartSource | None = None):
+    try:
+        source = parse_source(body.link) if body and body.link.strip() else None
+    except ValueError as error:
+        raise HTTPException(422,str(error)) from None
     index = library()
-    indexer.start_index(index.store,folder_id())
+    with indexer.LOCK:
+        selected = selection(index)
+        source = source or selected['source']
+        if not source:
+            raise HTTPException(422,'Paste a Google Drive folder or ZIP file link first.')
+        if indexer.ACTIVE and indexer.ACTIVE.is_alive() and source != selected['source']:
+            raise HTTPException(409,'Another Drive source is being indexed. Click Pause, wait for the current batch to finish, then submit your link again.')
+        selected['source'] = source
+        index.select_source(selected)
+        indexer.start_index(index.store,selected['scope'],source)
     return {'started':True}
 
 
@@ -62,4 +92,5 @@ def pause():
 
 @router.get('/search')
 def search(q: str='',entries: bool=False,offset: int=0):
-    return library().search(folder_id(),q,entries,offset)
+    index = library()
+    return index.search(selection(index)['scope'],q,entries,offset)

@@ -83,15 +83,15 @@ def test_old_drive_download_choice_migrates_to_library_without_downloading(tmp_p
     assert frames[0].proto.src.startswith('/drive-library#')
 
 
-def test_large_drive_zip_requires_connected_folder_instead_of_zip_link(tmp_path, monkeypatch):
+def test_large_drive_link_entry_is_available_without_preconfigured_folder(tmp_path, monkeypatch):
     monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_URL','')
     monkeypatch.setenv('GOOGLE_DRIVE_FOLDER_ID','')
     page = dashboard(tmp_path, monkeypatch).run(timeout=30)
     page.radio(key='import_source').set_value('Google Drive library (10+ GB ZIPs)').run(timeout=30)
     assert not page.exception
     assert not any(item.key == 'save_documents' for item in page.button)
-    assert not page.get('iframe')
-    assert any('Configure a Google Drive folder' in item.value for item in page.info)
+    assert len(page.get('iframe')) == 1
+    assert any('Paste a Google Drive folder or ZIP file link' in item.value for item in page.info)
 
 
 def test_connected_drive_large_zip_stays_in_drive_and_shows_shared_library(tmp_path, monkeypatch):

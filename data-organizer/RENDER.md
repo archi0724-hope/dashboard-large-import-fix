@@ -22,7 +22,12 @@ library, including Start/Resume, progress, issues and search. It replaces the ol
 Google Drive ZIP download form, so existing sessions cannot send a 10+ GB archive
 through the obsolete 5 GiB full-download path. Put new archives in the connected
 folder before starting/resuming. The library indexes the configured folder;
-it does not accept a separate archive link or upload files to Drive for the user.
+Users can paste a folder or ZIP file link directly in the embedded library and
+choose **Use link and start indexing**. The normalized selection persists in
+`vdd_drive_sources`; all selections add to the same shared library scope. Switching
+sources preserves existing records. Pause an active job before switching to a
+different source. Direct ZIP links use range reads without a folder scan; the
+file must be an ordinary, readable ZIP. The form does not upload files to Drive.
 Drive range reads support ZIP64 offsets beyond 50 GiB without fetching the entire
 archive. This is covered by a sparse virtual ZIP64 test, not a full 50 GB production
 import. The existing 5,000-entry ZIP cap, 16 MiB directory/read cap and 128 MiB

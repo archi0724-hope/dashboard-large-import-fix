@@ -730,18 +730,15 @@ if page == "Upload documents":
         local_zip_path = st.text_input("ZIP file path on the computer running this app", placeholder=r"C:\Users\you\Downloads\vendors.zip")
         st.caption("Use a ZIP already on the computer running this app. To send a ZIP from your device, choose Upload ZIP directly.")
     elif indexing_drive:
-        st.info("For ZIPs over 2 GB, including 10 GB or 50+ GB: upload the original ZIP to the connected Google Drive folder, then click Index all files / resume below. The server reads small ranges instead of downloading the whole ZIP.")
+        st.info("Paste a Google Drive folder or ZIP file link in the field below and click Use link and start indexing. This supports large ZIPs, including 10 GB or 50+ GB, using small range reads.")
         if connected_drive:
             from app.config import parse_drive_folder_id
             folder_url = 'https://drive.google.com/drive/folders/' + parse_drive_folder_id(connected_drive)
             st.link_button("1. Open connected Drive folder and add your ZIP", folder_url)
-            library_url = '/drive-library#' + issue_upload_token(setting('APP_PASSWORD'))
-            st.link_button("Open Drive library in a new tab", library_url)
-            st.caption("2. Start or resume indexing below. Searchable records are shared in PostgreSQL. Original files remain in Drive. The company document checklist covers copied uploads; Drive records appear in this library.")
-            st.iframe(library_url, height=850)
-        else:
-            st.info("Configure a Google Drive folder in Organizer before indexing large ZIPs. A ZIP on your computer must first be uploaded to that folder.")
-            st.link_button("Configure Drive folder in Organizer", "/#/source")
+        library_url = '/drive-library#' + issue_upload_token(setting('APP_PASSWORD'))
+        st.link_button("Open Drive library in a new tab", library_url)
+        st.caption("Searchable records are shared in PostgreSQL; originals remain in Drive. The company document checklist covers copied uploads; Drive records appear in this library.")
+        st.iframe(library_url, height=1000)
     else:
         if streamed_upload:
             if hint := st.session_state.pop("local_zip_hint", ""):

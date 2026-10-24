@@ -5,26 +5,29 @@ body{font:15px system-ui,sans-serif;background:#f5f7fc;color:#142d55;margin:0}ma
 </style></head><body><main>
 <div class="row"><h1>Shared Google Drive library</h1><a href="/#/source">Organizer</a><a href="/#/vendor">Vendor dashboard</a></div>
 <p>Search company details, product rows and document text from the connected Drive folder. Original files stay in Google Drive.</p>
-<p class="muted">For a 50+ GB ZIP, place it in the connected Drive folder and choose Index all files / resume. The archive is read in small ranges; originals are not copied into PostgreSQL. Limits: 5,000 entries per ZIP, 128 MB per extracted document, and the available database space. Split archives with more entries. Image text needs OCR; check Files &amp; issues for anything not fully searchable.</p>
+<p class="muted">Paste a Google Drive folder or ZIP file link below, including ZIPs over 10 GB. ZIPs are read in small ranges; originals are not copied into PostgreSQL. The link must allow the server to read files without signing in. Limits: 5,000 entries per ZIP, 128 MB per extracted document, and available database space. Image text needs OCR; check Files &amp; issues for anything not fully searchable.</p>
+<div class="card"><form id="source" class="row"><label for="driveLink">Google Drive folder or ZIP link</label><input id="driveLink" type="url" required maxlength="2048" placeholder="https://drive.google.com/file/d/…/view or /drive/folders/…"><button class="primary" id="useLink">Use link and start indexing</button></form><p id="selectedSource" class="muted"></p><p class="muted">Saved records remain searchable when you add another link. Everyone with dashboard access shares the selected source and records.</p></div>
 <div class="card"><div class="row"><button class="primary" id="start">Index all files / resume</button><button id="pause">Pause after current batch</button><button id="refresh">Refresh</button></div>
 <p id="state">Connecting…</p><p class="metrics" id="counts"></p><p class="muted">Rows are extracted source data awaiting review; they are not automatically approved catalogue products. Progress and rows are shared in PostgreSQL. A server restart requires Resume. Entries needing OCR, unsupported formats, oversized files and failures remain visible.</p></div>
 <div class="card"><form id="search" class="row"><input id="q" aria-label="Search all Drive data" placeholder="Company, product, phone, email or source filename"><select id="mode" aria-label="Search scope"><option value="records">Extracted rows &amp; text</option><option value="files">Files &amp; issues</option></select><button>Search</button></form><p id="resultCount" class="muted"></p><div class="table"><table><thead id="head"></thead><tbody id="results"></tbody></table></div><div class="row pager"><button id="prev">Previous</button><span id="page"></span><button id="next">Next</button></div></div>
 <p id="error" class="error" role="alert"></p>
 </main><script>
 'use strict';
-const $=id=>document.getElementById(id);let offset=0,total=0,busy=false,lastCount=0,asked=false;
+const $=id=>document.getElementById(id);let offset=0,total=0,busy=false,lastCount=0,asked=false,sourceLoaded=false;
 const fragment=location.hash.slice(1);if(fragment){sessionStorage.setItem('drive_library_session',fragment);history.replaceState(null,'',location.pathname);}
-async function api(path,method='GET'){
+async function api(path,method='GET',body=null){
  const headers={};const token=sessionStorage.getItem('organizer_token'),scoped=sessionStorage.getItem('drive_library_session');
  if(token)headers['X-Token']=token;if(scoped)headers['X-Upload-Token']=scoped;
- const response=await fetch('/api/drive-index/'+path,{method,headers});
- if(response.status===401){if(!asked){asked=true;const entered=prompt('Enter your Organizer access token, or open this library from the signed-in Vendor dashboard.');if(entered){sessionStorage.setItem('organizer_token',entered);return api(path,method);}}throw Error('Sign in through the dashboard to open the shared library.');}
+ if(body!==null)headers['Content-Type']='application/json';
+ const response=await fetch('/api/drive-index/'+path,{method,headers,...(body!==null?{body:JSON.stringify(body)}:{})});
+ if(response.status===401){if(!asked){asked=true;const entered=prompt('Enter your Organizer access token, or open this library from the signed-in Vendor dashboard.');if(entered){sessionStorage.setItem('organizer_token',entered);return api(path,method,body);}}throw Error('Sign in through the dashboard to open the shared library.');}
  const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(data.detail||'The request could not be completed.');return data;
 }
 async function guard(fn){try{$('error').textContent='';await fn();}catch(e){$('error').textContent=e.message;}}
 function cell(row,text){const td=document.createElement('td');td.textContent=text??'';row.append(td);return td;}
 function sourceLink(where,url,label){if(!/^https:\/\/drive\.google\.com\/file\/d\/[\w-]+\/view$/.test(url||''))return;const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=label;where.append(a);}
 async function status(){const data=await api('status');$('state').textContent=data.status+': '+data.message;const c=data.counts;$('counts').textContent=`${data.entries.toLocaleString()} file/archive entries · ${data.records.toLocaleString()} searchable source rows · ${(c.indexed||0).toLocaleString()} files indexed · ${((c.blocked||0)+(c.failed||0)+(c.unsupported||0)+(c.needs_ocr||0)+(c.partial||0)).toLocaleString()} entries need attention`;
+ if(!sourceLoaded){$('driveLink').value=data.source_link||'';sourceLoaded=true;}$('selectedSource').textContent=data.source_link?'Current shared source: '+data.source_link:'Paste a folder or ZIP link to begin.';
  return data;
 }
 async function search(){const files=$('mode').value==='files';const data=await api('search?entries='+files+'&offset='+offset+'&q='+encodeURIComponent($('q').value));total=data.total;$('results').replaceChildren();$('head').replaceChildren();const header=document.createElement('tr');for(const name of files?['Source / ZIP member','Bytes','Status','Issue']:['Company','Product / type','Source','Extracted data']){const th=document.createElement('th');th.textContent=name;header.append(th);}$('head').append(header);
@@ -32,5 +35,6 @@ async function search(){const files=$('mode').value==='files';const data=await a
  $('resultCount').textContent=total.toLocaleString()+' matching '+(files?'entries':'source rows');$('page').textContent=total?`${offset+1}–${Math.min(offset+100,total)} of ${total}`:'No results yet';$('prev').disabled=offset===0;$('next').disabled=offset+100>=total;
 }
 $('search').onsubmit=e=>{e.preventDefault();offset=0;guard(search);};$('mode').onchange=()=>{offset=0;guard(search);};$('prev').onclick=()=>{offset=Math.max(0,offset-100);guard(search);};$('next').onclick=()=>{offset+=100;guard(search);};$('refresh').onclick=()=>guard(async()=>{await status();await search();});$('start').onclick=()=>guard(async()=>{$('start').disabled=true;try{await api('start','POST');await status();}finally{$('start').disabled=false;}});$('pause').onclick=()=>guard(async()=>{await api('pause','POST');$('state').textContent='Pause requested. The current read will finish before stopping.';});
+$('source').onsubmit=e=>{e.preventDefault();guard(async()=>{$('useLink').disabled=true;try{await api('start','POST',{link:$('driveLink').value.trim()});await status();await search();}finally{$('useLink').disabled=false;}});};
 guard(async()=>{await status();await search();});setInterval(()=>{if(!busy){busy=true;guard(async()=>{const data=await status();if(data.records!==lastCount&&offset===0&&$('mode').value==='records')await search();lastCount=data.records;}).finally(()=>busy=false);}},5000);
 </script></body></html>

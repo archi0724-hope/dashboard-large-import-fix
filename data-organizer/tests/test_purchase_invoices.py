@@ -203,12 +203,14 @@ def test_zip64_beyond_50_gib_uses_only_small_remote_reads(monkeypatch,tmp_path):
     assert sum(reads) < 1024**2
     from app.drive import indexer
     from app.drive.index_store import DriveIndex
+    from app.drive.source_links import parse_source
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'vendor_dashboard'))
     from vendor_dashboard.storage import Store
     index = DriveIndex(Store(tmp_path / 'index',initialize=False))
-    monkeypatch.setattr(indexer,'list_public_files',lambda folder:[{
-        'id':'syntheticzip123','name':'large.zip','path':'large.zip','native':False}])
-    indexer.run_index(index.store,'folder123456')
+    def no_folder_listing(folder):
+        raise AssertionError('A pasted ZIP link must not require a folder scan.')
+    monkeypatch.setattr(indexer,'list_public_files',no_folder_listing)
+    indexer.run_index(index.store,'folder123456',parse_source('https://drive.google.com/file/d/syntheticzip123/view'))
     assert index.status('folder123456')['status'] == 'done'
     found = index.search('folder123456','Pump')
     assert found['total'] == 1

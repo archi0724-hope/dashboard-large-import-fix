@@ -14,6 +14,7 @@ class DriveIndex:
     def __init__(self, store):
         self.store = store
         with store.connection() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS vdd_drive_sources (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
             db.execute('''CREATE TABLE IF NOT EXISTS vdd_drive_entries (
                 entry_key TEXT PRIMARY KEY, folder_id TEXT NOT NULL, drive_id TEXT NOT NULL,
                 source_name TEXT NOT NULL, member_path TEXT NOT NULL DEFAULT '', size_bytes BIGINT NOT NULL,
@@ -29,6 +30,15 @@ class DriveIndex:
             db.execute('''CREATE TABLE IF NOT EXISTS vdd_drive_jobs (
                 folder_id TEXT PRIMARY KEY, status TEXT NOT NULL, message TEXT NOT NULL,
                 updated_at TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '')''')
+
+    def source_selection(self):
+        with self.store.connection() as db:
+            row = db.execute("SELECT value FROM vdd_drive_sources WHERE key='selection'").fetchone()
+        return json.loads(row['value']) if row else None
+
+    def select_source(self, selection):
+        with self.store.connection() as db:
+            db.execute("INSERT INTO vdd_drive_sources(key,value) VALUES('selection',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(selection),))
 
     def discover(self, entries):
         if not entries:
