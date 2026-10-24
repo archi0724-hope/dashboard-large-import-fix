@@ -15,14 +15,19 @@ in Drive or on the source computer. Reviewed records and source-text copies are
 shared in the additive `vdd_purchase_invoices` PostgreSQL table; duplicate source
 hashes keep the first reviewed record. Legacy Vendor reset/backup does not include
 this separate table. Use PostgreSQL backups for these records.
+Vendor's **Purchase Invoice** sidebar page embeds this same workflow, and its
+summary card counts confirmed records from the shared PostgreSQL invoice table.
+Local screenshot counts are not copied or fabricated during deployment.
 
-A single ZIP over 50 GB must stay in Drive; the direct upload cap remains 2 GiB.
+For the 50+ GB collection, originals stay in Drive and searchable records live in
+PostgreSQL. There is no fixed total collection byte cap in the Drive indexer;
+processing safeguards and database space still apply. Local direct uploads no
+longer have a fixed 2 GiB transport cap: they must fit actual temporary server space.
 Vendor → Upload documents → Google Drive library embeds the authenticated shared
 library, including Start/Resume, progress, issues and search. It replaces the old
 Google Drive ZIP download form, so existing sessions cannot send a 10+ GB archive
 through the obsolete 5 GiB full-download path. Put new archives in the connected
-folder before starting/resuming. The library indexes the configured folder;
-Users can paste a folder or ZIP file link directly in the embedded library and
+folder before starting/resuming. Users can paste a folder or ZIP file link directly in the embedded library and
 choose **Use link and start indexing**. The normalized selection persists in
 `vdd_drive_sources`; all selections add to the same shared library scope. Switching
 sources preserves existing records. Pause an active job before switching to a
@@ -54,7 +59,7 @@ database. Do not use the preview as the only copy of your records. A persistent
 production setup requires a paid disk and all relevant data paths on it.
 The free plan's 512 MB memory can also limit OCR and large-file processing.
 
-In hosted Vendor uploads, **Upload ZIP directly → Choose ZIP files** opens a
+In hosted Vendor uploads, **Upload ZIP from computer → Choose ZIP files** opens a
 dedicated browser picker with transfer progress and background-import progress.
 Its raw upload request streams to a temporary disk file rather than storing the
 whole ZIP in Streamlit's RAM. The existing importer reads that file and saves
@@ -67,16 +72,22 @@ Upload sessions use a three-hour scoped token signed with `APP_PASSWORD`; the
 password itself is not sent to the upload page. The token travels in the URL
 fragment when opening the page and in a request header for API calls, not in
 logged API query strings. One ZIP may upload/import at a time on this instance.
-The service checks size and available disk before and during upload. The ZIP
-limit stays 2 GiB; archive entry, expanded-byte, member-size, traversal and nested
+The service checks actual available disk before and during upload. There is no
+fixed transport byte cap; archive entry, expanded-byte, member-size, traversal and nested
 ZIP safeguards remain unchanged. Disk-backed transfer does not increase free
 server CPU, per-document processing memory, or the database's storage quota.
 
 The local ZIP path option is available only when `CLOUD_DEPLOYMENT` is disabled.
 Hosted sessions with an old local-path selection return to direct upload.
-Pasting a computer path into the Drive field also switches to the ZIP picker;
-Drive folder links can list public ZIP archives directly in Vendor, or open
-Organizer to read the folder's documents.
+`/vendor-upload` defaults to the shared Drive import; `?source=computer` opens
+the local picker. Organizer → Upload vendor documents embeds this same page.
+An Organizer sign-in can request a scoped upload session through the authenticated
+`POST /api/vendor-uploads/session`; passwords are never sent to the page.
+Clients choose and persist an upload ID before sending bytes. Empty POST responses
+can reconnect to that job, and progress polling retries empty/502/503/504 replies.
+The scoped token and job ID stay in tab session storage so reloads can resume
+tracking a background import. Server redeploys still lose in-memory job progress;
+previously committed records remain in PostgreSQL and duplicate retries are safe.
 
 ## PostgreSQL document and catalogue storage
 

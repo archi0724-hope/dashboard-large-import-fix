@@ -94,6 +94,7 @@ const S = { status: null, cfg: null, charts: [], poll: null, page: "overview", w
 const PAGES = [
   ["drivelibrary", "Google Drive library"],
   ["purchaseinvoices", "Purchase invoices"],
+  ["vendorimports", "Upload vendor documents"],
   ["overview", "Dashboard"], ["source", "Import files"], ["preview", "Check & match"], ["review", "Review matches"], ["catalogue", "Catalogue approval"],
   ["entities", "Companies"], ["quality", "Data quality"], ["export", "Export data"], ["settings", "Workspace settings"], ["logs", "Activity log"],
 ];
@@ -166,6 +167,9 @@ PAGE.drivelibrary = async () => {
 };
 PAGE.purchaseinvoices = async () => {
   $('#view').innerHTML = '<p><a class="btn primary" href="/purchase-invoices" target="_blank" rel="noopener">Open purchase invoices</a></p><iframe title="Purchase invoices" src="/purchase-invoices" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
+};
+PAGE.vendorimports = async () => {
+  $('#view').innerHTML = '<p><a class="btn primary" href="/vendor-upload" target="_blank" rel="noopener">Open shared vendor import</a></p><iframe title="Shared vendor import" src="/vendor-upload" style="width:100%;height:calc(100vh - 220px);border:0"></iframe>';
 };
 PAGE.overview = async () => {
   const st = S.status, t = st.totals, p = st.progress;
@@ -340,7 +344,7 @@ PAGE.source = async () => {
       : tab === "drive" ? html`<div class="stack"><label class="f">Google Drive folder URL or ID<input id="drvurl" value="${cfg.drive_folder}" placeholder="https://drive.google.com/drive/folders/..." style="width:100%"></label>
         <div class="note">${ds.help} Excel and other supported documents are downloaded during Scan. ZIP archives can be selected below.</div>
         <div class="row"><button class="primary" id="saveDrv">Use this Drive folder</button><button id="listDriveFiles">Show files in connected folder</button></div><div id="driveFiles"></div></div>`
-      : tab === "upload" ? html`<div class="stack"><input type="file" id="upfiles" multiple><div class="row"><button class="primary" id="doUp">Upload &amp; use</button><span class="muted small">Upload ZIPs or files. ZIP company folders are kept together. No application file-size or file-count cap.</span></div></div>`
+      : tab === "upload" ? html`<div class="stack"><a class="btn primary" href="#/vendorimports">Open shared vendor upload / Google Drive import</a><p class="small muted">For large collections, keep originals in Drive and index shared records. Local ZIP uploads depend on available server space.</p><input type="file" id="upfiles" multiple><div class="row"><button class="primary" id="doUp">Upload &amp; use in Organizer</button><span class="muted small">These files use Organizer working storage. Server capacity and processing safeguards apply.</span></div></div>`
       : html`<div class="stack"><p class="muted">Creates ~11 synthetic files (Excel, legacy .xls, CSV, PDF, Word, text, a scanned image, a corrupt file, a duplicate…) with deliberately messy names such as <em>SMS HOSPITAL JAIPUR</em> / <em>S.M.S. Hospital</em> / <em>Sawai Man Singh Hospital</em>.</p><div class="row"><button class="primary" id="mkDemo">Create demo files &amp; use them</button></div></div>`}</div></div>
     <div class="card"><div class="h"><h2>Files</h2><div class="row"><button id="btnScan" ${sourceReady ? "" : "disabled"}>Scan folder</button><button id="btnInspect" ${sourceReady ? "" : "disabled"}>Inspect structure</button><button class="primary" id="btnOrganize" ${inv.length ? "" : "disabled"}>Organize into company folders</button></div></div>
       <h3>Processable files <span class="muted small">${num(processable.length)}</span></h3>

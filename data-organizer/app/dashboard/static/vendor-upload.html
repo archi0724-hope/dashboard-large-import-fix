@@ -1,85 +1,18 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Upload vendor ZIP</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
+<title>Add vendor documents</title>
 <style>
-body{font:16px system-ui,sans-serif;background:#f5f7fc;color:#142d55;margin:0;padding:32px 16px}
-main{max-width:720px;margin:auto;background:white;padding:28px;border-radius:14px;box-shadow:0 6px 24px #142d5510}
-h1{margin-top:0}p{line-height:1.5}input[type=file]{display:block;margin:24px 0;width:100%}
-button,a{font:inherit}button{background:#fa811b;color:#142d55;border:0;border-radius:7px;padding:12px 20px;cursor:pointer}
-button:disabled{opacity:.5;cursor:wait}progress{width:100%;height:24px}a{color:#166d76}
-#message{white-space:pre-wrap}#message.error{color:#a12727}.muted{color:#607086}
-</style></head><body><main>
-<h1>Upload vendor ZIP</h1>
-<p>Select the ZIP from your computer. You do not need a Google Drive link or a file path.</p>
-<p class="muted">Choose one ZIP up to 2 GB.</p>
-<p>ZIP larger than 2 GB, including 50+ GB? Keep it in the connected Google Drive folder and <a id="drive-library" href="/drive-library">open the Drive library</a> to index searchable records without uploading the whole archive to this server.</p>
-<p class="muted">Drive indexing reads supported documents individually. Each ZIP supports up to 5,000 entries; each extracted document up to 128 MB. Larger entries and files needing OCR remain listed with an issue. Searchable records must fit the database allowance. Split archives that exceed the entry limit.</p>
-<p class="muted">Keep this page open. First the ZIP uploads, then its documents are saved. Existing duplicates are skipped.</p>
-<input id="file" type="file" accept=".zip,application/zip" aria-label="Choose ZIP file">
-<button id="start">Upload and save documents</button>
-<p id="message" role="status" aria-live="polite">Choose a ZIP file to begin.</p>
-<progress id="progress" max="100" value="0" aria-label="Upload progress"></progress>
-<p><a href="/vendor/">Return to dashboard</a></p>
-</main><script>
-"use strict";
-const token = location.hash.slice(1);
-document.getElementById('drive-library').href='/drive-library'+(token?'#'+token:'');
-history.replaceState(null, "", location.pathname + location.search);
-const fileInput = document.getElementById("file"), start = document.getElementById("start");
-const message = document.getElementById("message"), progress = document.getElementById("progress");
-const settings = new URLSearchParams(location.search);
-let busy = false;
-function show(text, error = false) { message.textContent = text; message.className = error ? "error" : ""; }
-if (!token) { show("Open Upload documents in the dashboard and choose Upload ZIP to start a new upload session.", true); start.disabled = true; }
-window.addEventListener("beforeunload", event => { if (busy) { event.preventDefault(); event.returnValue = ""; } });
-start.addEventListener("click", async () => {
-  const file = fileInput.files[0];
-  if (!file || !file.name.toLowerCase().endsWith(".zip")) { show("Choose a .zip file using the file picker.", true); return; }
-  if (file.size > 2 * 1024 ** 3) { show("Choose a ZIP no larger than 2 GB.", true); return; }
-  busy = true; start.disabled = true; fileInput.disabled = true;
-  progress.value = 0; show("Uploading ZIP…");
-  try {
-    const job = await new Promise((resolve, reject) => {
-      const query = new URLSearchParams({filename:file.name, company:settings.get("company") || "", read_pdf:settings.get("read_pdf") || "false"});
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/vendor-uploads?" + query);
-      xhr.setRequestHeader("X-Upload-Token", token);
-      xhr.setRequestHeader("Content-Type", "application/zip");
-      const began = performance.now();
-      xhr.upload.onprogress = event => {
-        const percent = event.lengthComputable ? event.loaded / event.total * 100 : 0;
-        progress.value = percent;
-        const mb = event.loaded / 1024 ** 2, seconds = (performance.now() - began) / 1000;
-        const speed = seconds > 0 ? mb / seconds : 0;
-        show(`Uploading: ${mb.toFixed(1)} / ${(file.size / 1024 ** 2).toFixed(1)} MB (${percent.toFixed(0)}%)` + (speed > 0 ? ` · ${speed.toFixed(1)} MB/s` : ""));
-      };
-      xhr.upload.onload = () => show("Upload sent. Checking ZIP and starting import…");
-      xhr.onerror = () => reject(new Error("The connection was interrupted. Retry the ZIP; already saved documents will be skipped."));
-      xhr.onload = () => {
-        let data; try { data = JSON.parse(xhr.responseText); } catch { reject(new Error("The server could not finish the upload. Retry, or use a smaller ZIP batch.")); return; }
-        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-        else reject(new Error(data.detail || "Upload failed. Please retry."));
-      };
-      xhr.send(file);
-    });
-    progress.removeAttribute("value");
-    for (;;) {
-      const response = await fetch("/api/vendor-uploads/" + encodeURIComponent(job.job_id), {headers:{"X-Upload-Token":token}, cache:"no-store"});
-      const state = await response.json();
-      if (!response.ok) throw new Error(state.detail || "Could not read import progress.");
-      if (state.status === "failed") throw new Error(state.error);
-      if (state.status === "done") {
-        const result = state.result;
-        progress.value = 100;
-        const expected = Number(settings.get("expected") || 0);
-        const warning = expected && expected !== result.detected_companies ? `\nExpected ${expected} companies; this ZIP identified ${result.detected_companies}. Check the company list in the dashboard.` : "";
-        show(`Saved ${result.saved} documents. Skipped ${result.duplicates} duplicates. ${result.issues} files need attention. Total companies: ${result.companies}.` + warning + "\nReturn to the dashboard to view the saved documents.");
-        break;
-      }
-      show(`Saving documents: ${state.processed} processed` + (state.current_file ? ` · ${state.current_file}` : "") + ". Keep this page open.");
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-  } catch (error) { show(error.message, true); progress.value = 0; }
-  finally { busy = false; start.disabled = false; fileInput.disabled = false; }
-});
-</script></body></html>
+body{font:16px system-ui,sans-serif;background:#f5f7fc;color:#142d55;margin:0;padding:24px 16px}main{max-width:1250px;margin:auto;background:white;padding:24px;border-radius:14px}h1{margin-top:0}p{line-height:1.5}input[type=file]{display:block;margin:24px 0;width:100%}button,a{font:inherit}button{background:#fa811b;color:#142d55;border:0;border-radius:7px;padding:12px 20px;cursor:pointer}button:disabled{opacity:.5;cursor:wait}progress{width:100%;height:24px}a{color:#166d76}.error{color:#a12727}.muted{color:#607086}#message{white-space:pre-wrap}fieldset{border:1px solid #dce3ef;border-radius:8px;padding:14px;display:flex;gap:22px;flex-wrap:wrap}iframe{width:100%;height:1100px;border:0}section[hidden],button[hidden]{display:none}
+</style><script src="/static/vendor-upload.js" defer></script></head><body><main>
+<h1>Add vendor documents</h1>
+<fieldset><legend>Import source</legend><label><input type="radio" name="source" id="drive" checked> Google Drive link — large collections</label><label><input type="radio" name="source" id="computer"> ZIP from this computer</label></fieldset>
+<section id="drivePane"><p>Keep originals in Drive and share searchable records in PostgreSQL. Paste your folder or ZIP link below. There is no total collection-size cap in this import flow; processing and database capacity still apply.</p><iframe id="driveFrame" title="Shared Google Drive import"></iframe></section>
+<section id="computerPane" hidden>
+<h2>Upload vendor ZIP</h2><p>Select a ZIP from your computer. No file path is needed.</p>
+<p class="muted">There is no fixed 2 GB upload cap. A direct upload must fit the server's available temporary space, and its saved documents must fit permanent storage. For the full 50+ GB collection, use Google Drive above.</p>
+<p id="capacity" class="muted"></p><p class="muted">Keep this page open during upload. During import, temporary connection errors are retried. Reopening this page can resume progress on the same running server. Exact duplicates are skipped.</p>
+<details class="muted"><summary>Local ZIP processing safeguards</summary><p>Each local import processes up to 5,000 entries, 5 GiB of expanded contents and 128 MB per document. Use Drive indexing for the large collection; it keeps originals outside the database. Entries that cannot be processed remain visible as issues.</p></details>
+<input id="file" type="file" accept=".zip,application/zip" aria-label="Choose ZIP file"><button id="start">Upload and save documents</button><button id="resume" hidden>Resume progress</button>
+<p id="message" role="status" aria-live="polite">Choose a ZIP file to begin.</p><progress id="progress" max="100" value="0" aria-label="Upload progress"></progress>
+</section><p id="authError" class="error" role="alert"></p><p><a href="/vendor/">Vendor dashboard</a> · <a href="/">Organizer dashboard</a></p>
+</main></body></html>

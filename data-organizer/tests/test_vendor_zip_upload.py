@@ -2,7 +2,8 @@ import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -144,25 +145,59 @@ def test_bad_archive_is_rejected_and_slot_is_released(client):
     assert wait_for_job(c, headers, response.json()["job_id"])["status"] == "done"
 
 
-def test_declared_and_streamed_size_limits(client, monkeypatch):
+def test_actual_disk_capacity_is_checked_for_declared_and_streamed_uploads(client, monkeypatch):
     c, _, headers = client
-    monkeypatch.setattr(uploads, "MAX_UPLOAD_BYTES", 50)
+    monkeypatch.setattr(uploads.shutil,'disk_usage',lambda folder:SimpleNamespace(free=uploads.DISK_RESERVE+50))
     body = zip_body()
     assert (
         c.post(
             "/api/vendor-uploads?filename=large.zip", headers=headers, content=body
         ).status_code
-        == 413
+        == 507
     )
+    monkeypatch.setattr(uploads.shutil,'disk_usage',Mock(side_effect=[
+        SimpleNamespace(free=uploads.DISK_RESERVE+1000),SimpleNamespace(free=uploads.DISK_RESERVE+1)]))
     assert (
         c.post(
             "/api/vendor-uploads?filename=large.zip",
             headers=headers,
             content=(body[i : i + 16] for i in range(0, len(body), 16)),
         ).status_code
-        == 413
+        == 507
     )
     assert uploads._active is None
+
+
+def test_no_fixed_two_gib_transport_cap_and_capacity_requires_auth(client,monkeypatch):
+    c,_,headers = client
+    monkeypatch.setattr(uploads.shutil,'disk_usage',lambda folder:SimpleNamespace(free=4*1024**3+uploads.DISK_RESERVE))
+    assert c.get('/api/vendor-uploads/capacity').status_code == 401
+    capacity = c.get('/api/vendor-uploads/capacity',headers=headers).json()
+    assert capacity['fixed_upload_limit_bytes'] is None
+    response = c.post('/api/vendor-uploads?filename=large.zip',headers={**headers,'Content-Length':str(3*1024**3)},content=zip_body())
+    assert response.status_code == 400  # Accepted the declared size, then detected the incomplete body.
+    assert 'incomplete' in response.json()['detail']
+
+
+def test_client_upload_id_recovers_result_and_cannot_overwrite_another_job(client):
+    c,_,headers = client
+    job_id = 'a'*32
+    response = c.post('/api/vendor-uploads?filename=vendors.zip&upload_id='+job_id,headers=headers,content=zip_body())
+    assert response.status_code == 200 and response.json()['job_id'] == job_id
+    assert wait_for_job(c,headers,job_id)['status'] == 'done'
+    assert c.post('/api/vendor-uploads?filename=vendors.zip&upload_id='+job_id,headers=headers,content=zip_body()).status_code == 409
+    other = {'X-Upload-Token':uploads.issue_upload_token('synthetic-upload-password')}
+    assert c.get('/api/vendor-uploads/'+job_id,headers=other).status_code == 404
+
+
+def test_organizer_sign_in_can_create_scoped_upload_session(client,monkeypatch):
+    c,_,_ = client
+    monkeypatch.setattr('app.config.get_settings',lambda:SimpleNamespace(dashboard_token='synthetic-organizer-token'))
+    assert c.post('/api/vendor-uploads/session').status_code == 401
+    response = c.post('/api/vendor-uploads/session',headers={'X-Token':'synthetic-organizer-token'})
+    assert response.status_code == 200
+    scoped = {'X-Upload-Token':response.json()['token']}
+    assert c.get('/api/vendor-uploads/capacity',headers=scoped).status_code == 200
 
 
 def test_concurrent_upload_and_other_session_status_are_blocked(client):

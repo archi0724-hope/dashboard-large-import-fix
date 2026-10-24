@@ -40,6 +40,13 @@ def database():
     return store
 
 
+def invoice_count(store):
+    """Count confirmed shared records for the Vendor summary card."""
+    with store.connection() as db:
+        db.execute(SCHEMA)
+        return int(db.execute('SELECT COUNT(*) AS n FROM vdd_purchase_invoices').fetchone()['n'])
+
+
 def job_for(job_id, request):
     with LOCK:
         job = JOBS.get(job_id)

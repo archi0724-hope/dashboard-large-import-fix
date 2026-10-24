@@ -25,7 +25,7 @@ def test_hosted_upload_defaults_to_file_picker_and_recovers_stale_path_choice(tm
     page.run(timeout=30)
 
     assert not page.exception
-    assert page.radio(key='import_source').value == 'Upload ZIP directly (up to 2 GB)'
+    assert page.radio(key='import_source').value == 'Upload ZIP from computer'
     assert 'Local ZIP path (large files)' not in page.radio(key='import_source').options
     assert not any(item.key == 'document_uploads' for item in page.file_uploader)
     assert any(item.proto.label == 'Choose ZIP files' for item in page.get('link_button'))
@@ -46,7 +46,7 @@ def test_local_direct_zip_saves_documents_and_skips_duplicate(tmp_path, monkeypa
     with patch('streamlit.file_uploader', return_value=[Upload()]):
         page.run(timeout=30)
         assert not page.exception
-        assert page.radio(key='import_source').value == 'Upload ZIP directly (up to 2 GB)'
+        assert page.radio(key='import_source').value == 'Upload ZIP from computer'
         page.button(key='save_documents').click().run(timeout=30)
         assert not page.exception and not page.error
         assert page.session_state['last_upload']['saved_files'] == 1
@@ -99,7 +99,18 @@ def test_connected_drive_large_zip_stays_in_drive_and_shows_shared_library(tmp_p
     page = dashboard(tmp_path, monkeypatch).run(timeout=30)
     assert not page.exception
     assert page.radio(key='import_source').value == 'Google Drive library (10+ GB ZIPs)'
-    assert any('10 GB or 50+ GB' in item.value for item in page.info)
+    assert any('There is no total collection-size cap' in item.value for item in page.info)
     folder = next(item for item in page.get('link_button') if item.proto.label.startswith('1. Open connected Drive'))
     assert folder.proto.url == 'https://drive.google.com/drive/folders/connected123'
     assert len(page.get('iframe')) == 1
+
+
+def test_purchase_invoice_card_and_sidebar_use_shared_invoice_records(tmp_path,monkeypatch):
+    page = dashboard(tmp_path,monkeypatch).run(timeout=30)
+    assert not page.exception
+    assert 'Purchase Invoice' in page.radio(key='page').options
+    metric = next(item for item in page.metric if item.label=='Purchase Invoice')
+    assert metric.value == '0'
+    page.radio(key='page').set_value('Purchase Invoice').run(timeout=30)
+    assert not page.exception
+    assert any(item.proto.src.startswith('/purchase-invoices#') for item in page.get('iframe'))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 import shutil
 import tempfile
@@ -18,7 +19,6 @@ from starlette.concurrency import run_in_threadpool
 from .logging_setup import get_logger
 
 router = APIRouter(prefix="/api/vendor-uploads")
-MAX_UPLOAD_BYTES = 2 * 1024**3
 DISK_RESERVE = 64 * 1024**2
 TOKEN_LIFETIME = 3 * 3600
 _lock = threading.RLock()
@@ -122,9 +122,12 @@ async def upload_zip(
     filename: str,
     company: str = "",
     read_pdf: bool = False,
+    upload_id: str = '',
     owner: str = Depends(require_upload_token),
 ):
     global _active
+    if upload_id and not re.fullmatch(r'[a-f0-9]{32}',upload_id):
+        raise HTTPException(422,'Invalid upload session ID.')
     if (
         not filename
         or "/" in filename
@@ -139,14 +142,16 @@ async def upload_zip(
         length = int(request.headers.get("content-length", "0"))
     except ValueError:
         raise HTTPException(400, "Invalid upload length.") from None
-    if length < 0 or length > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Choose a ZIP no larger than 2 GB.")
+    if length < 0:
+        raise HTTPException(400, "Invalid upload length.")
     folder = Path(tempfile.gettempdir())
     if length + DISK_RESERVE > shutil.disk_usage(folder).free:
         raise HTTPException(
-            507, "Not enough temporary disk space for this ZIP. Try a smaller batch."
+            507, "This ZIP exceeds available server space. Keep the original in Google Drive and paste its link in the Drive library."
         )
     with _lock:
+        if upload_id in _jobs:
+            raise HTTPException(409,'This upload already exists. Resume its progress rather than sending it again.')
         if _active:
             raise HTTPException(
                 409,
@@ -158,13 +163,15 @@ async def upload_zip(
                 break
             if _jobs[key]["status"] in {"done", "failed"}:
                 del _jobs[key]
-        job_id = secrets.token_hex(16)
+        job_id = upload_id or secrets.token_hex(16)
         _active = job_id
         _jobs[job_id] = {
             "owner": owner,
             "status": "uploading",
             "processed": 0,
             "received": 0,
+            "filename": filename,
+            "created": time.time(),
         }
     path = None
     started = False
@@ -177,12 +184,10 @@ async def upload_zip(
             disk_check = 0
             async for chunk in request.stream():
                 received += len(chunk)
-                if received > MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "Choose a ZIP no larger than 2 GB.")
                 if received >= disk_check:
                     if len(chunk) + DISK_RESERVE > shutil.disk_usage(folder).free:
                         raise HTTPException(
-                            507, "Temporary disk is full. Try a smaller batch."
+                            507, "Available server space is exhausted. Use a Google Drive link for this collection. Saved documents are kept."
                         )
                     disk_check = received + 8 * 1024**2
                 await run_in_threadpool(destination.write, chunk)
@@ -216,6 +221,30 @@ async def upload_zip(
                 )
                 if _active == job_id:
                     _active = None
+
+
+@router.get('/capacity')
+def upload_capacity(owner: str = Depends(require_upload_token)):
+    available = max(0,shutil.disk_usage(tempfile.gettempdir()).free-DISK_RESERVE)
+    return {'fixed_upload_limit_bytes':None,'available_temporary_bytes':available,
+        'large_collection_mode':'drive_index'}
+
+
+@router.post('/session')
+def upload_session(request: Request):
+    from hospkart_chat.integration import vendor_setting
+
+    from .config import get_settings
+
+    expected = get_settings().dashboard_token
+    supplied = request.headers.get('x-token','')
+    if expected and supplied and hmac.compare_digest(expected,supplied):
+        password = vendor_setting('APP_PASSWORD')
+        if not password:
+            raise HTTPException(503,'The shared upload password must be configured on the server.')
+        return {'token':issue_upload_token(password)}
+    require_upload_token(request)
+    return {'token':request.headers['x-upload-token']}
 
 
 @router.get("/{job_id}")

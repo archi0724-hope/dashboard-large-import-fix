@@ -630,7 +630,7 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon"><div><span>HOSP</span>kart.com</div></div><div><div class="brand-name"><span>HOSP</span>kart.com</div><div class="brand-sub">Vendor &amp; document operations</div></div></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups"]
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
     page_map = {item: item for item in navigation}
     captions = [
         "Yes / No checklist + company downloads",
@@ -640,6 +640,7 @@ with st.sidebar:
         "Only files that need correction",
         "HospKart chat, product search, quotations and vendor documents",
         "Backup, restore or reset saved data",
+        "Upload, review and search purchase invoices",
     ]
     if pending_page:
         matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
@@ -676,9 +677,10 @@ if notice := st.session_state.pop("notice", None):
 if page != "🤖 Vendor AI Assistant":
     st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
+    from app.purchase_invoices import invoice_count
+    m1.metric("Purchase Invoice", f"{invoice_count(store):,}", help="Confirmed purchase invoices saved in the shared database. Each invoice counts once.")
     m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available document records. Identical bytes uploaded again for the same company do not increase this count.")
-    m3.metric(f"All {len(DOCUMENT_TYPES)} types available", f"{display_counts['complete_companies']:,}", help="Every checklist category has a classified file; this is not a validity/compliance score.")
+    m3.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
     m4.metric("Needs review", f"{display_counts['review_files']:,}", help="Unassigned, unclassified or unavailable document files.")
     document_type_counts = {
         document_type: int(documents.loc[
@@ -699,17 +701,23 @@ if page != "🤖 Vendor AI Assistant":
                 help=f"Unique companies with at least one available {document_type} file. Multiple files for one company count once.",
             )
     if view_cleared:
-        st.info("Dashboard view is cleared, so the summary shows 0. Saved data is still stored. Click **Show saved data** to bring it back, or use **Reset all data** to actually delete the active records.")
+        st.info("The vendor document view is cleared. Saved documents and purchase invoices are kept; the Purchase Invoice card still counts confirmed invoices. Click **Show saved data** to restore the vendor summary.")
     else:
-        st.caption("Headcount is unique companies. Document totals count files, and document-type cards count classified files.")
+        st.caption("Purchase Invoice counts confirmed shared invoices. Headcount is unique companies; document totals and coverage describe vendor documents.")
 
-if page == "Upload documents":
+if page == 'Purchase Invoice':
+    st.subheader('Purchase invoices')
+    invoice_url = '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD'))
+    st.link_button('Open purchase invoices in a new tab',invoice_url)
+    st.iframe(invoice_url,height=1100)
+
+elif page == "Upload documents":
     st.subheader("Upload vendor documents")
     st.write("Upload documents from your computer, or index the connected Google Drive collection. Drive originals stay in Drive; extracted records are searchable by everyone with dashboard access.")
     connected_drive = setting("GOOGLE_DRIVE_FOLDER_URL") or setting("GOOGLE_DRIVE_FOLDER_ID")
     if connected_drive:
         st.caption("Google Drive source folder is configured for Organizer and Vendor.")
-    direct_zip = "Upload ZIP directly (up to 2 GB)"
+    direct_zip = "Upload ZIP from computer"
     drive_library = "Google Drive library (10+ GB ZIPs)"
     import_sources = [direct_zip, drive_library, "Upload small files"]
     hosted = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
@@ -717,7 +725,7 @@ if page == "Upload documents":
         import_sources.append("Local ZIP path (large files)")
     if st.session_state.get("import_source") == "Google Drive ZIP (large files)":
         st.session_state["import_source"] = drive_library
-    elif st.session_state.get("import_source") == "Upload ZIP directly (large files)":
+    elif st.session_state.get("import_source") in {"Upload ZIP directly (large files)", "Upload ZIP directly (up to 2 GB)"}:
         st.session_state["import_source"] = direct_zip
     elif st.session_state.get("import_source") not in import_sources:
         st.session_state["import_source"] = import_sources[1] if connected_drive else import_sources[0]
@@ -730,7 +738,7 @@ if page == "Upload documents":
         local_zip_path = st.text_input("ZIP file path on the computer running this app", placeholder=r"C:\Users\you\Downloads\vendors.zip")
         st.caption("Use a ZIP already on the computer running this app. To send a ZIP from your device, choose Upload ZIP directly.")
     elif indexing_drive:
-        st.info("Paste a Google Drive folder or ZIP file link in the field below and click Use link and start indexing. This supports large ZIPs, including 10 GB or 50+ GB, using small range reads.")
+        st.info("Paste a Google Drive folder or ZIP file link below, then click Use link and start indexing. Originals stay in Drive; searchable records are shared. There is no total collection-size cap; processing and database capacity still apply.")
         if connected_drive:
             from app.config import parse_drive_folder_id
             folder_url = 'https://drive.google.com/drive/folders/' + parse_drive_folder_id(connected_drive)
@@ -743,7 +751,7 @@ if page == "Upload documents":
         if streamed_upload:
             if hint := st.session_state.pop("local_zip_hint", ""):
                 st.info(f"{hint} is on your computer. Choose it in the file picker on the ZIP upload page.")
-            st.caption("Choose a ZIP up to 2 GB on the upload page. For larger archives, select Google Drive library above and put the ZIP in the connected folder.")
+            st.caption("Direct ZIP uploads have no fixed 2 GB cap, but must fit available server space. For the full collection, use a Google Drive link to keep originals in Drive and index shared records.")
         elif source_mode == direct_zip:
             st.caption("Click Browse files or drag your ZIP here. Wait for the upload to finish, then click Save documents. Keep this tab open during import.")
         else:
@@ -760,7 +768,7 @@ if page == "Upload documents":
     if streamed_upload:
         from app.vendor_zip_upload import issue_upload_token
         upload_token = issue_upload_token(setting("APP_PASSWORD"))
-        upload_url = "/vendor-upload?company=" + quote_plus(single_company) + "&read_pdf=" + str(use_pdf).lower() + "&expected=" + str(int(expected)) + "#" + upload_token
+        upload_url = "/vendor-upload?source=computer&company=" + quote_plus(single_company) + "&read_pdf=" + str(use_pdf).lower() + "&expected=" + str(int(expected)) + "#" + upload_token
         st.link_button("Choose ZIP files", upload_url, type="primary", width="stretch")
     if not streamed_upload and not indexing_drive and st.button("Save documents", key="save_documents", disabled=not (uploads or local_zip_path.strip()), type="primary", width="stretch"):
         progress = st.empty()

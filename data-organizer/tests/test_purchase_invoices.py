@@ -119,6 +119,7 @@ def test_extract_review_save_search_and_duplicate(client,tmp_path):
     record = c.get('/api/purchase-invoices/records/'+saved.json()['id'],headers=other).json()
     assert record['fields']['supplier'] == 'Reviewed Medical'
     assert record['items'][0]['description'] == 'Surgical gloves'
+    assert invoices.invoice_count(invoices.library().store) == 1
 
 
 def test_authorization_and_size_limits_before_extract(client,monkeypatch):
