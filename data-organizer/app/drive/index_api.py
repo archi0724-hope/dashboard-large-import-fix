@@ -58,7 +58,8 @@ def status():
     index = library()
     selected = selection(index)
     return {**index.status(selected['scope']),'source_link':(selected['source'] or {}).get('url',''),
-            'storage':indexer.storage_status(index.store)}
+            'storage':indexer.storage_status(index.store),
+            'worker_active':bool(indexer.ACTIVE and indexer.ACTIVE.is_alive())}
 
 
 class StartSource(BaseModel):

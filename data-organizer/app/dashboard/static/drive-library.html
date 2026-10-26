@@ -64,7 +64,8 @@ async function status(){const data=await api('status');$('state').textContent=da
  const capacity=data.storage;storageBlocked=Boolean(capacity?.limit_reached);
  $('storage').textContent=capacity?`Database used: ${(capacity.used_bytes/1024**2).toFixed(1)} MiB · Indexing safety budget: ${(capacity.index_budget_bytes/1024**2).toFixed(0)} MiB.`:'';
  if(storageBlocked){$('state').textContent='Paused — database storage limit reached. Saved rows remain searchable. More database capacity or safely freed storage is required; clicking Resume cannot add space.';$('storage').className='error';}else{$('storage').className='muted';}
- running=data.status==='running';if(!running){pauseRequested=false;if($('action').textContent.startsWith('Pause requested'))$('action').textContent='Indexing paused. Saved rows are kept.';}controls();
+ running=data.status==='running'&&data.worker_active!==false;if(!running){pauseRequested=false;if($('action').textContent.startsWith('Pause requested'))$('action').textContent='Indexing paused. Saved rows are kept.';}controls();
+ if(data.status==='running'&&!running&&!storageBlocked)$('state').textContent='Indexing stopped after a server restart. Click Resume to continue from saved records.';
  $('updated').textContent=data.updated_at?'Last activity: '+new Date(data.updated_at).toLocaleString()+'. Progress refreshes every 5 seconds; a large file can take longer.':'';
  if(!sourceLoaded){$('driveLink').value=data.source_link||'';sourceLoaded=true;}$('selectedSource').textContent=data.source_link?'Current shared source: '+data.source_link:'Paste a folder or ZIP link to begin.';
  return data;

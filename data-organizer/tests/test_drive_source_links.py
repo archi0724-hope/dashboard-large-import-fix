@@ -59,6 +59,7 @@ def test_pasted_source_persists_and_does_not_hide_existing_records(tmp_path,monk
     assert DriveIndex(index.store).source_selection()['source']['id'] == 'archive12345'
     assert client.get('/api/drive-index/status',headers=headers).json()['source_link'].endswith('/archive12345/view')
     monkeypatch.setattr(indexer,'ACTIVE',SimpleNamespace(is_alive=lambda:True))
+    assert client.get('/api/drive-index/status',headers=headers).json()['worker_active'] is True
     worker.reset_mock()
     repeated = client.post('/api/drive-index/start',headers=headers)
     assert repeated.json() == {'started':False,'running':True}
@@ -67,6 +68,7 @@ def test_pasted_source_persists_and_does_not_hide_existing_records(tmp_path,monk
     assert blocked.status_code == 409
     assert index.source_selection()['source']['id'] == 'archive12345'
     monkeypatch.setattr(indexer,'ACTIVE',None)
+    assert client.get('/api/drive-index/status',headers=headers).json()['worker_active'] is False
     response = client.post('/api/drive-index/start',headers=headers,json={'link':'https://drive.google.com/drive/folders/another12345'})
     assert response.status_code == 200
     assert worker.call_args.args[2]['kind'] == 'folder'
