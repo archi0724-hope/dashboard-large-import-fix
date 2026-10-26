@@ -32,6 +32,16 @@ paginated source-row search. The Drive metadata cache lasts 20 seconds; Refresh
 companies and documents explicitly reloads it. These read views do not copy file
 blobs or mutate the original upload and Drive index tables.
 
+Verified original-file migrations may store a Drive archive reference in an
+uploaded document's existing `stored_path`, as
+`https://drive.google.com/file/d/ID/view#member=ENCODED_ARCHIVE_MEMBER`.
+`documents()` recognizes only strict HTTPS Drive links with safe member paths,
+preserves the original document ID/hash/company/types, and keeps them available
+in the shared checklist. The company view and exports expose the Drive link and
+archive member. Private archives require the appropriate Google Drive access.
+The code does not clear PostgreSQL payloads: that migration requires separately
+verified backups and explicit approval. No original bytes are removed on deploy.
+
 For the 50+ GB collection, originals stay in Drive and searchable records live in
 PostgreSQL. There is no fixed total collection byte cap in the Drive indexer;
 processing safeguards and database space still apply. Local direct uploads no

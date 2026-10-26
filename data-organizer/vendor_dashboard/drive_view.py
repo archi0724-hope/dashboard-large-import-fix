@@ -55,8 +55,9 @@ def combine_company_documents(vendors, documents, references, aliases=None):
 
     vendors = vendors.copy()
     documents = documents.copy()
-    documents['drive_url'] = ''
-    documents['drive_status'] = ''
+    for column in ('drive_url', 'drive_status', 'drive_member'):
+        if column not in documents:
+            documents[column] = ''
     canonical = {row.company_key: row.company_name for row in vendors.itertuples(index=False)}
     alias_keys = {}
     if aliases is not None:
@@ -95,6 +96,7 @@ def combine_company_documents(vendors, documents, references, aliases=None):
             'uploaded_at': item.get('updated_at', ''), 'source_batch': item['source_name'],
             'method': 'Google Drive · '+decision.method, 'reason': item.get('error') or decision.reason,
             'drive_url': 'https://drive.google.com/file/d/'+item['drive_id']+'/view', 'drive_status': item['status'],
+            'drive_member': item['member_path'],
         })
     if companies:
         vendors = pd.concat([vendors, pd.DataFrame(companies)], ignore_index=True)

@@ -144,3 +144,47 @@ def test_actual_vendor_dashboard_has_one_company_checklist_for_drive_files(share
     app.selectbox(key='company_selection').set_value('beta medical').run(timeout=40)
     assert not app.exception
     assert any('Price' in expander.label for expander in app.expander)
+
+
+def test_migrated_original_keeps_its_company_checklist_and_source_link(shared):
+    import zipfile
+    from io import BytesIO
+
+    from drive_view import combine_company_documents
+    from import_service import import_documents
+    from vendor_core import build_checklist
+
+    store, _, _ = shared
+    data = BytesIO()
+    with zipfile.ZipFile(data, 'w') as archive:
+        archive.writestr('Alpha Medical/GST.txt', b'Synthetic verified original')
+    data.name = 'source.zip'
+    import_documents(store, [data], '', False)
+    before = store.documents().iloc[0]
+    source = 'https://drive.google.com/file/d/syntheticBackup123/view#member=documents%2F1%2FGST.txt'
+    with store.connection() as db:
+        db.execute('UPDATE vdd_documents SET stored_path=?,payload=NULL WHERE id=?', (source, int(before.id)))
+    docs = store.documents()
+    assert len(docs) == 1 and docs.iloc[0].available
+    assert docs.iloc[0].file_hash == before.file_hash and docs.iloc[0].company_key == before.company_key
+    assert docs.iloc[0].drive_member == 'documents/1/GST.txt'
+    assert store.read_bytes(int(before.id)) is None
+    vendors, combined = combine_company_documents(store.vendors(), docs, [])
+    assert combined.iloc[0].drive_url == 'https://drive.google.com/file/d/syntheticBackup123/view'
+    assert build_checklist(vendors, combined).iloc[0]['GST'] == 'Yes'
+    with zipfile.ZipFile(BytesIO(store.company_zip('Alpha Medical', combined))) as archive:
+        manifest = archive.read(next(name for name in archive.namelist() if name.endswith('Drive originals.csv'))).decode('utf-8-sig')
+    assert 'documents/1/GST.txt' in manifest and 'syntheticBackup123' in manifest
+
+
+@pytest.mark.parametrize('source', [
+    'http://drive.google.com/file/d/backupFile123/view#member=docs/a.pdf',
+    'https://drive.google.com.evil.example/file/d/backupFile123/view#member=docs/a.pdf',
+    'https://drive.google.com/file/d/backupFile123/view#member=../a.pdf',
+    'https://drive.google.com/file/d/backupFile123/view',
+    'https://[invalid',
+])
+def test_original_reference_rejects_unsafe_or_incomplete_links(shared, source):
+    from storage import drive_original_reference
+
+    assert drive_original_reference(source) == ('', '')

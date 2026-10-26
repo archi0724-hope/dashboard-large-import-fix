@@ -147,12 +147,12 @@ def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company
         sheet.cell(r,1).comment = Comment("Source: company folder or uploaded vendor master. See Document Register for source paths and classification evidence.", "Vendor Document Desk")
     finish(sheet)
     register = book.create_sheet("Document Register")
-    register_headers = ["Company Name", "Document Type", "Filename", "File available", "Review", "Classification", "Source path", "Upload batch", "Uploaded at", "Reason", "Drive original", "Drive processing status"]
-    style_sheet(register, register_headers, [40, 25, 72, 16, 16, 25, 90, 42, 28, 82, 65, 24], "DOCUMENT REGISTER", "Uploaded files and Drive references share this register. Drive originals stay in Drive; ZIP member paths locate documents inside archives.")
+    register_headers = ["Company Name", "Document Type", "Filename", "File available", "Review", "Classification", "Source path", "Upload batch", "Uploaded at", "Reason", "Drive original", "Drive processing status", "Drive archive member"]
+    style_sheet(register, register_headers, [40, 25, 72, 16, 16, 25, 90, 42, 28, 82, 65, 24, 80], "DOCUMENT REGISTER", "Uploaded files and Drive references share this register. Drive originals stay in Drive; ZIP member paths locate documents inside archives.")
     for r, doc in enumerate(documents.itertuples(index=False), 5):
         values = [doc.company_name or "Unassigned", ", ".join(doc.types) or supporting_category(doc.filename) or "Other / Needs review", doc.filename,
                   "Yes" if doc.available else "No", "Needs review" if doc.needs_review or not doc.available else "Supporting document" if not doc.types else "Classified",
-                  doc.method, doc.original_path, doc.source_batch, doc.uploaded_at, doc.reason, getattr(doc, 'drive_url', ''), getattr(doc, 'drive_status', '')]
+                  doc.method, doc.original_path, doc.source_batch, doc.uploaded_at, doc.reason, getattr(doc, 'drive_url', ''), getattr(doc, 'drive_status', ''), getattr(doc, 'drive_member', '')]
         for c, value in enumerate(values,1):
             write_text(register.cell(r,c), value)
     finish(register)

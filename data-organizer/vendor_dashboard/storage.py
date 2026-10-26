@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, time, timezone
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 from catalogue_policy import clean_and_classify_product
@@ -40,6 +41,20 @@ CATALOGUE_POLICY_VERSION = "medical-nondrug-v1"
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def drive_original_reference(value: str) -> tuple[str, str]:
+    """Read a verified archive reference without treating arbitrary URLs as files."""
+    try:
+        parsed = urlsplit(str(value or ''))
+    except ValueError:
+        return '', ''
+    if parsed.scheme != 'https' or parsed.netloc != 'drive.google.com' or not re.fullmatch(r'/file/d/[A-Za-z0-9_-]{10,200}/view', parsed.path):
+        return '', ''
+    member = parse_qs(parsed.fragment).get('member', [''])[0]
+    if not member or member.startswith(('/', '\\')) or re.match(r'^[A-Za-z]:', member) or '..' in member.replace('\\', '/').split('/'):
+        return '', ''
+    return 'https://drive.google.com'+parsed.path, member
 
 
 def manual_catalogue_records(frame: pd.DataFrame, *, needs_review: bool) -> list[dict]:
@@ -435,6 +450,11 @@ class Store:
         frame = pd.DataFrame(rows, columns=DOC_COLUMNS + ["has_payload"])
         frame["types"] = frame.types_json.map(lambda value: normalize_document_types(json.loads(value)))
         frame["available"] = frame.has_payload.astype(bool) if self.cloud else frame.stored_path.map(lambda p: bool((path := self.safe_path(p)) and path.is_file() and path.stat().st_size > 0))
+        sources = frame.stored_path.map(drive_original_reference)
+        frame['drive_url'] = sources.map(lambda item: item[0])
+        frame['drive_member'] = sources.map(lambda item: item[1])
+        frame['drive_status'] = frame.drive_url.map(lambda url: 'Verified original backup' if url else '')
+        frame['available'] = frame['available'] | frame.drive_url.ne('')
         frame["needs_review"] = frame.apply(lambda r: not r.company_key or (not r.types and not bool(r.reviewed) and r.method != "Supporting document"), axis=1) if len(frame) else pd.Series(dtype=bool)
         return frame
 
@@ -1360,7 +1380,10 @@ class Store:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr(f"{folder}/{export_filename(company, 'Checklist', 'xlsx')}", workbook_bytes(checklist, docs, True, self.aliases()))
             if 'drive_url' in docs:
-                linked = docs.loc[docs.drive_url.ne(''), ['company_name', 'filename', 'original_path', 'drive_url', 'drive_status', 'reason']]
+                columns = ['company_name', 'filename', 'original_path', 'drive_url', 'drive_status', 'reason']
+                if 'drive_member' in docs:
+                    columns.append('drive_member')
+                linked = docs.loc[docs.drive_url.ne(''), columns]
                 if not linked.empty:
                     archive.writestr(f'{folder}/Drive originals.csv', csv_bytes(linked))
             for doc in docs.sort_values("filename", key=lambda s: s.map(str.casefold)).itertuples(index=False):

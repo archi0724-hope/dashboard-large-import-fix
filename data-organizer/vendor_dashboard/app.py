@@ -912,7 +912,7 @@ elif page == "Companies & documents":
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
                             st.link_button('Open original in Drive', doc.drive_url, key=f'drive_original_{category}_{doc.id}_{row_number}')
-                            st.caption(f'Drive status: {doc.drive_status} · ZIP member/source: {doc.original_path}')
+                            st.caption(f'Drive status: {doc.drive_status} · ZIP member/source: {getattr(doc, "drive_member", "") or doc.original_path}')
                             if doc.reason:
                                 st.caption(doc.reason)
                             continue
@@ -1105,6 +1105,9 @@ elif page == "Review files":
             except Exception as error:
                 st.error(str(error) if isinstance(error,ValueError) else "Correction could not be saved. Check storage access.")
         data=document_bytes(store, selected_doc, doc.file_hash)
+        if getattr(doc, 'drive_url', ''):
+            st.link_button('Open original in Drive for review', doc.drive_url)
+            st.caption('Drive archive member: '+getattr(doc, 'drive_member', ''))
         if data is not None:
             st.download_button("Download original for review",data,doc.filename,key="review_download")
         st.caption("Source path: "+doc.original_path)
