@@ -620,8 +620,17 @@ if st.query_params.get("assistant") == "1" and not st.session_state.get("assista
 
 vendors = store.vendors()
 documents = store.documents()
+uploaded_documents = documents
 upload_archives = store.upload_archives()
 aliases = store.aliases()
+from drive_view import combine_company_documents, inventory
+try:
+    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
+    drive_snapshot = inventory(drive_identity, store)
+    vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
+except Exception:
+    logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
+    st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
 review_queue = store.review_queue()
 checklist = build_checklist(vendors, documents)
 counts = dashboard_counts(vendors, documents)
@@ -679,7 +688,7 @@ if page != "🤖 Vendor AI Assistant":
     m1, m2, m3, m4 = st.columns(4)
     from app.purchase_invoices import invoice_count
     m1.metric("Purchase Invoice", f"{invoice_count(store):,}", help="Confirmed purchase invoices saved in the shared database. Each invoice counts once.")
-    m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available document records. Identical bytes uploaded again for the same company do not increase this count.")
+    m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available uploaded files and Drive references. Drive originals remain in Drive. Known identical content within a company counts once.")
     m3.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
     m4.metric("Needs review", f"{display_counts['review_files']:,}", help="Unassigned, unclassified or unavailable document files.")
     document_type_counts = {
@@ -836,10 +845,10 @@ elif page == "Companies & documents":
         st.write("Search results and summary counters are hidden. Your saved data has not been deleted.")
         st.button("Show saved data", key="show_saved_data_main", on_click=show_saved_data, type="primary")
         st.stop()
-    from drive_view import render_drive_records
-    st.caption('The summary cards above count uploaded documents. Shared Drive records and source links appear below without copying their original files.')
-    render_drive_records(store)
-    st.subheader("Find a company in uploaded documents")
+    if st.button('Refresh companies and documents', key='refresh_shared_companies'):
+        inventory.clear()
+        st.rerun()
+    st.subheader("Find a company")
     col1, col2 = st.columns([3, 1])
     search = col1.text_input("Search company", placeholder="Type a company name...", key="company_search")
     status = col2.selectbox("Show", ["All companies", "Missing documents", "All types available", "Needs review"], key="status_filter")
@@ -854,7 +863,7 @@ elif page == "Companies & documents":
         view.insert(0, "No.", range(1, len(view) + 1))
         view["Completion"] = view["Completion"].map(lambda v: f"{v:.0%}")
         show_table(view)
-        st.caption("Yes = a classified file is available for that company. No = no classified file was found in that category. Review files separately before treating a No as final.")
+        st.caption("Yes = a classified uploaded file or Drive reference is available for that company. Drive originals stay in Drive; extraction issues remain marked for review. No = no classified file was found in that category.")
         checklist_dl1, checklist_dl2 = st.columns(2)
         visible_excel_name = export_filename(filtered.iloc[0]["Company Name"], "Checklist", "xlsx") if len(filtered) == 1 else "All_Vendors_Checklist.xlsx"
         visible_csv_name = export_filename(filtered.iloc[0]["Company Name"], "Checklist", "csv") if len(filtered) == 1 else "All_Vendors_Checklist.csv"
@@ -884,7 +893,7 @@ elif page == "Companies & documents":
             value = st.session_state.get("zip_company")
             if value and value[0] == signature:
                 st.download_button("Download " + company + " documents ZIP", value[1], export_filename(company,"Documents","zip"), "application/zip", type="primary", width="stretch", key="company_zip_download")
-            st.caption("Excel and ZIP filenames include the selected company name. The ZIP includes its checklist and document folders.")
+            st.caption("The company ZIP includes uploaded files, its checklist, and a Drive-links register for Drive originals. Drive archives are opened at their source; use the listed member path to find each document.")
             for category in DOCUMENT_TYPES + ["Other documents"]:
                 rows = documents_for_category(company_docs, category)
                 available = int(rows["available"].sum())
@@ -901,6 +910,12 @@ elif page == "Companies & documents":
                         filename_col.text(doc.filename)
                         detail = supporting_category(doc.filename) if not doc.types else doc.method
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
+                        if getattr(doc, 'drive_url', ''):
+                            st.link_button('Open original in Drive', doc.drive_url, key=f'drive_original_{category}_{doc.id}_{row_number}')
+                            st.caption(f'Drive status: {doc.drive_status} · ZIP member/source: {doc.original_path}')
+                            if doc.reason:
+                                st.caption(doc.reason)
+                            continue
                         payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
                         if payload is not None:
                             preview_token = f"{category}_{doc.id}_{row_number}"
@@ -1067,7 +1082,11 @@ elif page == "Review files":
         st.caption("These records were not automatically merged because the company match was uncertain.")
     st.caption("Recognised supporting certificates stay under Other documents. Only unclear classifications and unavailable files need attention.")
     show_all=st.checkbox("Show all documents for correction")
-    queue=documents if show_all else documents[documents.needs_review | ~documents.available]
+    drive_issues = documents[documents.drive_url.ne('') & (documents.needs_review | ~documents.available)] if 'drive_url' in documents else pd.DataFrame()
+    if not drive_issues.empty:
+        st.caption('Drive files needing review remain linked to their originals. Their extraction status is shared with the Drive library.')
+        show_table(drive_issues[['company_name','filename','drive_status','reason','drive_url']])
+    queue=uploaded_documents if show_all else uploaded_documents[uploaded_documents.needs_review | ~uploaded_documents.available]
     show_table(queue[["company_name","filename","method","reason"]].rename(columns={"company_name":"Company Name","filename":"File","method":"Classification","reason":"Reason"}))
     if not queue.empty:
         lookup={int(r.id):f"{r.company_name or 'Unassigned'} | {r.filename}" for r in queue.itertuples(index=False)}

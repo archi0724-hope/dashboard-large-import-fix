@@ -65,3 +65,82 @@ def test_main_vendor_fragment_renders_shared_rows_and_search(shared):
     app.text_input(key='drive_vendor_files_query').set_value('Beta').run()
     assert not app.exception
     assert app.dataframe[0].value['Detected company'].tolist() == ['Beta Medical']
+
+
+def test_combined_checklist_groups_both_sources_and_deduplicates_known_content(shared):
+    import hashlib
+    import zipfile
+    from io import BytesIO
+
+    import pandas as pd
+    from drive_view import combine_company_documents
+    from import_service import import_documents
+    from vendor_core import build_checklist, dashboard_counts
+
+    store, inventory, _ = shared
+    payload = b'Synthetic GST document'
+    data = BytesIO()
+    with zipfile.ZipFile(data, 'w') as archive:
+        archive.writestr('Alpha Medical/GST.txt', payload)
+    data.name = 'vendors.zip'
+    import_documents(store, [data], '', False)
+    references = inventory('combined-fixture', store)['references']
+    alpha = next(row for row in references if row['entry_key'] == 'alpha')
+    alpha['content_hash'] = hashlib.sha256(payload).hexdigest()
+    beta = next(row for row in references if row['entry_key'] == 'beta')
+    beta.update(status='indexed', error='')
+    vendors, docs = combine_company_documents(store.vendors(), store.documents(), references)
+    assert len(vendors) == 2 and len(docs) == 2
+    counts = dashboard_counts(vendors, docs)
+    assert counts['companies'] == 2 and counts['stored_files'] == 2
+    checklist = build_checklist(vendors, docs).set_index('Company Name')
+    assert checklist.loc['Alpha Medical', 'GST'] == 'Yes'
+    assert checklist.loc['Beta Medical', 'Price'] == 'Yes'
+    linked = docs.loc[docs.drive_url.ne('')].iloc[0]
+    assert linked.company_name == 'Beta Medical' and str(linked.id).startswith('drive:')
+    assert len(store.vendors()) == 1 and len(store.documents()) == 1  # Read view only.
+    aliases = pd.DataFrame([{'alias_key': 'beta medical', 'canonical_key': 'alpha medical', 'status': 'Confirmed'}])
+    merged_vendors, merged_docs = combine_company_documents(store.vendors(), store.documents(), references, aliases)
+    assert len(merged_vendors) == 1 and set(merged_docs.company_name) == {'Alpha Medical'}
+
+
+def test_company_export_retains_drive_links_without_fetching_other_companies(shared):
+    import zipfile
+    from io import BytesIO
+    from unittest.mock import patch
+
+    from drive_view import combine_company_documents
+    from openpyxl import load_workbook
+
+    store, inventory, _ = shared
+    _vendors, docs = combine_company_documents(store.vendors(), store.documents(), inventory('export-fixture', store)['references'])
+    with patch.object(store, 'read_bytes', side_effect=AssertionError('Drive originals must not be downloaded')):
+        exported = store.company_zip('Alpha Medical', docs)
+    with zipfile.ZipFile(BytesIO(exported)) as archive:
+        names = archive.namelist()
+        assert all('Beta' not in name for name in names)
+        manifest = archive.read(next(name for name in names if name.endswith('Drive originals.csv'))).decode('utf-8-sig')
+        assert 'Alpha Medical/GST.txt' in manifest and 'https://drive.google.com/' in manifest
+        assert 'Beta Medical' not in manifest
+        workbook = load_workbook(BytesIO(archive.read(next(name for name in names if name.endswith('.xlsx')))))
+        register = list(workbook['Document Register'].values)
+        assert 'Drive original' in register[3]
+        assert any('https://drive.google.com/' in str(cell) for row in register[4:] for cell in row)
+
+
+def test_actual_vendor_dashboard_has_one_company_checklist_for_drive_files(shared, monkeypatch):
+    store, _, _ = shared
+    monkeypatch.setenv('VENDOR_DATA_DIR', str(store.data_dir))
+    monkeypatch.setenv('DATABASE_URL', '')
+    monkeypatch.setenv('APP_PASSWORD', '')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT', 'false')
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'vendor_dashboard' / 'app.py')).run(timeout=40)
+    assert not app.exception
+    assert 'Find a company' in [heading.value for heading in app.subheader]
+    assert 'Google Drive companies & documents' not in [heading.value for heading in app.subheader]
+    metrics = {metric.label: metric.value for metric in app.metric}
+    assert metrics['Vendor headcount'] == '2'
+    assert metrics['GST'] == '1'
+    app.selectbox(key='company_selection').set_value('beta medical').run(timeout=40)
+    assert not app.exception
+    assert any('Price' in expander.label for expander in app.expander)

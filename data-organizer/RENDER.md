@@ -19,15 +19,18 @@ Vendor's **Purchase Invoice** sidebar page embeds this same workflow, and its
 summary card counts confirmed records from the shared PostgreSQL invoice table.
 Local screenshot counts are not copied or fabricated during deployment.
 
-Vendor's **Companies & documents** and **Catalogue & prices** pages also display
-the shared Drive index directly: detected company names, document types, file
-status/issues, Drive original links and paginated source-row search. These are
-read views of `vdd_drive_entries` and `vdd_drive_records`, cached for 20 seconds
-with a Refresh button; no original blobs are copied into Vendor storage and no
-source rows are automatically approved as catalogue products. Archive containers
-do not count as additional files. The source-row total counts committed rows,
-including batches whose file-level final count is not yet updated. Uploaded-file
-summary cards and checklists retain their uploaded-document meaning.
+Vendor's **Companies & documents** combines uploaded documents and shared Drive
+references in one company search, selector, Yes/No checklist and summary cards.
+Only exact normalized names and confirmed aliases merge companies; known equal
+content hashes within a company count once. Archive containers and unsafe paths
+are excluded. Drive originals stay in Drive: company categories offer source
+links and member paths, and company ZIPs contain uploaded files plus a Drive-link
+CSV register. Excel exports retain those source links and processing status.
+Drive classification/extraction issues remain visible, and source rows are never
+automatically approved as catalogue products. **Catalogue & prices** retains the
+paginated source-row search. The Drive metadata cache lasts 20 seconds; Refresh
+companies and documents explicitly reloads it. These read views do not copy file
+blobs or mutate the original upload and Drive index tables.
 
 For the 50+ GB collection, originals stay in Drive and searchable records live in
 PostgreSQL. There is no fixed total collection byte cap in the Drive indexer;

@@ -4,12 +4,18 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 
 import pandas as pd
 import streamlit as st
-from vendor_core import classify
+from vendor_core import classify, company_key
 
 from app.drive.index_store import DriveIndex
+
+
+def company_source_path(path):
+    """Ignore generated upload containers when detecting company folders."""
+    return '/'.join(part for part in path.replace('\\', '/').split('/') if not re.fullmatch(r'upload-[a-f0-9]{8,}', part, re.IGNORECASE))
 
 
 @st.cache_data(ttl=20, max_entries=8, show_spinner=False)
@@ -19,10 +25,10 @@ def inventory(identity, _store):
     # Older indexes predate the saved source-selection setting.
     with _store.connection() as db:
         if selected:
-            rows = db.execute("SELECT source_name,member_path,drive_id,status,error,record_count FROM vdd_drive_entries WHERE folder_id=?", (selected['scope'],)).fetchall()
+            rows = db.execute("SELECT * FROM vdd_drive_entries WHERE folder_id=?", (selected['scope'],)).fetchall()
             total = db.execute('SELECT count(*) AS n FROM vdd_drive_records WHERE folder_id=?', (selected['scope'],)).fetchone()['n']
         else:
-            rows = db.execute("SELECT source_name,member_path,drive_id,status,error,record_count FROM vdd_drive_entries").fetchall()
+            rows = db.execute("SELECT * FROM vdd_drive_entries").fetchall()
             total = db.execute('SELECT count(*) AS n FROM vdd_drive_records').fetchone()['n']
     result = []
     for row in rows:
@@ -30,7 +36,7 @@ def inventory(identity, _store):
         path = item['member_path'] or item['source_name']
         if not item['member_path'] and path.lower().endswith('.zip'):
             continue  # Archive containers are not additional vendor documents.
-        decision = classify(path)
+        decision = classify(company_source_path(path))
         result.append({
             'Detected company': decision.company_name or 'Needs company review',
             'Document types': ', '.join(decision.document_types),
@@ -38,7 +44,66 @@ def inventory(identity, _store):
             'Source rows': int(item['record_count']), 'Issue': item['error'],
             'Drive original': 'https://drive.google.com/file/d/'+item['drive_id']+'/view',
         })
-    return {'items': result, 'source_rows': int(total)}
+    return {'items': result, 'source_rows': int(total), 'references': [dict(row) for row in rows]}
+
+
+def combine_company_documents(vendors, documents, references, aliases=None):
+    """Project Drive metadata into the existing checklist schema without file blobs."""
+    from pathlib import PurePosixPath
+
+    from app.drive.indexer import safe_member
+
+    vendors = vendors.copy()
+    documents = documents.copy()
+    documents['drive_url'] = ''
+    documents['drive_status'] = ''
+    canonical = {row.company_key: row.company_name for row in vendors.itertuples(index=False)}
+    alias_keys = {}
+    if aliases is not None:
+        alias_keys = {row.alias_key: row.canonical_key for row in aliases.itertuples(index=False)
+                      if row.status == 'Confirmed' and row.canonical_key in canonical}
+    seen = {(str(row.company_key), str(row.file_hash)) for row in documents.itertuples(index=False) if row.file_hash and row.available}
+    additions, companies = [], []
+    for item in references:
+        path = item['member_path'] or item['source_name']
+        if not item['member_path'] and path.lower().endswith('.zip'):
+            continue
+        if not safe_member(path) or not item['drive_id']:
+            continue
+        decision = classify(company_source_path(path))
+        name = decision.company_name or ''
+        # Match exact normalized names and confirmed aliases only, never fuzzy matches.
+        key = company_key(name)
+        key = alias_keys.get(key, key)
+        name = canonical.get(key, name)
+        digest = item.get('content_hash') or 'drive:'+item['entry_key']
+        if (key, digest) in seen:
+            continue
+        seen.add((key, digest))
+        if key and key not in canonical:
+            canonical[key] = name
+            companies.append({**{column: '' for column in vendors.columns}, 'company_key': key,
+                              'company_name': name, 'canonical_id': 'Drive-'+hashlib.sha256(key.encode()).hexdigest()[:12], 'source': 'Google Drive'})
+        available = item['status'] not in {'missing', 'deleted', 'blocked'} or (
+            item['status'] == 'blocked' and 'exceeds the 128 MB' in item.get('error', ''))
+        additions.append({**{column: '' for column in documents.columns},
+            'id': 'drive:'+item['entry_key'], 'company_key': key, 'company_name': name,
+            'filename': PurePosixPath(path).name, 'original_path': path,
+            'types': list(decision.document_types), 'types_json': json.dumps(decision.document_types),
+            'available': available, 'needs_review': decision.needs_review or item['status'] != 'indexed',
+            'reviewed': 0, 'file_hash': digest, 'size_bytes': item.get('size_bytes', 0),
+            'uploaded_at': item.get('updated_at', ''), 'source_batch': item['source_name'],
+            'method': 'Google Drive · '+decision.method, 'reason': item.get('error') or decision.reason,
+            'drive_url': 'https://drive.google.com/file/d/'+item['drive_id']+'/view', 'drive_status': item['status'],
+        })
+    if companies:
+        vendors = pd.concat([vendors, pd.DataFrame(companies)], ignore_index=True)
+    if additions:
+        documents = pd.concat([documents, pd.DataFrame(additions)], ignore_index=True)
+    documents['available'] = documents['available'].astype(bool)
+    documents['needs_review'] = documents['needs_review'].astype(bool)
+    documents = documents.sort_values('available', ascending=False, kind='stable').drop_duplicates(['company_key', 'file_hash']).sort_index().reset_index(drop=True)
+    return vendors, documents
 
 
 @st.cache_data(ttl=20, max_entries=24, show_spinner=False)

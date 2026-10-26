@@ -1359,7 +1359,13 @@ class Store:
         checklist = build_checklist(vendors, docs)
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr(f"{folder}/{export_filename(company, 'Checklist', 'xlsx')}", workbook_bytes(checklist, docs, True, self.aliases()))
+            if 'drive_url' in docs:
+                linked = docs.loc[docs.drive_url.ne(''), ['company_name', 'filename', 'original_path', 'drive_url', 'drive_status', 'reason']]
+                if not linked.empty:
+                    archive.writestr(f'{folder}/Drive originals.csv', csv_bytes(linked))
             for doc in docs.sort_values("filename", key=lambda s: s.map(str.casefold)).itertuples(index=False):
+                if getattr(doc, 'drive_url', ''):
+                    continue
                 if doc.available and (payload := self.read_bytes(doc.id)) is not None:
                     category = doc.types[0] if doc.types else "Other documents"
                     ordinal = DOCUMENT_TYPES.index(category) + 1 if category in DOCUMENT_TYPES else len(DOCUMENT_TYPES)+1

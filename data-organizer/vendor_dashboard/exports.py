@@ -147,12 +147,12 @@ def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company
         sheet.cell(r,1).comment = Comment("Source: company folder or uploaded vendor master. See Document Register for source paths and classification evidence.", "Vendor Document Desk")
     finish(sheet)
     register = book.create_sheet("Document Register")
-    register_headers = ["Company Name", "Document Type", "Filename", "File available", "Review", "Classification", "Source path", "Upload batch", "Uploaded at", "Reason"]
-    style_sheet(register, register_headers, [40, 25, 72, 16, 16, 25, 90, 42, 28, 82], "DOCUMENT REGISTER", "Original source paths are retained for audit only. Handover names are never appended to Company Name.")
+    register_headers = ["Company Name", "Document Type", "Filename", "File available", "Review", "Classification", "Source path", "Upload batch", "Uploaded at", "Reason", "Drive original", "Drive processing status"]
+    style_sheet(register, register_headers, [40, 25, 72, 16, 16, 25, 90, 42, 28, 82, 65, 24], "DOCUMENT REGISTER", "Uploaded files and Drive references share this register. Drive originals stay in Drive; ZIP member paths locate documents inside archives.")
     for r, doc in enumerate(documents.itertuples(index=False), 5):
         values = [doc.company_name or "Unassigned", ", ".join(doc.types) or supporting_category(doc.filename) or "Other / Needs review", doc.filename,
                   "Yes" if doc.available else "No", "Needs review" if doc.needs_review or not doc.available else "Supporting document" if not doc.types else "Classified",
-                  doc.method, doc.original_path, doc.source_batch, doc.uploaded_at, doc.reason]
+                  doc.method, doc.original_path, doc.source_batch, doc.uploaded_at, doc.reason, getattr(doc, 'drive_url', ''), getattr(doc, 'drive_status', '')]
         for c, value in enumerate(values,1):
             write_text(register.cell(r,c), value)
     finish(register)
@@ -160,7 +160,7 @@ def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company
     master_headers = ["Canonical ID", "Canonical Company Name", "Match Status"]
     style_sheet(master, master_headers, [18, 52, 24], "COMPANY MASTER", "One canonical row per company. IDs remain stable for future uploads.")
     for r, record in enumerate(checklist.to_dict("records"), 5):
-        values = [record.get("canonical_id", ""), record["Company Name"], "Confirmed"]
+        values = [record.get("canonical_id", ""), record["Company Name"], "Detected from Drive" if str(record.get("canonical_id", "")).startswith('Drive-') else "Confirmed"]
         for c, value in enumerate(values, 1):
             write_text(master.cell(r, c), value)
     finish(master)
