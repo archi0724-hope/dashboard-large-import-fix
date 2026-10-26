@@ -745,7 +745,7 @@ elif page == "Upload documents":
             st.link_button("1. Open connected Drive folder and add your ZIP", folder_url)
         library_url = '/drive-library#' + issue_upload_token(setting('APP_PASSWORD'))
         st.link_button("Open Drive library in a new tab", library_url)
-        st.caption("Searchable records are shared in PostgreSQL; originals remain in Drive. The company document checklist covers copied uploads; Drive records appear in this library.")
+        st.caption("Searchable records are shared in PostgreSQL; originals remain in Drive. Drive companies, file references and extracted rows also appear on Companies & documents and Catalogue & prices.")
         st.iframe(library_url, height=1000)
     else:
         if streamed_upload:
@@ -836,7 +836,10 @@ elif page == "Companies & documents":
         st.write("Search results and summary counters are hidden. Your saved data has not been deleted.")
         st.button("Show saved data", key="show_saved_data_main", on_click=show_saved_data, type="primary")
         st.stop()
-    st.subheader("Find a company")
+    from drive_view import render_drive_records
+    st.caption('The summary cards above count uploaded documents. Shared Drive records and source links appear below without copying their original files.')
+    render_drive_records(store)
+    st.subheader("Find a company in uploaded documents")
     col1, col2 = st.columns([3, 1])
     search = col1.text_input("Search company", placeholder="Type a company name...", key="company_search")
     status = col2.selectbox("Show", ["All companies", "Missing documents", "All types available", "Needs review"], key="status_filter")
@@ -926,6 +929,8 @@ elif page == "Companies & documents":
             st.plotly_chart(fig,width="stretch",config={"displayModeBar":False})
 
 elif page == "Catalogue & prices":
+    from drive_view import render_drive_records
+    render_drive_records(store)
     st.subheader("Catalogue and price records")
     st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
     manual_workbook = st.file_uploader(

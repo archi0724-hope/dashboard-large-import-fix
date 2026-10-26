@@ -19,6 +19,16 @@ Vendor's **Purchase Invoice** sidebar page embeds this same workflow, and its
 summary card counts confirmed records from the shared PostgreSQL invoice table.
 Local screenshot counts are not copied or fabricated during deployment.
 
+Vendor's **Companies & documents** and **Catalogue & prices** pages also display
+the shared Drive index directly: detected company names, document types, file
+status/issues, Drive original links and paginated source-row search. These are
+read views of `vdd_drive_entries` and `vdd_drive_records`, cached for 20 seconds
+with a Refresh button; no original blobs are copied into Vendor storage and no
+source rows are automatically approved as catalogue products. Archive containers
+do not count as additional files. The source-row total counts committed rows,
+including batches whose file-level final count is not yet updated. Uploaded-file
+summary cards and checklists retain their uploaded-document meaning.
+
 For the 50+ GB collection, originals stay in Drive and searchable records live in
 PostgreSQL. There is no fixed total collection byte cap in the Drive indexer;
 processing safeguards and database space still apply. Local direct uploads no
