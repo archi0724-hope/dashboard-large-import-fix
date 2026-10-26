@@ -204,3 +204,44 @@ def test_cloud_startup_does_not_reparse_stored_documents_or_publish_pending_rows
     store = object.__new__(Store)
     store.cloud = True
     store.initialize()
+
+
+def test_storage_pause_is_reported_and_resume_does_not_restart_a_full_database(index, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import main
+    from app.drive import index_api
+
+    monkeypatch.setattr(index_api, 'library', lambda: index)
+    monkeypatch.setattr(index_api, 'get_settings', lambda: SimpleNamespace(dashboard_token='synthetic-drive-token', drive_folder_id='folder123456', drive_folder_url=''))
+    capacity = {'used_bytes': 852 * 1024**2, 'index_budget_bytes': 850 * 1024**2,
+                'limit_reached': True, 'remaining_index_bytes': 0}
+    monkeypatch.setattr(indexer, 'storage_status', lambda _: capacity)
+    index.state('folder123456', 'paused', 'Storage limit')
+    client = TestClient(main.app)
+    headers = {'X-Token': 'synthetic-drive-token'}
+    assert client.get('/api/drive-index/status', headers=headers).json()['storage'] == capacity
+    with patch.object(indexer, 'start_index') as start:
+        response = client.post('/api/drive-index/start', headers=headers)
+        assert response.status_code == 507
+        assert 'Saved rows are kept' in response.json()['detail']
+        start.assert_not_called()
+    assert index.status('folder123456')['status'] == 'paused'
+
+
+def test_storage_status_reports_actual_size_and_boundary():
+    class Query:
+        def execute(self, sql):
+            assert sql == 'SELECT pg_database_size(current_database()) AS n'
+            return self
+
+        def fetchone(self):
+            return {'n': indexer.INDEX_STORAGE_BUDGET}
+
+    @contextmanager
+    def connection():
+        yield Query()
+
+    assert indexer.storage_status(SimpleNamespace(cloud=False)) is None
+    result = indexer.storage_status(SimpleNamespace(cloud=True, connection=connection))
+    assert result['limit_reached'] is True and result['remaining_index_bytes'] == 0

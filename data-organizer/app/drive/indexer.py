@@ -19,10 +19,21 @@ OWNER = uuid.uuid4().hex
 LOCK = threading.RLock()
 CANCEL = threading.Event()
 ACTIVE = None
+INDEX_STORAGE_BUDGET = 850 * 1024**2
 EXTRACTABLE = {'.xlsx','.xls','.csv','.txt','.log','.pdf','.docx','.json'}
 COMPANY = {'company','companyname','vendor','vendorname','supplier','suppliername','manufacturer','manufacturername','hospital','hospitalname'}
 PRODUCT = {'product','productname','item','itemname','description','particulars','itemdescription','productdescription'}
 PRICE = {'price','rate','mrp','unitprice','amount','netprice','offerprice'}
+
+
+def storage_status(store):
+    if not store.cloud:
+        return None
+    with store.connection() as db:
+        used = int(db.execute('SELECT pg_database_size(current_database()) AS n').fetchone()['n'])
+    return {'used_bytes': used, 'index_budget_bytes': INDEX_STORAGE_BUDGET,
+            'limit_reached': used >= INDEX_STORAGE_BUDGET,
+            'remaining_index_bytes': max(0, INDEX_STORAGE_BUDGET-used)}
 
 
 def entry_key(drive_id, member=''):
@@ -208,12 +219,9 @@ def run_index(store, folder, source=None):
                     return
                 if not entry['member_path'] and entry['source_name'].lower().endswith('.zip'):
                     continue
-                if store.cloud:
-                    with store.connection() as db:
-                        size = int(db.execute('SELECT pg_database_size(current_database()) AS n').fetchone()['n'])
-                    if size > 850 * 1024**2:
-                        index.state(folder,'paused','Index paused near the 1 GiB database limit. More index storage is needed to continue.',OWNER)
-                        return
+                if store.cloud and storage_status(store)['limit_reached']:
+                    index.state(folder,'paused','Index paused near the 1 GiB database limit. More index storage is needed to continue.',OWNER)
+                    return
                 name = entry['member_path'] or entry['source_name']
                 index.state(folder,'running','Reading '+name,OWNER)
                 index.mark(entry['entry_key'],'reading')
@@ -245,13 +253,10 @@ def run_index(store, folder, source=None):
                                     index.save_records(entry,batch)
                                     batch.clear()
                                     index.state(folder,'running',f'Reading {name}: {total:,} rows saved',OWNER)
-                                    if total % 2000 == 0 and store.cloud:
-                                        with store.connection() as db:
-                                            size = int(db.execute('SELECT pg_database_size(current_database()) AS n').fetchone()['n'])
-                                        if size > 850 * 1024**2:
-                                            index.mark(entry['entry_key'],'pending')
-                                            index.state(folder,'paused','Index paused near the 1 GiB storage limit. Saved rows are retained.',OWNER)
-                                            return
+                                    if total % 2000 == 0 and store.cloud and storage_status(store)['limit_reached']:
+                                        index.mark(entry['entry_key'],'pending')
+                                        index.state(folder,'paused','Index paused near the 1 GiB storage limit. Saved rows are retained.',OWNER)
+                                        return
                                     if CANCEL.is_set():
                                         index.mark(entry['entry_key'],'pending')
                                         index.state(folder,'paused','Paused; saved rows are retained.',OWNER)

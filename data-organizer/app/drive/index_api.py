@@ -57,7 +57,8 @@ def selection(index):
 def status():
     index = library()
     selected = selection(index)
-    return {**index.status(selected['scope']),'source_link':(selected['source'] or {}).get('url','')}
+    return {**index.status(selected['scope']),'source_link':(selected['source'] or {}).get('url',''),
+            'storage':indexer.storage_status(index.store)}
 
 
 class StartSource(BaseModel):
@@ -71,6 +72,9 @@ def start(body: StartSource | None = None):
     except ValueError as error:
         raise HTTPException(422,str(error)) from None
     index = library()
+    capacity = indexer.storage_status(index.store)
+    if capacity and capacity['limit_reached']:
+        raise HTTPException(507, 'Indexing is paused because the database storage safety limit is reached. Saved rows are kept. Resume cannot create more space; increase database capacity or safely free storage before retrying.')
     with indexer.LOCK:
         selected = selection(index)
         source = source or selected['source']

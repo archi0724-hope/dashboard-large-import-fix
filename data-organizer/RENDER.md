@@ -55,6 +55,15 @@ and derived records must fit the database quota. OCR-only and unsupported files
 are listed as issues rather than represented as fully extracted. No promise of
 fully searching an arbitrary 50 GB archive on the free preview is made.
 
+Drive status reports actual database bytes and the 850 MiB index safety budget.
+At that budget, new Start/Resume requests return HTTP 507 without starting a
+worker; saved rows remain searchable. The library disables Start and Use link
+while storage is full and explains that Resume cannot create storage. It renews
+signed sessions through `/api/vendor-uploads/session` before expiry or after a
+401, preserving the signed scope. If renewal is no longer possible, it stops
+polling and labels the displayed progress as potentially stale instead of leaving
+an old `running` message on screen. No automatic database-plan upgrade occurs.
+
 Deploy branch `deploy/organizer` using Docker context `data-organizer` and
 Dockerfile `data-organizer/Dockerfile`. The app listens on port 8000; set
 `PORT=8000`. `/` opens the Organizer dashboard, `/vendor/` opens Vendor,
