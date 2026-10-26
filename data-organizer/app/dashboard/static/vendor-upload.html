@@ -10,9 +10,9 @@ body{font:16px system-ui,sans-serif;background:#f5f7fc;color:#142d55;margin:0;pa
 <section id="computerPane" hidden>
 <h2>Upload vendor ZIP</h2><p>Select a ZIP from your computer. No file path is needed.</p>
 <p class="muted">There is no fixed 2 GB upload cap. A direct upload must fit the server's available temporary space, and its saved documents must fit permanent storage. For the full 50+ GB collection, use Google Drive above.</p>
-<p id="capacity" class="muted"></p><p class="muted">Keep this page open during upload. During import, temporary connection errors are retried. Reopening this page can resume progress on the same running server. Exact duplicates are skipped.</p>
+<p id="capacity" class="muted"></p><p class="muted">ZIPs upload in small, retryable chunks. Keep this page open during transfer. After a connection loss or page reload, choose the same ZIP to continue from the last confirmed chunk on this running server. A server restart clears temporary uploads; saved documents are kept and exact duplicates are skipped.</p>
 <details class="muted"><summary>Local ZIP processing safeguards</summary><p>Each local import processes up to 5,000 entries, 5 GiB of expanded contents and 128 MB per document. Use Drive indexing for the large collection; it keeps originals outside the database. Entries that cannot be processed remain visible as issues.</p></details>
-<input id="file" type="file" accept=".zip,application/zip" aria-label="Choose ZIP file"><button id="start">Upload and save documents</button><button id="resume" hidden>Resume progress</button>
+<input id="file" type="file" accept=".zip,application/zip" aria-label="Choose ZIP file"><button id="start">Upload and save documents</button><button id="resume" hidden>Resume progress</button><button id="cancel" hidden>Cancel unfinished transfer</button>
 <p id="message" role="status" aria-live="polite">Choose a ZIP file to begin.</p><progress id="progress" max="100" value="0" aria-label="Upload progress"></progress>
 </section><p id="authError" class="error" role="alert"></p><p><a href="/vendor/">Vendor dashboard</a> · <a href="/">Organizer dashboard</a></p>
 </main></body></html>

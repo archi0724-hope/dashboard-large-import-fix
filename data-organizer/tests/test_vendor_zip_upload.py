@@ -1,3 +1,4 @@
+import asyncio
 import time
 import zipfile
 from io import BytesIO
@@ -242,3 +243,112 @@ def test_upload_page_does_not_require_or_embed_a_password(client):
     assert "synthetic-upload-password" not in response.text
     assert 'type="file"' in response.text
     assert response.headers["referrer-policy"] == "no-referrer"
+
+
+def begin(c, headers, body, job_id="b" * 32):
+    response = c.post("/api/vendor-uploads/begin", headers=headers, params={
+        "upload_id": job_id, "filename": "vendors.zip", "size": len(body),
+    })
+    assert response.status_code == 200, response.text
+    return job_id
+
+
+def test_chunk_transfer_is_registered_before_bytes_and_resumes_without_duplicate_writes(client):
+    c, store, headers = client
+    body = zip_body()
+    job = begin(c, headers, body)
+    assert c.get(f"/api/vendor-uploads/{job}", headers=headers).json()["received"] == 0
+    # A lost registration response can be retried with the same ID.
+    assert begin(c, headers, body) == job
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=body[:40]).json()["received"] == 40
+    # Lost chunk acknowledgement: retry cannot append the bytes twice.
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=body[:40]).status_code == 409
+    assert c.post(f"/api/vendor-uploads/{job}/complete", headers=headers).status_code == 409
+    state = c.get(f"/api/vendor-uploads/{job}", headers=headers).json()
+    assert "path" not in state and "owner" not in state
+    assert state["received"] == 40
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=40", headers=headers, content=body[40:]).json()["received"] == len(body)
+    assert store.documents().empty  # No import before completion.
+    assert c.post(f"/api/vendor-uploads/{job}/complete", headers=headers).status_code == 200
+    assert wait_for_job(c, headers, job)["result"]["saved"] == 1
+    assert c.post(f"/api/vendor-uploads/{job}/complete", headers=headers).status_code == 200
+    assert store.read_bytes(int(store.documents().iloc[0]["id"])) == b"Synthetic GST document"
+    assert not uploads._jobs[job]["path"].exists()
+
+
+def test_cancel_partial_transfer_releases_disk_and_slot_and_checks_owner(client):
+    c, _, headers = client
+    body = zip_body()
+    job = begin(c, headers, body)
+    other = {"X-Upload-Token": uploads.issue_upload_token("synthetic-upload-password")}
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=other, content=body).status_code == 404
+    assert c.delete(f"/api/vendor-uploads/{job}", headers=other).status_code == 404
+    assert c.delete(f"/api/vendor-uploads/{job}", headers=headers).status_code == 200
+    assert uploads._active is None
+    assert not uploads._jobs[job]["path"].exists()
+
+
+def test_invalid_chunk_and_archive_can_be_retried_without_stuck_slot(client, monkeypatch):
+    c, _, headers = client
+    job = begin(c, headers, b"invalid zip")
+    monkeypatch.setattr(uploads, "CHUNK_BYTES", 4)
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=b"12345").status_code == 413
+    monkeypatch.setattr(uploads, "CHUNK_BYTES", 1024)
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=b"invalid zip!").status_code == 422
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=b"invalid zip").status_code == 200
+    assert c.post(f"/api/vendor-uploads/{job}/complete", headers=headers).status_code == 422
+    assert uploads._active is None
+    assert not uploads._jobs[job]["path"].exists()
+
+
+def test_chunk_session_renewal_preserves_ownership_even_after_expiry(client, monkeypatch):
+    c, _, headers = client
+    job = begin(c, headers, zip_body())
+    now = time.time()
+    monkeypatch.setattr(uploads.time, "time", lambda: now + uploads.TOKEN_LIFETIME + 10)
+    assert c.get(f"/api/vendor-uploads/{job}", headers=headers).status_code == 401
+    response = c.post("/api/vendor-uploads/session", headers=headers)
+    assert response.status_code == 200
+    renewed = {"X-Upload-Token": response.json()["token"]}
+    assert renewed != headers
+    assert c.get(f"/api/vendor-uploads/{job}", headers=renewed).status_code == 200
+    assert c.delete(f"/api/vendor-uploads/{job}", headers=renewed).status_code == 200
+    monkeypatch.setattr(uploads.time, "time", lambda: now + uploads.TOKEN_LIFETIME + 24 * 3600 + 10)
+    assert c.post("/api/vendor-uploads/session", headers=headers).status_code == 401
+
+
+def test_chunk_capacity_does_not_apply_a_fixed_total_file_cap(client, monkeypatch):
+    c, _, headers = client
+    size = 51 * 1024**3
+    monkeypatch.setattr(uploads.shutil, "disk_usage", lambda _: SimpleNamespace(free=size + uploads.DISK_RESERVE))
+    response = c.post("/api/vendor-uploads/begin", headers=headers, params={"upload_id": "c" * 32, "filename": "large.zip", "size": size})
+    assert response.status_code == 200
+    job = response.json()["job_id"]
+    assert uploads._jobs[job]["path"].stat().st_size == 0  # No 51 GiB allocation in this test.
+    monkeypatch.setattr(uploads.shutil, "disk_usage", lambda _: SimpleNamespace(free=uploads.DISK_RESERVE))
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=b"data").status_code == 507
+    assert c.get(f"/api/vendor-uploads/{job}", headers=headers).json()["received"] == 0
+    assert c.delete(f"/api/vendor-uploads/{job}", headers=headers).status_code == 200
+
+
+def test_disconnect_mid_chunk_keeps_confirmed_offset_and_allows_retry(client):
+    from starlette.requests import ClientDisconnect
+
+    c, _, headers = client
+    body = zip_body()
+    job = begin(c, headers, body)
+
+    class InterruptedRequest:
+        async def stream(self):
+            yield body[:20]
+            raise ClientDisconnect()
+
+    owner = uploads._jobs[job]["owner"]
+    with pytest.raises(ClientDisconnect):
+        asyncio.run(uploads.upload_chunk(job, 0, InterruptedRequest(), owner))
+    assert uploads._jobs[job]["received"] == 0
+    assert uploads._jobs[job]["writing"] is False
+    assert uploads._jobs[job]["path"].stat().st_size == 0
+    assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=body).status_code == 200
+    assert c.post(f"/api/vendor-uploads/{job}/complete", headers=headers).status_code == 200
+    assert wait_for_job(c, headers, job)["result"]["saved"] == 1

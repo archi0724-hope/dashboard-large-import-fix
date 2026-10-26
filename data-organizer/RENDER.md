@@ -61,8 +61,9 @@ The free plan's 512 MB memory can also limit OCR and large-file processing.
 
 In hosted Vendor uploads, **Upload ZIP from computer → Choose ZIP files** opens a
 dedicated browser picker with transfer progress and background-import progress.
-Its raw upload request streams to a temporary disk file rather than storing the
-whole ZIP in Streamlit's RAM. The existing importer reads that file and saves
+It registers a job with a small request, then sends at most 8 MiB per request to
+a temporary disk file rather than storing the whole ZIP in Streamlit's RAM.
+The existing importer reads that file and saves
 documents to the shared Vendor store. Original ZIP retention is disabled for
 this path; keep the original ZIP on your computer. Temporary uploads are removed
 after import or failure. Completed document writes survive an interrupted import
@@ -83,8 +84,17 @@ Hosted sessions with an old local-path selection return to direct upload.
 the local picker. Organizer → Upload vendor documents embeds this same page.
 An Organizer sign-in can request a scoped upload session through the authenticated
 `POST /api/vendor-uploads/session`; passwords are never sent to the page.
-Clients choose and persist an upload ID before sending bytes. Empty POST responses
-can reconnect to that job, and progress polling retries empty/502/503/504 replies.
+Clients choose and persist an upload ID before registering through `POST /begin`.
+Registration is idempotent; `PUT /{id}/chunk?offset=...` accepts only the current
+confirmed offset, and `POST /{id}/complete` starts one import after all bytes arrive.
+Lost chunk acknowledgements reconcile against the status endpoint before retrying;
+neither retries nor double completion append duplicate bytes or start two workers.
+After a page reload, choose the same unchanged ZIP to resume its transfer. An idle
+unfinished transfer can be cancelled to release its disk file and upload slot.
+Signed upload sessions renew without changing their owning nonce, including a
+24-hour renewal grace for a recently expired signed proof. A fresh dashboard link
+does not replace the scope owning an unfinished transfer in that tab.
+Progress polling retries empty/502/503/504 replies.
 The scoped token and job ID stay in tab session storage so reloads can resume
 tracking a background import. Server redeploys still lose in-memory job progress;
 previously committed records remain in PostgreSQL and duplicate retries are safe.
