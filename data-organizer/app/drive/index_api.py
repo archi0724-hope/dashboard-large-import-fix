@@ -82,6 +82,8 @@ def start(body: StartSource | None = None):
             raise HTTPException(422,'Paste a Google Drive folder or ZIP file link first.')
         if indexer.ACTIVE and indexer.ACTIVE.is_alive() and source != selected['source']:
             raise HTTPException(409,'Another Drive source is being indexed. Click Pause, wait for the current batch to finish, then submit your link again.')
+        if indexer.ACTIVE and indexer.ACTIVE.is_alive():
+            return {'started':False,'running':True}
         selected['source'] = source
         index.select_source(selected)
         indexer.start_index(index.store,selected['scope'],source)

@@ -87,15 +87,18 @@ def extracted_records(path, fallback_company=''):
         with path.open(encoding='utf-8-sig',errors='replace',newline='') as source:
             yield from table_records(csv.reader(source),fallback_company=fallback_company)
     elif ext == '.pdf':
-        from pypdf import PdfReader
-        reader = PdfReader(path,strict=False)
-        for number,page in enumerate(reader.pages,1):
-            text = page.extract_text() or ''
-            if not text.strip():
-                yield {'kind':'needs_ocr','company':fallback_company,'product':'','page':number,'text':'Image-only page; OCR needed.'}
-            else:
-                for offset in range(0,len(text),20000):
-                    yield {'kind':'document','company':fallback_company,'product':'','page':number,'part':offset//20000+1,'text':text[offset:offset+20000]}
+        import pdfplumber
+        with pdfplumber.open(path) as reader:
+            for number,page in enumerate(reader.pages,1):
+                try:
+                    text = page.extract_text() or ''
+                    if not text.strip():
+                        yield {'kind':'needs_ocr','company':fallback_company,'product':'','page':number,'text':'Image-only page; OCR needed.'}
+                    else:
+                        for offset in range(0,len(text),20000):
+                            yield {'kind':'document','company':fallback_company,'product':'','page':number,'part':offset//20000+1,'text':text[offset:offset+20000]}
+                finally:
+                    page.close()
     elif ext == '.docx':
         from docx import Document
         doc = Document(path)

@@ -162,6 +162,22 @@ def test_xlsx_stream_reads_shared_strings_and_original_row_positions(tmp_path):
     assert rows[0]['price'] == '120'
 
 
+def test_pdf_text_and_image_only_pages_use_installed_parser(tmp_path):
+    from reportlab.pdfgen.canvas import Canvas
+
+    path = tmp_path / 'catalogue.pdf'
+    canvas = Canvas(str(path))
+    canvas.drawString(50, 700, 'Synthetic Medical Surgical Pump')
+    canvas.showPage()
+    canvas.showPage()
+    canvas.save()
+    rows = list(indexer.extracted_records(path, 'Synthetic Medical'))
+    assert rows[0]['kind'] == 'document'
+    assert 'Surgical Pump' in rows[0]['text']
+    assert rows[0]['page'] == 1
+    assert rows[1]['kind'] == 'needs_ocr' and rows[1]['page'] == 2
+
+
 def test_index_api_requires_auth_before_opening_storage(index,monkeypatch):
     from fastapi.testclient import TestClient
 
