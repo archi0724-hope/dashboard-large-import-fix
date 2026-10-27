@@ -67,6 +67,34 @@ def test_range_read_refuses_server_that_sends_whole_archive(monkeypatch):
         range_zip.DriveRangeFile('archive12345')
 
 
+def test_selected_zip_also_resumes_other_saved_sources_and_reuses_directory(index, monkeypatch):
+    payload = BytesIO()
+    with zipfile.ZipFile(payload, 'w') as archive:
+        archive.writestr('Alpha/one.txt', 'First searchable document')
+        archive.writestr('Alpha/two.txt', 'Second searchable document')
+    opened = []
+    def session():
+        opened.append(True)
+        return Session(payload.getvalue())
+    monkeypatch.setattr(range_zip.requests, 'Session', session)
+    index.discover([{'entry_key':'older-file','folder_id':'folder123456','drive_id':'olderzip12345',
+                    'source_name':'older.zip','member_path':'Alpha/one.txt','size_bytes':25,'version':'1'}])
+    indexer.run_index(index.store, 'folder123456',
+                      {'kind':'zip','id':'currentzip12345','url':'https://drive.google.com/file/d/currentzip12345/view'})
+    assert index.status('folder123456')['counts']['indexed'] == 3
+    assert index.existing('older-file')['status'] == 'indexed'
+    # One discovery reader plus one reader for each of the two archives.
+    assert len(opened) == 3
+    assert index.search('folder123456')['total'] == 3
+
+
+def test_fresh_pending_entries_are_processed_before_failed_retries(index):
+    base = {'folder_id':'folder123456','drive_id':'archive12345','source_name':'one.zip','version':'1'}
+    index.discover([{**base,'entry_key':'failed','member_path':'small.txt','size_bytes':1,'status':'failed'},
+                    {**base,'entry_key':'pending','member_path':'larger.txt','size_bytes':100,'status':'pending'}])
+    assert [entry['entry_key'] for entry in index.pending('folder123456')] == ['pending','failed']
+
+
 def test_changed_version_removes_stale_rows_and_resume_deduplicates(index):
     entry = {'entry_key':'source','folder_id':'folder123456','drive_id':'file1234567','source_name':'list.csv',
              'size_bytes':30,'version':'one'}

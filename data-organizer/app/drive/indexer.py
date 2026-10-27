@@ -8,7 +8,8 @@ import re
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
+from collections import OrderedDict
+from contextlib import ExitStack, contextmanager
 from pathlib import Path, PurePosixPath
 
 from .index_store import DriveIndex
@@ -178,11 +179,43 @@ def discover(index, folder, source=None):
                 index.mark(key,'pending')
 
 
+class ArchiveReaders:
+    """Reuse two bounded ZIP readers rather than re-fetching directories per file."""
+
+    def __init__(self):
+        self.readers = OrderedDict()
+
+    def get(self, file_id):
+        if file_id not in self.readers:
+            if len(self.readers) >= 2:
+                _, (_, oldest) = self.readers.popitem(last=False)
+                oldest.close()
+            with ExitStack() as stack:
+                remote = stack.enter_context(DriveRangeFile(file_id))
+                archive = stack.enter_context(archive_members(remote))
+                self.readers[file_id] = (archive, stack.pop_all())
+        self.readers.move_to_end(file_id)
+        return self.readers[file_id][0]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        for _, stack in self.readers.values():
+            stack.close()
+        self.readers.clear()
+
+
 @contextmanager
-def source_copy(entry, target):
+def source_copy(entry, target, readers=None):
     """Temporary one-document copy; validate ZIP size and CRC before indexing."""
     if entry['member_path']:
-        with DriveRangeFile(entry['drive_id']) as remote, archive_members(remote) as archive:
+        with ExitStack() as stack:
+            if readers is None:
+                remote = stack.enter_context(DriveRangeFile(entry['drive_id']))
+                archive = stack.enter_context(archive_members(remote))
+            else:
+                archive = readers.get(entry['drive_id'])
             member = archive.getinfo(entry['member_path'])
             if not safe_member(member.filename) or member.file_size > MAX_DOCUMENT or member.flag_bits & 1:
                 raise ValueError('Unsafe, encrypted or oversized archive member.')
@@ -205,7 +238,7 @@ def run_index(store, folder, source=None):
     index = DriveIndex(store)
     # A session-level lock also prevents a resumed process and old deployment
     # from indexing the same folder concurrently. It releases on disconnect.
-    with store.connection() as lease:
+    with store.connection() as lease, ArchiveReaders() as readers:
         if store.cloud:
             lease.connection.autocommit = True
             key = int(hashlib.sha256(folder.encode()).hexdigest()[:15],16)
@@ -215,8 +248,6 @@ def run_index(store, folder, source=None):
             index.state(folder,'running','Discovering files and ZIP contents',OWNER)
             discover(index,folder,source)
             for entry in index.pending(folder):
-                if source and source['kind'] == 'zip' and entry['drive_id'] != source['id']:
-                    continue
                 if CANCEL.is_set():
                     index.state(folder,'paused','Paused. Resume continues from saved files and rows.',OWNER)
                     return
@@ -231,7 +262,7 @@ def run_index(store, folder, source=None):
                 try:
                     with tempfile.TemporaryDirectory(prefix='drive-index-') as work:
                         target = Path(work) / ('document'+Path(name).suffix.lower())
-                        with source_copy(entry,target):
+                        with source_copy(entry,target,readers):
                             if not entry['size_bytes']:
                                 index.set_size(entry['entry_key'],target.stat().st_size)
                             with target.open('rb') as content:
