@@ -142,6 +142,15 @@ they remain in Organizer catalogue approval for correction. The uploaded
 workbook is retained as the source file and is not overwritten; download the
 generated company-wise workbook to get the integrated catalogue.
 
+The **Saved catalogue and manual Excel records** table defaults to **All saved
+rows**, with filters for **Validated only** and **Needs review**. Its company-wise
+Excel download includes both statuses with a Review Flag and Review reason.
+Available source price text is recovered from retained manual workbooks for the
+download; values such as `N/A` or `4,000 + GST` are not silently approved as numeric
+prices. Review rows remain excluded from approved product APIs and assistant
+results. Re-uploading an identical workbook adds no new rows. Drive source rows
+remain separately searchable in the Drive catalogue above this table.
+
 Catalogue rows extracted from the Vendor dashboard's existing document-upload
 workflow are also staged for approval. Older product records remain visible for
 backward compatibility. Authentication is shared at dashboard level: set

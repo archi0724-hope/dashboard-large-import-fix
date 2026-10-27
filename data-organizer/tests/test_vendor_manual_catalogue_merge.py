@@ -587,12 +587,12 @@ def test_manual_upload_automatically_joins_saved_catalogue_and_standard_export(t
     assert set(store.product_records().company_name) == {"Alpha Medical", "Beta Medical"}
     assert store.search_index_signature() != signature
     assert {row["Product Name"] for row in exported_products(store)} == {"Wheelchair", "Medical examination gloves"}
-    assert any(metric.label == "Reviewed catalogue records" and metric.value == "2" for metric in page.metric)
+    assert any(metric.label == "Saved catalogue records" and metric.value == "2" for metric in page.metric)
     assert [item.key for item in page.get("download_button")] == ["company_wise_catalogue_price_export"]
     assert not any(item.key == "prepare_manual_catalogue_merge" for item in page.button)
     page.text_input(key="product_search").set_value("G1").run()
     assert not page.exception
-    assert any(metric.label == "Reviewed catalogue records" and metric.value == "1" for metric in page.metric)
+    assert any(metric.label == "Saved catalogue records" and metric.value == "1" for metric in page.metric)
     assert store.product_record_count() == 2
     page.file_uploader[0].clear().run()
     page.file_uploader[0].set_value(upload).run()
@@ -611,7 +611,7 @@ def test_upload_survives_clearing_widget_and_new_session(tmp_path, monkeypatch):
     assert "manual_catalogue_import_result" not in page.session_state
     page = catalogue_page(tmp_path, monkeypatch)
     assert Store(tmp_path).product_record_count() == 1
-    assert any(metric.label == "Reviewed catalogue records" and metric.value == "1" for metric in page.metric)
+    assert any(metric.label == "Saved catalogue records" and metric.value == "1" for metric in page.metric)
 
 
 def test_invalid_workbook_does_not_change_catalogue(tmp_path, monkeypatch):
@@ -687,6 +687,63 @@ def test_manual_rows_keep_vendor_assignments_and_original_bytes_across_backup(tm
     restored.restore_backup(store.backup_bytes())
     assert restored.product_record_count() == 3
     assert len(restored.documents()) == 3
+
+
+def test_full_saved_catalogue_includes_review_rows_and_original_price_text(tmp_path, monkeypatch):
+    from exports import read_manual_catalogue_workbook
+    from storage import Store
+
+    store = Store(tmp_path)
+    upload = manual_upload([
+        ['Alpha Medical', 'Medical examination gloves', 'G1', 100, 'INR', ''],
+        ['Alpha Medical', 'Medical examination gloves', 'G1', 100, 'INR', ''],
+        ['Alpha Medical', 'Surgical forceps', 'F1', '₹4,000 + GST', 'INR', ''],
+        ['Alpha Medical', 'Surgical forceps', 'F1', '₹5,000 + GST', 'INR', ''],
+        ['Beta Medical', 'Wheelchair', 'W1', 'N/A', 'INR', ''],
+        ['Alpha Medical', 'Amoxicillin 500 mg capsules', 'D1', 25, 'INR', ''],
+    ])
+    store.import_catalogue_workbook(upload[0], upload[1])
+    assert store.product_record_count() == 1
+    assert store.product_record_count(status='all') == 4
+    assert store.product_record_count(status='review') == 3
+    assert len(store.product_records(status='all', limit=2)) == 2
+    original_read = store.read_bytes
+    reads = []
+    monkeypatch.setattr(store, 'read_bytes', lambda doc: (reads.append(doc), original_read(doc))[1])
+    frame = store.catalogue_export_records()
+    assert len(frame) == 4 and len(reads) == 1  # One read for all company copies of the same workbook.
+    assert set(frame.loc[frame.catalogue_status == 'review', 'source_price_text']) == {'₹4,000 + GST', '₹5,000 + GST', 'N/A'}
+    assert (frame.loc[frame.catalogue_status == 'review', 'review_flag'] == 'Needs review').all()
+    payload = catalogue_price_workbook_bytes(frame, include_review_details=True)
+    workbook = load_workbook(BytesIO(payload), data_only=False)
+    sheet = list(workbook['All catalogue & prices'].values)
+    records = [dict(zip(sheet[3], row)) for row in sheet[4:]]
+    assert len(records) == 4
+    assert sum(row['Review Flag'] == 'Needs review' for row in records) == 3
+    assert all(row['Review reason'] for row in records)
+    assert all(cell.data_type != 'f' for ws in workbook for row in ws for cell in row)
+    workbook.close()
+    approved, review, excluded = read_manual_catalogue_workbook(payload, 'full.xlsx')
+    assert len(approved) == 1 and len(review) == 3 and excluded == 0
+    assert store.read_bytes(store.documents().iloc[0].id) == upload[1]
+
+
+def test_catalogue_status_filter_shows_all_saved_rows_without_approving_them(tmp_path, monkeypatch):
+    from storage import Store
+
+    store = Store(tmp_path)
+    store.import_catalogue_workbook(*manual_upload([
+        ['Alpha Medical', 'Wheelchair', 'W1', 100, 'INR', ''],
+        ['Alpha Medical', 'Surgical forceps', 'F1', 'N/A', 'INR', ''],
+    ])[:2])
+    page = catalogue_page(tmp_path, monkeypatch)
+    assert not page.exception
+    assert any(metric.label == 'Saved catalogue records' and metric.value == '2' for metric in page.metric)
+    page.selectbox(key='product_status').set_value('Validated only').run()
+    assert any(metric.label == 'Saved catalogue records' and metric.value == '1' for metric in page.metric)
+    page.selectbox(key='product_status').set_value('Needs review').run()
+    assert any(metric.label == 'Saved catalogue records' and metric.value == '1' for metric in page.metric)
+    assert store.product_classification_counts()['approved'] == 1
 
 
 def test_manual_review_drugs_and_multi_price_rows_are_preserved_safely(tmp_path):

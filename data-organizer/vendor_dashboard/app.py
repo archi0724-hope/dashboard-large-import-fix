@@ -30,13 +30,13 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
 # export or Store class once so the app starts without a manual restart.
-if not hasattr(exports_module, "read_manual_catalogue_workbook"):
+if not hasattr(exports_module, "read_manual_catalogue_workbook") or not getattr(exports_module, "CATALOGUE_REVIEW_EXPORT", False):
     exports_module = importlib.reload(exports_module)
 catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
 csv_bytes = exports_module.csv_bytes
 workbook_bytes = exports_module.workbook_bytes
 
-MANUAL_CATALOGUE_IMPORT_VERSION = 3
+MANUAL_CATALOGUE_IMPORT_VERSION = 4
 if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL_CATALOGUE_IMPORT_VERSION or not all(
     hasattr(storage_module.Store, method)
     for method in (
@@ -44,6 +44,7 @@ if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL
         "product_classification_counts",
         "product_review_records",
         "import_catalogue_workbook",
+        "catalogue_export_records",
     )
 ):
     storage_module = importlib.reload(storage_module)
@@ -153,6 +154,7 @@ try:
             "product_classification_counts",
             "product_review_records",
             "import_catalogue_workbook",
+            "catalogue_export_records",
         )
     ):
         open_store.clear()
@@ -200,7 +202,7 @@ def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | N
 
 @st.cache_data(show_spinner=False, max_entries=2, ttl=600)
 def catalogue_download(_store: Store, store_identity: str, signature: tuple) -> bytes:
-    return catalogue_price_workbook_bytes(_store.product_records())
+    return catalogue_price_workbook_bytes(_store.catalogue_export_records(), include_review_details=True)
 
 
 @st.cache_data(show_spinner=False, max_entries=32)
@@ -949,8 +951,8 @@ elif page == "Catalogue & prices":
     catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(setting('APP_PASSWORD'))
     st.link_button('Open Drive catalogue in a new tab', catalogue_url)
     st.iframe(catalogue_url, height=850)
-    st.subheader("Reviewed catalogue and manual Excel records")
-    st.caption("Drive source rows appear in the searchable catalogue above. The table below contains validated catalogue records; its count does not include unreviewed Drive rows.")
+    st.subheader("Saved catalogue and manual Excel records")
+    st.caption("Drive source rows appear in the searchable catalogue above. Saved manual/document rows below include both validated records and rows needing review. Their status is shown explicitly.")
     st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
     manual_workbook = st.file_uploader(
         "Upload manual catalogue & prices (.xlsx)", type=["xlsx"], max_upload_size=2048,
@@ -989,14 +991,17 @@ elif page == "Catalogue & prices":
         st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
     result = st.session_state.get("manual_catalogue_import_result")
     if result:
-        st.success(f"Saved {result['added']:,} catalogue row(s); {result['duplicates']:,} already imported row(s) skipped.")
-        st.caption(f"{result['review']:,} row(s) saved to Review files; {result['excluded']:,} medicine/drug row(s) excluded. Manual and automatically extracted rows share the table and Excel export below.")
+        if not result['added'] and not result['review'] and result['duplicates']:
+            st.info("This workbook was already imported. No new rows were added; its saved rows remain in the table and full Excel export below.")
+        else:
+            st.success(f"Saved {result['added']:,} validated row(s) and {result['review']:,} row(s) needing review.")
+        st.caption(f"{result['duplicates']:,} already processed source row(s) skipped; {result['excluded']:,} medicine/drug row(s) excluded from this workbook. Source rows can expand into multiple prices or collapse as exact duplicates.")
     catalogue_counts = store.product_classification_counts()
     st.caption(
         "Medical devices, equipment, diagnostics and consumables only; medicines and drugs are excluded. "
         "Names and price fields are cleaned and checked before display. "
-        f"{catalogue_counts['review']:,} unclear or invalid row(s) are in Review files; "
-        f"{catalogue_counts['excluded']:,} non-drug-scope row(s) are excluded. "
+        f"{catalogue_counts['approved']:,} validated row(s) and {catalogue_counts['review']:,} row(s) needing review are saved. "
+        "The full Excel export includes review rows with their reasons and available original price text. "
         "Re-importing the same document is safe and does not duplicate rows."
     )
     export_signature = store.search_index_signature()
@@ -1008,24 +1013,26 @@ elif page == "Catalogue & prices":
         icon=":material/download:",
         key="company_wise_catalogue_price_export",
         on_click="ignore",
-        help="Download an Excel workbook with one tab per company. Original files stay stored in their checklist folders and backups.",
+        help="Includes validated and Needs review rows, with Review Flag, Review reason and source price text. One tab per company; originals are preserved.",
     )
     st.caption("Excel generates when you click download. You can keep browsing while it prepares.")
     search = st.text_input("Search products, SKUs, descriptions or vendors", key="product_search")
     record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
     kind = "" if record_type == "All" else record_type
-    total_records = store.product_record_count(search, kind)
-    st.metric("Reviewed catalogue records", f"{total_records:,}")
+    status_label = st.selectbox("Rows to show", ["All saved rows", "Validated only", "Needs review"], key="product_status")
+    status = {"All saved rows":"all", "Validated only":"approved", "Needs review":"review"}[status_label]
+    total_records = store.product_record_count(search, kind, status=status)
+    st.metric("Saved catalogue records", f"{total_records:,}")
     page_size = 200
     page_count = max(1, (total_records + page_size - 1) // page_size)
-    filter_key = (search, kind)
+    filter_key = (search, kind, status)
     if st.session_state.get("product_page_filter") != filter_key:
         st.session_state["product_page_filter"] = filter_key
         st.session_state["product_page"] = 1
     st.session_state["product_page"] = min(st.session_state.get("product_page", 1), page_count)
     page_number = st.number_input("Page", min_value=1, max_value=page_count, step=1, key="product_page")
     offset = (int(page_number) - 1) * page_size
-    records = store.product_records(search, kind, limit=page_size, offset=offset)
+    records = store.product_records(search, kind, limit=page_size, offset=offset, status=status)
     if total_records:
         st.caption(f"Showing {offset + 1:,}–{offset + len(records):,} of {total_records:,} matching records. Search covers all records; Excel export includes the full catalogue.")
     if records.empty:
@@ -1034,7 +1041,7 @@ elif page == "Catalogue & prices":
         product_display_columns = [
             "company_name", "record_type", "product_name", "sku", "brand", "specification",
             "pack_size", "unit", "price", "mrp", "gst", "currency", "source_file",
-            "source_sheet", "source_page", "extraction_confidence",
+            "source_sheet", "source_page", "extraction_confidence", "catalogue_status", "classification_reason",
         ]
         # Keep legacy product rows visible while a hot-reloaded Store/schema catches up.
         records = records.reindex(columns=list(dict.fromkeys([*records.columns, *product_display_columns])), fill_value="")
@@ -1043,7 +1050,9 @@ elif page == "Catalogue & prices":
             "brand": "Brand", "specification": "Specification", "pack_size": "Pack", "unit": "Unit",
             "price": "Price", "mrp": "MRP", "gst": "GST", "currency": "Currency", "source_file": "Source file",
             "source_sheet": "Sheet", "source_page": "Page", "extraction_confidence": "Confidence",
+            "catalogue_status":"Review status", "classification_reason":"Review reason",
         })
+        display['Review status'] = display['Review status'].replace({'approved':'Validated', 'review':'Needs review'})
         show_table(display)
 
 elif page == "Uploaded ZIPs":

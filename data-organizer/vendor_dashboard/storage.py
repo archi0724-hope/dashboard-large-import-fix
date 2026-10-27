@@ -98,7 +98,7 @@ class Query:
 
 
 class Store:
-    manual_catalogue_import_version = 3
+    manual_catalogue_import_version = 4
 
     def __init__(self, data_dir: Path, database_url: str = "", *, initialize: bool = True):
         self.data_dir = Path(data_dir).resolve()
@@ -1131,13 +1131,24 @@ class Store:
                            (json.dumps(merged), "Catalogue/price-list classification from filename and extracted content.", int(document_id)))
 
     @staticmethod
-    def _unique_product_predicate(alias="p"):
+    def _catalogue_status_filter(alias, status):
+        if status == 'all':
+            return f"{alias}.catalogue_status IN ('approved','review')"
+        if status not in {'approved', 'review'}:
+            raise ValueError('Choose approved, review or all catalogue rows.')
+        return f"{alias}.catalogue_status='{status}'"
+
+    @staticmethod
+    def _unique_product_predicate(alias="p", status="approved"):
         fields = ["record_type", "product_name", "sku", "description", "unit", "price", "mrp",
                   "discount", "gst", "currency", "brand", "product_category", "specification",
                   "pack_size", "moq", "availability", "image_reference"]
         owner = "CASE WHEN u.company_key<>'' THEN u.company_key ELSE '__document__'||CAST(u.document_id AS TEXT) END"
-        group = ','.join([owner,*('u.'+field for field in fields)])
-        return f"{alias}.id IN (SELECT min(u.id) FROM vdd_product_records u WHERE u.catalogue_status='approved' GROUP BY {group})"
+        # Invalid prices are stored as NULL. Different unparsed source values must
+        # remain separate until reviewed, even if the normalized columns match.
+        review_identity = "CASE WHEN u.catalogue_status='review' THEN u.id ELSE 0 END"
+        group = ','.join([owner,'u.catalogue_status',review_identity,*('u.'+field for field in fields)])
+        return f"{alias}.id IN (SELECT min(u.id) FROM vdd_product_records u WHERE {Store._catalogue_status_filter('u', status)} GROUP BY {group})"
 
     @staticmethod
     def _product_filter(query: str, record_type: str):
@@ -1183,23 +1194,23 @@ class Store:
             ).fetchall()
         return [dict(row) for row in rows], total
 
-    def product_record_count(self, query: str = "", record_type: str = "") -> int:
+    def product_record_count(self, query: str = "", record_type: str = "", *, status: str = "approved") -> int:
         where, params = self._product_filter(query, record_type)
         with self.connection() as db:
             return int(db.execute(
-                "SELECT COUNT(*) AS n FROM vdd_product_records p WHERE p.catalogue_status='approved' AND "
-                + self._unique_product_predicate()
+                "SELECT COUNT(*) AS n FROM vdd_product_records p WHERE "
+                + self._catalogue_status_filter('p', status) + " AND " + self._unique_product_predicate(status=status)
                 + (" AND " + where.removeprefix(" WHERE ") if where else ""),
                 params,
             ).fetchone()["n"])
 
-    def product_records(self, query: str = "", record_type: str = "", *, limit: int | None = None, offset: int = 0) -> pd.DataFrame:
+    def product_records(self, query: str = "", record_type: str = "", *, limit: int | None = None, offset: int = 0, status: str = "approved") -> pd.DataFrame:
         sql = """SELECT p.*, COALESCE(NULLIF(p.source_file, ''), d.filename) AS source_file
             FROM vdd_product_records p
             LEFT JOIN vdd_documents d ON d.id=p.document_id
-            WHERE p.catalogue_status='approved'"""
+            WHERE """ + self._catalogue_status_filter('p', status)
         where, params = self._product_filter(query, record_type)
-        sql += ' AND '+self._unique_product_predicate()
+        sql += ' AND '+self._unique_product_predicate(status=status)
         if where:
             sql += " AND " + where.removeprefix(" WHERE ")
         sql += " ORDER BY lower(p.company_name), lower(p.product_name), p.id"
@@ -1211,6 +1222,43 @@ class Store:
         with self.connection() as db:
             rows = [dict(row) for row in db.execute(sql, params).fetchall()]
         return pd.DataFrame(rows, columns=PRODUCT_COLUMNS)
+
+    def catalogue_export_records(self) -> pd.DataFrame:
+        """Include saved review rows and recover source price text once per manual workbook.
+
+        This is a read-only export. It never approves unclear rows or replaces prices.
+        """
+        from exports import read_manual_catalogue_workbook
+
+        frame = self.product_records(status='all')
+        frame['review_flag'] = frame.catalogue_status.map({'approved':'Validated', 'review':'Needs review'})
+        frame['source_price_text'] = ''
+        if frame.empty or not (frame.catalogue_status == 'review').any():
+            return frame
+        with self.connection() as db:
+            originals = [dict(row) for row in db.execute("""SELECT min(d.id) AS id,d.file_hash,d.filename
+                FROM vdd_documents d JOIN vdd_product_records p ON p.document_id=d.id
+                WHERE p.catalogue_status='review' AND d.source_batch='Manual catalogue upload'
+                  AND d.size_bytes<=134217728
+                GROUP BY d.file_hash,d.filename""").fetchall()]
+            hashes = {int(row['id']):row['file_hash'] for row in db.execute(
+                "SELECT id,file_hash FROM vdd_documents WHERE source_batch='Manual catalogue upload'"
+            ).fetchall()}
+        prices = {}
+        for original in originals:
+            content = self.read_bytes(int(original['id']))
+            if content is None:
+                continue  # A Drive-only original remains accessible through its source link.
+            try:
+                approved, review, _ = read_manual_catalogue_workbook(content, original['filename'])
+            except (ValueError, RuntimeError, OSError):
+                continue  # Preserve saved rows even when their original is unavailable/unreadable.
+            for source in pd.concat([approved, review], ignore_index=True).to_dict('records'):
+                price = source.get('price')
+                prices[(original['file_hash'],source.get('source_sheet',''),str(source.get('source_page','')))] = '' if price is None else str(price)
+        frame['source_price_text'] = [prices.get((hashes.get(int(row.document_id)),row.source_sheet,str(row.source_page)), '')
+                                      for row in frame.itertuples(index=False)]
+        return frame
 
     def product_review_records(self, *, limit: int = 1000) -> pd.DataFrame:
         if limit < 1:

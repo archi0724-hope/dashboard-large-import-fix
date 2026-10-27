@@ -28,6 +28,7 @@ except ModuleNotFoundError as error:
 from vendor_core import DOCUMENT_TYPES, supporting_category
 
 STREAMING_CATALOGUE_EXPORT = True
+CATALOGUE_REVIEW_EXPORT = True
 
 CATALOGUE_PRICE_COLUMN_OPTIONS = {
     "company_name": ("Company Name", 34),
@@ -220,7 +221,7 @@ def workbook_bytes(checklist: pd.DataFrame, documents: pd.DataFrame, per_company
     return output.getvalue()
 
 
-def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | None = None) -> bytes:
+def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | None = None, *, include_review_details: bool = False) -> bytes:
     """Create a read-only, company-wise workbook from extracted product records.
 
     This deliberately only reads the extracted rows.  It does not move, rename,
@@ -229,12 +230,17 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
     if OPENPYXL_IMPORT_ERROR is not None:
         raise RuntimeError("Excel export requires the openpyxl package. Add openpyxl to requirements.txt and redeploy the app.") from OPENPYXL_IMPORT_ERROR
 
-    source_columns = columns or list(CATALOGUE_PRICE_COLUMN_OPTIONS)
-    source_columns = [column for column in source_columns if column in CATALOGUE_PRICE_COLUMN_OPTIONS]
+    column_options = dict(CATALOGUE_PRICE_COLUMN_OPTIONS)
+    if include_review_details:
+        column_options.update({'source_price_text':('Source price text', 42),
+                               'review_flag':('Review Flag', 18),
+                               'classification_reason':('Review reason', 60)})
+    source_columns = columns or list(column_options)
+    source_columns = [column for column in source_columns if column in column_options]
     if not source_columns:
         raise ValueError("Choose at least one Excel column.")
-    headers = [CATALOGUE_PRICE_COLUMN_OPTIONS[column][0] for column in source_columns]
-    widths = [CATALOGUE_PRICE_COLUMN_OPTIONS[column][1] for column in source_columns]
+    headers = [column_options[column][0] for column in source_columns]
+    widths = [column_options[column][1] for column in source_columns]
     frame = records.reindex(columns=list(dict.fromkeys(["company_name", *source_columns])), fill_value="").copy()
     frame["company_name"] = frame["company_name"].fillna("Unassigned").replace("", "Unassigned")
     sort_columns = [column for column in ("company_name", "record_type", "product_name") if column in frame]
@@ -271,7 +277,8 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
         sheet.set_row(0, 32)
         sheet.merge_range(0, 0, 0, len(headers)-1, company, title_format) if len(headers) > 1 else sheet.write_string(0, 0, company, title_format)
         sheet.set_row(1, 34)
-        note = "Extracted catalogue and price rows. Original source files remain stored in the checklist and backups."
+        note = ("Validated and Needs review rows are included. Review Flag and Review reason identify unverified rows; source price text is not an approved price."
+                if include_review_details else "Extracted catalogue and price rows. Original source files remain stored in the checklist and backups.")
         sheet.merge_range(1, 0, 1, len(headers)-1, note, note_format) if len(headers) > 1 else sheet.write_string(1, 0, note, note_format)
         sheet.set_row(3, 32)
         sheet.write_row(3, 0, headers, header_format)
