@@ -59,29 +59,27 @@ def drive_original_reference(value: str) -> tuple[str, str]:
 
 def manual_catalogue_records(frame: pd.DataFrame, *, needs_review: bool) -> list[dict]:
     """Fit validated spreadsheet rows into the existing numeric product columns."""
-    records = []
-    for record in frame.astype(object).where(pd.notna(frame), None).to_dict("records"):
-        record = {
-            field: value.isoformat() if isinstance(value, (date, datetime, time)) else value
-            for field, value in record.items()
-        }
-        for field in ("price", "mrp", "discount", "gst"):
-            if record.get(field) in (None, ""):
-                record[field] = None
-        record["extraction_confidence"] = record.get("extraction_confidence") or "high"
-        prices = [record.get("price")]
-        if not needs_review and isinstance(prices[0], str):
-            prices = [float(re.sub(r"₹|INR|\s", "", value, flags=re.IGNORECASE))
-                      for value in prices[0].split(",")]
-        if needs_review:
-            # Invalid source values remain available in the retained original workbook.
-            for field in ("price", "mrp", "discount", "gst"):
-                value = pd.to_numeric(record.get(field), errors="coerce")
-                record[field] = None if pd.isna(value) else float(value)
-            prices = [record["price"]]
-        record["source_row"] = int(record.get("source_page") or 0)
-        records.extend({**record, "price": price} for price in prices)
-    return records
+    return [variant for record in frame.astype(object).where(pd.notna(frame), None).to_dict('records')
+            for variant in manual_record_variants(record, needs_review=needs_review)]
+
+
+def manual_record_variants(record, *, needs_review):
+    record = {field: value.isoformat() if isinstance(value, (date, datetime, time)) else value
+              for field, value in record.items()}
+    for field in ('price', 'mrp', 'discount', 'gst'):
+        if record.get(field) in (None, ''):
+            record[field] = None
+    record['extraction_confidence'] = record.get('extraction_confidence') or 'high'
+    prices = [record.get('price')]
+    if not needs_review and isinstance(prices[0], str):
+        prices = [float(re.sub(r'₹|INR|\s', '', value, flags=re.IGNORECASE)) for value in prices[0].split(',')]
+    if needs_review:
+        for field in ('price', 'mrp', 'discount', 'gst'):
+            value = pd.to_numeric(record.get(field), errors='coerce')
+            record[field] = None if pd.isna(value) else float(value)
+        prices = [record['price']]
+    record['source_row'] = int(record.get('source_page') or 0)
+    return [{**record, 'price':price} for price in prices]
 
 
 class Query:
@@ -98,7 +96,7 @@ class Query:
 
 
 class Store:
-    manual_catalogue_import_version = 5
+    manual_catalogue_import_version = 6
 
     def __init__(self, data_dir: Path, database_url: str = "", *, initialize: bool = True):
         self.data_dir = Path(data_dir).resolve()
@@ -142,6 +140,8 @@ class Store:
         ident = "BIGSERIAL PRIMARY KEY" if self.cloud else "INTEGER PRIMARY KEY AUTOINCREMENT"
         blob = "BYTEA" if self.cloud else "BLOB"
         with self.connection() as db:
+            if not self.cloud:
+                db.execute('PRAGMA journal_mode=WAL')  # Readers stay available during a large import transaction.
             if self.cloud:
                 db.execute("SELECT pg_advisory_xact_lock(739182641)")
             db.execute("CREATE TABLE IF NOT EXISTS vdd_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -384,6 +384,7 @@ class Store:
                                 "UPDATE vdd_documents SET types_json=?,reviewed=? WHERE id=?",
                                 (json.dumps(types), max(int(existing["reviewed"]), int(document["reviewed"])), existing["id"]),
                             )
+                            db.execute('UPDATE vdd_documents SET payload=(SELECT payload FROM vdd_documents WHERE id=?) WHERE id=? AND payload IS NULL', (document['id'],existing['id']))
                             db.execute("DELETE FROM vdd_documents WHERE id=?", (document["id"],))
                             db.execute("DELETE FROM vdd_product_records WHERE document_id=?", (document["id"],))
                             merged_documents += 1
@@ -434,6 +435,7 @@ class Store:
                         types = normalize_document_types(json.loads(existing["types_json"]) + json.loads(document["types_json"]))
                         db.execute("UPDATE vdd_documents SET types_json=?,reviewed=? WHERE id=?",
                                    (json.dumps(types), max(int(existing["reviewed"]), int(document["reviewed"])), existing["id"]))
+                        db.execute('UPDATE vdd_documents SET payload=(SELECT payload FROM vdd_documents WHERE id=?) WHERE id=? AND payload IS NULL', (document['id'],existing['id']))
                         db.execute("DELETE FROM vdd_documents WHERE id=?", (document["id"],))
                         db.execute("DELETE FROM vdd_product_records WHERE document_id=?", (document["id"],))
                         merged_documents += 1
@@ -461,6 +463,10 @@ class Store:
         with self.connection() as db:
             cols = ", ".join(DOC_COLUMNS)
             rows = [dict(row) for row in db.execute(f"SELECT {cols}, CASE WHEN payload IS NOT NULL THEN 1 ELSE 0 END AS has_payload FROM vdd_documents ORDER BY lower(company_name), filename").fetchall()]
+            shared = {row['file_hash'] for row in db.execute("SELECT DISTINCT file_hash FROM vdd_documents WHERE payload IS NOT NULL").fetchall()} if self.cloud else set()
+        for row in rows:
+            if row['stored_path'].startswith('shared-manual:') and row['file_hash'] in shared:
+                row['has_payload'] = 1
         frame = pd.DataFrame(rows, columns=DOC_COLUMNS + ["has_payload"])
         frame["types"] = frame.types_json.map(lambda value: normalize_document_types(json.loads(value)))
         frame["available"] = frame.has_payload.astype(bool) if self.cloud else frame.stored_path.map(lambda p: bool((path := self.safe_path(p)) and path.is_file() and path.stat().st_size > 0))
@@ -968,7 +974,7 @@ class Store:
 
     def _save_product_records(
         self, db: Query, document_id: int, records: list[dict], *,
-        allow_price_lists: bool = False, force_review: bool = False,
+        allow_price_lists: bool = False, force_review: bool = False, skip_existing: bool = False, new_statuses=None,
     ) -> int:
         if not records:
             return 0
@@ -980,25 +986,24 @@ class Store:
         document = db.execute("SELECT company_key,company_name FROM vdd_documents WHERE id=?", (int(document_id),)).fetchone()
         if not document:
             raise ValueError("Document not found for extracted records.")
+        candidates = [digest for _,digest in classified_records]
         existing_hashes = {
             str(row["record_hash"])
             for row in db.execute(
-                "SELECT record_hash FROM vdd_product_records WHERE document_id=?",
-                (int(document_id),),
+                "SELECT record_hash FROM vdd_product_records WHERE document_id=?" +
+                (" AND record_hash IN ("+','.join('?' for _ in candidates)+")" if skip_existing else ''),
+                (int(document_id), *candidates) if skip_existing else (int(document_id),),
             ).fetchall()
         }
         saved = 0
+        parameters = []
         for (record, status, reason), digest in classified_records:
+            if skip_existing and digest in existing_hashes:
+                continue
             if force_review:
                 status = "review"
                 reason = record.get("classification_reason") or "The source workbook requires review."
-            db.execute("""INSERT INTO vdd_product_records
-                (document_id,company_key,company_name,record_type,product_name,sku,description,unit,price,mrp,discount,gst,currency,
-                 brand,product_category,specification,pack_size,moq,availability,source_file,source_sheet,source_page,source_row,image_reference,
-                 extraction_confidence,catalogue_status,classification_reason,record_hash,extracted_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(document_id,record_hash) DO UPDATE SET
-                 product_name=excluded.product_name,price=excluded.price,currency=excluded.currency,
-                 catalogue_status=excluded.catalogue_status,classification_reason=excluded.classification_reason""",
+            parameters.append(
                 (int(document_id), document["company_key"], document["company_name"], record.get("record_type", "catalogue"),
                  record.get("product_name", ""), record.get("sku", ""), record.get("description", ""),
                  record.get("unit", ""), record.get("price"), record.get("mrp"), record.get("discount"), record.get("gst"),
@@ -1011,50 +1016,97 @@ class Store:
             if digest not in existing_hashes:
                 saved += 1
                 existing_hashes.add(digest)
+                if new_statuses is not None:
+                    new_statuses[status] = new_statuses.get(status, 0)+1
+        if parameters:
+            db.executemany("""INSERT INTO vdd_product_records
+                (document_id,company_key,company_name,record_type,product_name,sku,description,unit,price,mrp,discount,gst,currency,
+                 brand,product_category,specification,pack_size,moq,availability,source_file,source_sheet,source_page,source_row,image_reference,
+                 extraction_confidence,catalogue_status,classification_reason,record_hash,extracted_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(document_id,record_hash) DO UPDATE SET
+                 product_name=excluded.product_name,price=excluded.price,currency=excluded.currency,
+                 catalogue_status=excluded.catalogue_status,classification_reason=excluded.classification_reason""",
+                parameters)
         return saved
 
-    def import_catalogue_workbook(self, filename: str, content: bytes) -> dict:
-        """Atomically add validated manual rows to the shared catalogue."""
-        from exports import read_manual_catalogue_workbook
+    def import_catalogue_workbook(self, filename: str, content: bytes, *, progress=None) -> dict:
+        """Stream bounded batches in one transaction; retain one original per hash."""
+        from exports import iter_manual_catalogue_rows
 
-        approved, review, excluded = read_manual_catalogue_workbook(content, filename)
-        groups = {}
-        for frame, needs_review in ((approved, False), (review, True)):
-            for record in manual_catalogue_records(frame, needs_review=needs_review):
-                name = clean_company(record.get("company_name") or "")
-                key = company_key(name) if name else ""
-                group = groups.setdefault(key, {"name": name, "approved": [], "review": []})
-                group["review" if needs_review else "approved"].append(record)
-        # Retain drug-only originals too, without adding excluded rows to the catalogue.
-        if not groups:
-            groups[""] = {"name": "", "approved": [], "review": []}
         digest = hashlib.sha256(content).hexdigest()
-        stored = "" if self.cloud else self._write_file(digest, file_basename(filename), content)
-        result = {"added": 0, "review": 0, "excluded": excluded, "duplicates": 0}
+        result = {"added":0, "review":0, "excluded":0, "duplicates":0}
+        documents, batches = {}, {}
+        stored = None
+        processed, buffered = 0, 0
         with self.connection() as db:
-            for key, group in groups.items():
-                name = group["name"]
+            has_original = self.cloud and bool(db.execute(
+                'SELECT id FROM vdd_documents WHERE file_hash=? AND payload IS NOT NULL LIMIT 1', (digest,)
+            ).fetchone())
+
+            def document(name):
+                nonlocal stored, has_original
+                key = company_key(name) if name else ''
+                if key in documents:
+                    return documents[key]
+                if stored is None:
+                    stored = 'shared-manual:'+digest if self.cloud else self._write_file(digest, file_basename(filename), content)
                 if name:
-                    key = self._upsert_vendor(db, name, "Manual catalogue upload")
-                    name = db.execute("SELECT company_name FROM vdd_vendors WHERE company_key=?", (key,)).fetchone()["company_name"]
+                    canonical = self._upsert_vendor(db, name, 'Manual catalogue upload')
+                    name = db.execute('SELECT company_name FROM vdd_vendors WHERE company_key=?', (canonical,)).fetchone()['company_name']
+                else:
+                    canonical = ''
                 db.execute("""INSERT INTO vdd_documents
                     (company_key,company_name,types_json,filename,original_path,stored_path,file_hash,
                      uploaded_at,source_batch,handover,method,reason,size_bytes,payload)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(company_key,file_hash) DO NOTHING""",
-                    (key, name, json.dumps(["Catalogue", "Price"]), file_basename(filename), file_basename(filename),
+                    (canonical, name, json.dumps(["Catalogue", "Price"]), file_basename(filename), file_basename(filename),
                      stored, digest, now(), "Manual catalogue upload", "", "Manual catalogue upload",
-                     "Vendor assignments supplied by the uploaded workbook.", len(content), content if self.cloud else None))
-                document_id = int(db.execute(
-                    "SELECT id FROM vdd_documents WHERE company_key=? AND file_hash=?", (key, digest),
-                ).fetchone()["id"])
-                # Source names may change on re-upload; the original content identifies this import.
-                existing = db.execute("SELECT COUNT(*) AS n FROM vdd_product_records WHERE document_id=?", (document_id,)).fetchone()["n"]
-                if existing:
-                    result["duplicates"] += len(group["approved"]) + len(group["review"])
+                     "Vendor assignments supplied by the uploaded workbook.", len(content), content if self.cloud and not has_original else None))
+                row = db.execute('SELECT id,filename FROM vdd_documents WHERE company_key=? AND file_hash=?', (canonical,digest)).fetchone()
+                if self.cloud and not has_original:
+                    db.execute('UPDATE vdd_documents SET payload=? WHERE id=? AND payload IS NULL', (content,int(row['id'])))
+                    has_original = True
+                documents[key] = (int(row['id']),row['filename'])
+                return documents[key]
+
+            def flush():
+                nonlocal buffered
+                for (document_id, needs_review), records in batches.items():
+                    statuses = {}
+                    saved = self._save_product_records(db, document_id, records, allow_price_lists=True,
+                                                      force_review=needs_review, skip_existing=True, new_statuses=statuses)
+                    result['added'] += statuses.get('approved', 0)
+                    result['review'] += statuses.get('review', 0)
+                    result['excluded'] += statuses.get('excluded', 0)
+                    result['duplicates'] += len(records)-saved
+                batches.clear()
+                buffered = 0
+                if progress:
+                    progress({'processed':processed, 'phase':'Processing rows', **result})
+
+            for status, source in iter_manual_catalogue_rows(content, filename):
+                processed += 1
+                if status == 'excluded':
+                    result['excluded'] += 1
+                    if progress and processed % 200 == 0:
+                        progress({'processed':processed, 'phase':'Reading rows', **result})
                     continue
-                result["added"] += self._save_product_records(db, document_id, group["approved"], allow_price_lists=True)
-                result["review"] += self._save_product_records(db, document_id, group["review"], allow_price_lists=True, force_review=True)
+                doc_id, original_name = document(clean_company(source.get('company_name') or ''))
+                # A renamed retry must reproduce the original record hashes.
+                source['source_file'] = 'Manual upload: '+original_name
+                needs_review = status == 'review'
+                records = manual_record_variants(source, needs_review=needs_review)
+                for record in records:
+                    batches.setdefault((doc_id,needs_review), []).append(record)
+                    buffered += 1
+                    if buffered >= 200:
+                        flush()
+            if not documents:
+                document('')  # Keep drug-only source files without publishing their rows.
+            flush()
             db.execute("INSERT INTO vdd_audit VALUES(?,?,?)", (now(), "Manual catalogue upload", json.dumps({"filename": file_basename(filename), **result})))
+            if progress:
+                progress({'processed':processed, 'phase':'Committing database transaction', **result})
         return result
 
     def _restore_manual_catalogue_rows(self, document_id: int, filename: str, content: bytes, name: str) -> int:
@@ -1228,7 +1280,7 @@ class Store:
 
         This is a read-only export. It never approves unclear rows or replaces prices.
         """
-        from exports import read_manual_catalogue_workbook
+        from exports import iter_manual_catalogue_rows
 
         frame = self.product_records(status='all')
         frame['review_flag'] = frame.catalogue_status.map({'approved':'Validated', 'review':'Needs review'})
@@ -1250,12 +1302,13 @@ class Store:
             if content is None:
                 continue  # A Drive-only original remains accessible through its source link.
             try:
-                approved, review, _ = read_manual_catalogue_workbook(content, original['filename'])
+                for status, source in iter_manual_catalogue_rows(content, original['filename']):
+                    if status == 'excluded':
+                        continue
+                    price = source.get('price')
+                    prices[(original['file_hash'],source.get('source_sheet',''),str(source.get('source_page','')))] = '' if price is None else str(price)
             except (ValueError, RuntimeError, OSError):
                 continue  # Preserve saved rows even when their original is unavailable/unreadable.
-            for source in pd.concat([approved, review], ignore_index=True).to_dict('records'):
-                price = source.get('price')
-                prices[(original['file_hash'],source.get('source_sheet',''),str(source.get('source_page','')))] = '' if price is None else str(price)
         frame['source_price_text'] = [prices.get((hashes.get(int(row.document_id)),row.source_sheet,str(row.source_page)), '')
                                       for row in frame.itertuples(index=False)]
         return frame
@@ -1412,7 +1465,9 @@ class Store:
 
     def read_bytes(self, document_id: int) -> bytes | None:
         with self.connection() as db:
-            row = db.execute("SELECT stored_path,payload FROM vdd_documents WHERE id=?", (int(document_id),)).fetchone()
+            row = db.execute("SELECT stored_path,payload,file_hash FROM vdd_documents WHERE id=?", (int(document_id),)).fetchone()
+            if self.cloud and row and row['payload'] is None and row['stored_path'].startswith('shared-manual:'):
+                row = db.execute('SELECT stored_path,payload FROM vdd_documents WHERE file_hash=? AND payload IS NOT NULL LIMIT 1', (row['file_hash'],)).fetchone()
         if not row:
             return None
         if self.cloud:
@@ -1482,6 +1537,7 @@ class Store:
         vendors = [dict(r) for r in db.execute("SELECT * FROM vdd_vendors ORDER BY company_key").fetchall()]
         aliases = [dict(r) for r in db.execute("SELECT * FROM vdd_company_aliases ORDER BY alias_key").fetchall()]
         documents = [dict(r) for r in db.execute("SELECT * FROM vdd_documents ORDER BY id").fetchall()]
+        shared_payloads = {row['file_hash']:row['payload'] for row in documents if row.get('payload') is not None}
         uploads = [dict(r) for r in db.execute("SELECT * FROM vdd_upload_archives ORDER BY last_uploaded_at").fetchall()]
         manifest = {"format": "vendor-dashboard-backup-v3", "created_at": now(), "vendors": vendors, "aliases": aliases, "documents": [], "uploads": []}
         out = BytesIO()
@@ -1489,6 +1545,8 @@ class Store:
             written = set()
             for row in documents:
                 payload = row.pop("payload", None)
+                if self.cloud and payload is None and row['stored_path'].startswith('shared-manual:'):
+                    payload = shared_payloads.get(row['file_hash'])
                 if not self.cloud:
                     path = self.safe_path(row["stored_path"])
                     payload = path.read_bytes() if path and path.is_file() else None

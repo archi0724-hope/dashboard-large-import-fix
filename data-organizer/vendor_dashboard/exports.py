@@ -32,6 +32,7 @@ from vendor_core import DOCUMENT_TYPES, supporting_category
 STREAMING_CATALOGUE_EXPORT = True
 CATALOGUE_REVIEW_EXPORT = True
 MANUAL_CSV_IMPORT = True
+STREAMING_MANUAL_IMPORT = True
 
 CATALOGUE_PRICE_COLUMN_OPTIONS = {
     "company_name": ("Company Name", 34),
@@ -343,13 +344,13 @@ class _CSVWorkbook:
         pass
 
 
-def read_manual_catalogue_workbook(
+def iter_manual_catalogue_rows(
     manual_workbook: bytes,
     filename: str,
     *,
     allow_empty: bool = False,
     source_label: str = "Manual upload",
-) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+):
     """Validate manual product rows without changing the uploaded workbook."""
     if OPENPYXL_IMPORT_ERROR is not None:
         raise RuntimeError("Excel merge requires the openpyxl package.") from OPENPYXL_IMPORT_ERROR
@@ -413,8 +414,8 @@ def read_manual_catalogue_workbook(
         None,
     )
     sheets = [preferred_sheet] if preferred_sheet is not None else workbook.worksheets
-    manual_rows = []
-    review_rows = []
+    manual_count = 0
+    review_count = 0
     excluded_rows = 0
     manual_source = f"{source_label}: {Path(filename).name}"
     scanned_rows = 0
@@ -513,18 +514,20 @@ def read_manual_catalogue_workbook(
                 record["source_sheet"] = sheet.title
                 record["source_page"] = str(row_number)
                 if not company:
-                    review_rows.append({
+                    review_count += 1
+                    yield 'review', {
                         **record,
                         "classification_reason": "Company/vendor name is missing.",
-                    })
+                    }
                     continue
                 if product and not any(character.isalnum() for character in product):
                     continue
                 if not any(character.isalnum() for character in product):
-                    review_rows.append({
+                    review_count += 1
+                    yield 'review', {
                         **record,
                         "classification_reason": "Product name is empty or not usable.",
-                    })
+                    }
                     continue
                 review_markers = ("needs review", "review required", "invalid", "unverified")
                 source_flags = " ".join(
@@ -532,44 +535,56 @@ def read_manual_catalogue_workbook(
                     for field in ("review_flag", "price_status")
                 )
                 if any(marker in source_flags for marker in review_markers):
-                    review_rows.append({
+                    review_count += 1
+                    yield 'review', {
                         **record,
                         "classification_reason": "The source workbook flagged this row for review.",
-                    })
+                    }
                     continue
                 record, status, reason = clean_and_classify_product(record, allow_price_lists=True)
                 record["classification_reason"] = reason
                 if status == "excluded":
                     excluded_rows += 1
+                    yield 'excluded', record
                     continue
                 if status == "review":
-                    review_rows.append(record)
+                    review_count += 1
+                    yield 'review', record
                     continue
-                manual_rows.append(record)
-                if len(manual_rows) > MAX_MANUAL_CATALOGUE_ROWS:
+                manual_count += 1
+                yield 'approved', record
+                if manual_count > MAX_MANUAL_CATALOGUE_ROWS:
                     raise ValueError("The workbook exceeds the 200,000 scanned product-row limit.")
     finally:
         workbook.close()
 
     if allow_empty and recognized_empty_generated_workbook and nonempty_data_rows == 0:
-        return pd.DataFrame(), pd.DataFrame(), 0
+        return
     if not valid_sheets:
         raise ValueError(
             "No product rows were found. Include Company Name and Product Name columns "
             "(or aliases such as Vendor/Supplier and Product/Item/Description). Include a "
             "company-specific worksheet tab name when there is no company column."
         )
-    if not manual_rows:
+    if not manual_count:
         if nonempty_data_rows == 0:
             raise ValueError(
                 "The worksheet contains column headers but no product rows. "
                 "Upload the populated workbook or add product rows below the headers."
             )
-        if not review_rows and not excluded_rows:
+        if not review_count and not excluded_rows:
             raise ValueError("No manual product rows were found. Add Company Name and Product Name to at least one row.")
-    manual_frame = pd.DataFrame(manual_rows)
-    review_frame = pd.DataFrame(review_rows)
-    return manual_frame, review_frame, excluded_rows
+
+
+def read_manual_catalogue_workbook(manual_workbook, filename, *, allow_empty=False, source_label='Manual upload'):
+    """Compatibility collector for previews and exports; imports consume the iterator."""
+    approved, review, excluded = [], [], 0
+    for status, record in iter_manual_catalogue_rows(manual_workbook, filename, allow_empty=allow_empty, source_label=source_label):
+        if status == 'excluded':
+            excluded += 1
+        else:
+            (review if status == 'review' else approved).append(record)
+    return pd.DataFrame(approved), pd.DataFrame(review), excluded
 
 
 def merge_catalogue_price_workbook_bytes(

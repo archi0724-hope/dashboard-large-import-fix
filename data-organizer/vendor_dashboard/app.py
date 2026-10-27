@@ -22,6 +22,7 @@ import pandas as pd
 import streamlit as st
 
 import exports as exports_module
+import catalogue_jobs
 from import_service import import_documents
 from drive_import import DiskUpload
 import storage as storage_module
@@ -30,13 +31,13 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
 # export or Store class once so the app starts without a manual restart.
-if not hasattr(exports_module, "read_manual_catalogue_workbook") or not getattr(exports_module, "MANUAL_CSV_IMPORT", False):
+if not hasattr(exports_module, "read_manual_catalogue_workbook") or not getattr(exports_module, "STREAMING_MANUAL_IMPORT", False):
     exports_module = importlib.reload(exports_module)
 catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
 csv_bytes = exports_module.csv_bytes
 workbook_bytes = exports_module.workbook_bytes
 
-MANUAL_CATALOGUE_IMPORT_VERSION = 5
+MANUAL_CATALOGUE_IMPORT_VERSION = 6
 if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL_CATALOGUE_IMPORT_VERSION or not all(
     hasattr(storage_module.Store, method)
     for method in (
@@ -603,8 +604,24 @@ def execute_delete_all_data():
 
 
 def clear_manual_catalogue_import():
-    for key in ("manual_catalogue_import_token", "manual_catalogue_import_result", "manual_catalogue_import_error"):
+    for key in ("manual_catalogue_import_token", "manual_catalogue_import_result", "manual_catalogue_import_error", "manual_catalogue_job"):
         st.session_state.pop(key, None)
+
+
+@st.fragment(run_every='2s')
+def manual_import_progress():
+    state = catalogue_jobs.status(st.session_state.get('manual_catalogue_job'))
+    if not state:
+        return
+    if state['status'] == 'running':
+        st.info(f"Import running: {state.get('processed', 0):,} catalogue candidate rows processed · {state['phase']}. You can browse while it works.")
+        st.caption('Rows become available after the database transaction completes. A server restart rolls back unfinished changes; retrying skips previously saved rows.')
+    elif state['status'] == 'complete' and not st.session_state.get('manual_catalogue_import_result'):
+        st.session_state['manual_catalogue_import_result'] = state['result']
+        refresh('Workbook import completed and saved.')
+    elif state['status'] == 'failed' and not st.session_state.get('manual_catalogue_import_error'):
+        st.session_state['manual_catalogue_import_error'] = state['error']
+        st.rerun()
 
 
 # A reset callback runs before the app reruns, so clear its widget state here before
@@ -965,6 +982,7 @@ elif page == "Catalogue & prices":
             st.session_state.get("manual_catalogue_import_token") == (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
             and not st.session_state.get("manual_catalogue_import_result")
             and not st.session_state.get("manual_catalogue_import_error")
+            and not catalogue_jobs.status(st.session_state.get('manual_catalogue_job'))
         )
         if interrupted:
             st.warning("The previous workbook import did not finish. Retry to continue; already saved rows are skipped.")
@@ -975,18 +993,18 @@ elif page == "Catalogue & prices":
         if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
             st.session_state["manual_catalogue_import_token"] = token
             st.session_state.pop("manual_catalogue_import_error", None)
+            st.session_state.pop('manual_catalogue_import_result', None)
+            st.session_state.pop('manual_catalogue_job', None)
             try:
-                with st.spinner("Merging manual rows into the catalogue…"):
-                    result = store.import_catalogue_workbook(manual_workbook.name, manual_workbook.getvalue())
+                st.session_state['manual_catalogue_job'] = catalogue_jobs.start(
+                    store, manual_workbook.name, manual_workbook.getvalue(), retry=True)
             except Exception as error:
                 logging.getLogger(__name__).exception("Manual catalogue import failed")
                 st.session_state["manual_catalogue_import_error"] = (
                     str(error) if isinstance(error, (ValueError, RuntimeError, OSError))
                     else f"Saving failed ({type(error).__name__}). Retry the import; the server log contains the error details."
                 )
-            else:
-                st.session_state["manual_catalogue_import_result"] = result
-                refresh("Manual workbook merged into the saved catalogue.")
+        manual_import_progress()
     if st.session_state.get("manual_catalogue_import_error"):
         st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
     result = st.session_state.get("manual_catalogue_import_result")

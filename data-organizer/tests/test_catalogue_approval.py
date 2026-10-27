@@ -282,5 +282,5 @@ def test_vendor_catalogue_page_exposes_manual_workbook_upload(tmp_path, monkeypa
 
     assert not page.exception
     assert len(page.file_uploader) == 1
-    assert page.file_uploader(key="catalogue_manual_workbook").allowed_type == [".xlsx"]
+    assert page.file_uploader(key="catalogue_manual_workbook").allowed_type == [".xlsx", ".csv"]
     assert not any(item.key == "manual_catalogue_upload" for item in page.button)

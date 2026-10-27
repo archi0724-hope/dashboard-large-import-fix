@@ -634,6 +634,7 @@ def test_interrupted_import_offers_retry_instead_of_silently_showing_no_result(t
     page.file_uploader[0].set_value(manual_upload()).run()
     # A disconnected rerun can leave the upload token without a completion result.
     del page.session_state['manual_catalogue_import_result']
+    del page.session_state['manual_catalogue_job']  # No worker metadata survived the restart.
     page.run()
     assert any('previous workbook import did not finish' in item.value for item in page.warning)
     page.button(key='retry_manual_catalogue_import').click().run()

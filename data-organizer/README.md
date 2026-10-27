@@ -154,6 +154,13 @@ The manual upload accepts `.xlsx` and `.csv` files. CSV supports UTF-8, UTF-16
 and Windows-1252 text with comma, semicolon or tab separators and requires a
 company/vendor column and a product-name column. The original CSV is preserved;
 rows use the same validation, review and duplicate handling as Excel uploads.
+Manual imports run in a single background worker with progress that survives page
+reruns. Rows are streamed in batches of 200 and become available after one atomic
+database commit. Retry checks individual row hashes, including previously partial
+company groups, and preserves reviewer decisions. A server restart rolls back an
+unfinished transaction; reselect the source and retry. Cloud manual workbooks
+retain one original byte copy per file hash, shared by their company references;
+downloads, backups and confirmed company merges preserve that original.
 
 Catalogue rows extracted from the Vendor dashboard's existing document-upload
 workflow are also staged for approval. Older product records remain visible for
