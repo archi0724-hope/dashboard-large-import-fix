@@ -24,6 +24,8 @@ def test_explicit_row_company_wins_and_unknown_source_is_not_invented():
                              'price': '0'}) == ('Beta Medical', '0')
     assert catalogue_labels({'source_name': 'catalogue.csv'}) == ('', '')
     assert catalogue_labels({'values': {'Vendor Name': 'Beta Medical', 'Net Price': 0}}) == ('Beta Medical', '0')
+    assert catalogue_labels({'source_name': 'HOSPkart_Master_Sourcing_Data.xlsx',
+                             'values': {'Vendor / Brand': 'Polar Automation', 'Price (₹)': '7192-7463'}}) == ('Polar Automation', '7192-7463')
 
 
 def test_new_extraction_prefers_sale_over_mrp_independent_of_column_order():

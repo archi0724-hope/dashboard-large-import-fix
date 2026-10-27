@@ -10,7 +10,9 @@ def normalized(value):
 
 
 COMPANY_HEADERS = ('companyname', 'company', 'vendorname', 'vendor', 'suppliername',
-                   'supplier', 'manufacturername', 'manufacturer', 'hospitalname', 'hospital')
+                   'supplier', 'manufacturername', 'manufacturer', 'hospitalname', 'hospital',
+                   'vendorbrand', 'companyvendor', 'supplierbrand', 'firmname', 'firm',
+                   'organizationname', 'organisationname', 'organization', 'organisation')
 # Prefer the actual sale/net price; retain MRP and other prices in the raw values.
 PRICE_HEADERS = ('salesprice', 'sellingprice', 'netprice', 'offerprice', 'dealerprice',
                  'price', 'unitprice', 'rate', 'netrate', 'dealerrate', 'salerate',
