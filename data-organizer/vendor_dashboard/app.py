@@ -30,13 +30,13 @@ from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, da
 
 # Streamlit can retain imported modules during a hot reload. Refresh an older
 # export or Store class once so the app starts without a manual restart.
-if not hasattr(exports_module, "read_manual_catalogue_workbook") or not getattr(exports_module, "CATALOGUE_REVIEW_EXPORT", False):
+if not hasattr(exports_module, "read_manual_catalogue_workbook") or not getattr(exports_module, "MANUAL_CSV_IMPORT", False):
     exports_module = importlib.reload(exports_module)
 catalogue_price_workbook_bytes = exports_module.catalogue_price_workbook_bytes
 csv_bytes = exports_module.csv_bytes
 workbook_bytes = exports_module.workbook_bytes
 
-MANUAL_CATALOGUE_IMPORT_VERSION = 4
+MANUAL_CATALOGUE_IMPORT_VERSION = 5
 if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL_CATALOGUE_IMPORT_VERSION or not all(
     hasattr(storage_module.Store, method)
     for method in (
@@ -955,9 +955,9 @@ elif page == "Catalogue & prices":
     st.caption("Drive source rows appear in the searchable catalogue above. Saved manual/document rows below include both validated records and rows needing review. Their status is shown explicitly.")
     st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
     manual_workbook = st.file_uploader(
-        "Upload manual catalogue & prices (.xlsx)", type=["xlsx"], max_upload_size=2048,
+        "Upload manual catalogue & prices (.xlsx or .csv)", type=["xlsx", "csv"], max_upload_size=2048,
         key="catalogue_manual_workbook", on_change=clear_manual_catalogue_import,
-        help="Maximum 2 GB and 200,000 scanned product rows. The original workbook is retained for backup; repeated identical uploads are skipped.",
+        help="Excel (.xlsx) and CSV (.csv) are supported. Include Company Name and Product Name columns. Maximum 2 GB and 200,000 scanned product rows. Original files are retained; repeated identical uploads are skipped.",
     )
     retry_import = False
     if manual_workbook is not None:

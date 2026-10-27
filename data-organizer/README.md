@@ -150,6 +150,10 @@ download; values such as `N/A` or `4,000 + GST` are not silently approved as num
 prices. Review rows remain excluded from approved product APIs and assistant
 results. Re-uploading an identical workbook adds no new rows. Drive source rows
 remain separately searchable in the Drive catalogue above this table.
+The manual upload accepts `.xlsx` and `.csv` files. CSV supports UTF-8, UTF-16
+and Windows-1252 text with comma, semicolon or tab separators and requires a
+company/vendor column and a product-name column. The original CSV is preserved;
+rows use the same validation, review and duplicate handling as Excel uploads.
 
 Catalogue rows extracted from the Vendor dashboard's existing document-upload
 workflow are also staged for approval. Older product records remain visible for

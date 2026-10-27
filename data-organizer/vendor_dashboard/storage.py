@@ -98,7 +98,7 @@ class Query:
 
 
 class Store:
-    manual_catalogue_import_version = 4
+    manual_catalogue_import_version = 5
 
     def __init__(self, data_dir: Path, database_url: str = "", *, initialize: bool = True):
         self.data_dir = Path(data_dir).resolve()

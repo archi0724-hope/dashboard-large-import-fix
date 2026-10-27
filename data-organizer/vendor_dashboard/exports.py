@@ -1,9 +1,11 @@
 """Formatted, formula-safe Excel and CSV exports."""
 from __future__ import annotations
 
+import codecs
+import csv
 import math
 import re
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from zipfile import BadZipFile
 
@@ -29,6 +31,7 @@ from vendor_core import DOCUMENT_TYPES, supporting_category
 
 STREAMING_CATALOGUE_EXPORT = True
 CATALOGUE_REVIEW_EXPORT = True
+MANUAL_CSV_IMPORT = True
 
 CATALOGUE_PRICE_COLUMN_OPTIONS = {
     "company_name": ("Company Name", 34),
@@ -298,6 +301,48 @@ def catalogue_price_workbook_bytes(records: pd.DataFrame, columns: list[str] | N
     return output.getvalue()
 
 
+class _CSVSheet:
+    """Re-readable CSV rows for the existing workbook validator, without conversion."""
+    title = 'Products'
+
+    def __init__(self, content, encoding):
+        self.content, self.encoding = content, encoding
+        sample = codecs.getincrementaldecoder(encoding)().decode(content[:8192], final=False)
+        try:
+            self.dialect = csv.Sniffer().sniff(sample, delimiters=',;\t|')
+        except csv.Error:
+            try:
+                self.dialect = csv.Sniffer().sniff(sample.splitlines()[0], delimiters=',;\t|')
+            except (csv.Error, IndexError):
+                self.dialect = csv.excel
+        self.max_row = 0
+        for number, _ in enumerate(self.iter_rows(), 1):
+            self.max_row = number
+            if self.max_row > MAX_MANUAL_CATALOGUE_ROWS + 30:
+                raise ValueError('The CSV exceeds the 200,000 scanned product-row limit.')
+
+    def iter_rows(self, min_row=1, max_row=None, values_only=True):
+        with TextIOWrapper(BytesIO(self.content), encoding=self.encoding, newline='') as stream:
+            for number, row in enumerate(csv.reader(stream, self.dialect), 1):
+                if max_row is not None and number > max_row:
+                    break
+                if number >= min_row:
+                    yield tuple(row)
+
+
+class _CSVWorkbook:
+    def __init__(self, content):
+        encoding = 'utf-16' if content.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig'
+        try:
+            sheet = _CSVSheet(content, encoding)
+        except UnicodeDecodeError:
+            sheet = _CSVSheet(content, 'cp1252')
+        self.worksheets = [sheet]
+
+    def close(self):
+        pass
+
+
 def read_manual_catalogue_workbook(
     manual_workbook: bytes,
     filename: str,
@@ -308,16 +353,21 @@ def read_manual_catalogue_workbook(
     """Validate manual product rows without changing the uploaded workbook."""
     if OPENPYXL_IMPORT_ERROR is not None:
         raise RuntimeError("Excel merge requires the openpyxl package.") from OPENPYXL_IMPORT_ERROR
-    if Path(filename).suffix.casefold() != ".xlsx":
-        raise ValueError("Upload an Excel workbook in .xlsx format.")
+    extension = Path(filename).suffix.casefold()
+    if extension not in {'.xlsx', '.csv'}:
+        raise ValueError("Upload an Excel workbook (.xlsx) or a CSV file (.csv).")
     if not manual_workbook:
         raise ValueError("The uploaded Excel workbook is empty.")
     if len(manual_workbook) > MAX_MANUAL_CATALOGUE_BYTES:
         raise ValueError("The uploaded Excel workbook exceeds the 2 GB limit.")
 
     try:
-        workbook = load_workbook(BytesIO(manual_workbook), read_only=True, data_only=True)
+        workbook = _CSVWorkbook(manual_workbook) if extension == '.csv' else load_workbook(BytesIO(manual_workbook), read_only=True, data_only=True)
+    except (csv.Error, UnicodeError) as error:
+        raise ValueError('This CSV could not be read. Use UTF-8, UTF-16 or Windows CSV with Company Name and Product Name columns; each field must fit 128 KB.') from error
     except (BadZipFile, InvalidFileException, OSError, ValueError) as error:
+        if extension == '.csv':
+            raise
         raise ValueError("This file is not a readable .xlsx workbook.") from error
 
     header_aliases = {
