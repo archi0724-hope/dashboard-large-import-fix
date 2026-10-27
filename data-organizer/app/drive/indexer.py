@@ -1,8 +1,8 @@
 """Index original Drive sources incrementally; only metadata and rows reach SQL."""
 from __future__ import annotations
 
-import csv
 import copy
+import csv
 import hashlib
 import json
 import re
