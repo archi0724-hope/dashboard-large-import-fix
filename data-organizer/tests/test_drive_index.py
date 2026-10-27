@@ -95,6 +95,18 @@ def test_fresh_pending_entries_are_processed_before_failed_retries(index):
     assert [entry['entry_key'] for entry in index.pending('folder123456')] == ['pending','failed']
 
 
+def test_neon_worker_lease_uses_direct_connection_without_changing_web_pool():
+    from psycopg.conninfo import conninfo_to_dict
+    original = 'postgresql://synthetic:password@ep-synthetic-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require'
+    store = SimpleNamespace(cloud=True, database_url=original)
+    direct = indexer.lease_store(store)
+    params = conninfo_to_dict(direct.database_url)
+    assert params['host'] == 'ep-synthetic.ap-southeast-1.aws.neon.tech'
+    assert params['user'] == 'synthetic' and params['dbname'] == 'neondb'
+    assert store.database_url == original and direct is not store
+    assert indexer.lease_store(SimpleNamespace(cloud=False)).cloud is False
+
+
 def test_changed_version_removes_stale_rows_and_resume_deduplicates(index):
     entry = {'entry_key':'source','folder_id':'folder123456','drive_id':'file1234567','source_name':'list.csv',
              'size_bytes':30,'version':'one'}

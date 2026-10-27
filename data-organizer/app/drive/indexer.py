@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import copy
 import hashlib
 import json
 import re
@@ -206,6 +207,21 @@ class ArchiveReaders:
         self.readers.clear()
 
 
+def lease_store(store):
+    """Session advisory locks require a direct Neon connection, not PgBouncer."""
+    if not store.cloud:
+        return store
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    params = conninfo_to_dict(store.database_url)
+    host = params.get('host', '')
+    if not re.fullmatch(r'ep-[a-zA-Z0-9-]+-pooler\.[a-zA-Z0-9.-]+\.neon\.tech', host):
+        return store
+    direct = copy.copy(store)
+    params['host'] = host.replace('-pooler.', '.', 1)
+    direct.database_url = make_conninfo(**params)
+    return direct
+
+
 @contextmanager
 def source_copy(entry, target, readers=None):
     """Temporary one-document copy; validate ZIP size and CRC before indexing."""
@@ -238,10 +254,10 @@ def run_index(store, folder, source=None):
     index = DriveIndex(store)
     # A session-level lock also prevents a resumed process and old deployment
     # from indexing the same folder concurrently. It releases on disconnect.
-    with store.connection() as lease, ArchiveReaders() as readers:
+    with lease_store(store).connection() as lease, ArchiveReaders() as readers:
         if store.cloud:
             lease.connection.autocommit = True
-            key = int(hashlib.sha256(folder.encode()).hexdigest()[:15],16)
+            key = int(hashlib.sha256(('direct-drive-index-v2:'+folder).encode()).hexdigest()[:15],16)
             if not lease.execute('SELECT pg_try_advisory_lock(?) AS locked',(key,)).fetchone()['locked']:
                 return
         try:
