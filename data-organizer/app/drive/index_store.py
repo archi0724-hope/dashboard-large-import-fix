@@ -111,7 +111,7 @@ class DriveIndex:
             return [dict(row) for row in db.execute('''SELECT * FROM vdd_drive_entries
                 WHERE folder_id=? AND status IN ('pending','failed','reading')
                 ORDER BY CASE WHEN status='failed' THEN 1 ELSE 0 END,
-                         CASE WHEN member_path='' THEN 1 ELSE 0 END,size_bytes,entry_key''', (folder,)).fetchall()]
+                         CASE WHEN member_path='' THEN 1 ELSE 0 END,drive_id,size_bytes,entry_key''', (folder,)).fetchall()]
 
     def state(self, folder, status, message, owner=''):
         with self.store.connection() as db:
