@@ -8,7 +8,7 @@ import re
 
 import pandas as pd
 import streamlit as st
-from vendor_core import classify, company_key
+from vendor_core import classify, company_key, normalize_document_types
 
 from app.drive.index_store import DriveIndex
 
@@ -26,10 +26,9 @@ def inventory(identity, _store):
     with _store.connection() as db:
         if selected:
             rows = db.execute("SELECT * FROM vdd_drive_entries WHERE folder_id=?", (selected['scope'],)).fetchall()
-            total = db.execute('SELECT count(*) AS n FROM vdd_drive_records WHERE folder_id=?', (selected['scope'],)).fetchone()['n']
         else:
             rows = db.execute("SELECT * FROM vdd_drive_entries").fetchall()
-            total = db.execute('SELECT count(*) AS n FROM vdd_drive_records').fetchone()['n']
+    total = index.record_totals(selected['scope'] if selected else None)['unique_records']
     result = []
     for row in rows:
         item = dict(row)
@@ -62,10 +61,25 @@ def combine_company_documents(vendors, documents, references, aliases=None):
     alias_keys = {}
     if aliases is not None:
         alias_keys = {row.alias_key: row.canonical_key for row in aliases.itertuples(index=False)
-                      if row.status == 'Confirmed' and row.canonical_key in canonical}
-    seen = {(str(row.company_key), str(row.file_hash)) for row in documents.itertuples(index=False) if row.file_hash and row.available}
+                      if row.status == 'Confirmed' and row.canonical_key in canonical and row.alias_key != row.canonical_key}
+    resolved_aliases = {}
+    for key, target in alias_keys.items():
+        visited = {key}
+        while target in alias_keys and target not in visited:
+            visited.add(target)
+            target = alias_keys[target]
+        if target not in visited:
+            resolved_aliases[key] = target
+    alias_keys = resolved_aliases
+    if alias_keys:
+        vendors = vendors.loc[~vendors.company_key.isin(alias_keys)].copy()
+        documents['company_key'] = documents.company_key.map(lambda key: alias_keys.get(key,key))
+        documents['company_name'] = [canonical.get(key,name) for key,name
+                                     in zip(documents.company_key,documents.company_name)]
+    tokens = {(str(row.company_key), 'hash:'+str(row.file_hash)):str(row.file_hash)
+              for row in documents.itertuples(index=False) if row.file_hash and row.available}
     additions, companies = [], []
-    for item in references:
+    for item in sorted(references,key=lambda row:not bool(row.get('content_hash'))):
         path = item['member_path'] or item['source_name']
         if not item['member_path'] and path.lower().endswith('.zip'):
             continue
@@ -77,10 +91,17 @@ def combine_company_documents(vendors, documents, references, aliases=None):
         key = company_key(name)
         key = alias_keys.get(key, key)
         name = canonical.get(key, name)
-        digest = item.get('content_hash') or 'drive:'+item['entry_key']
-        if (key, digest) in seen:
-            continue
-        seen.add((key, digest))
+        identities = []
+        if item.get('content_hash'):
+            identities.append('hash:'+item['content_hash'])
+        version = item.get('version','')
+        if re.fullmatch(r'\d+:\d+:\d+',version) and item.get('member_path'):
+            crc, size, _ = version.split(':')
+            identities.append('zip:'+crc+':'+size+':'+PurePosixPath(path).name)
+        digest = next((tokens[(key,value)] for value in identities if (key,value) in tokens),
+                      item.get('content_hash') or 'drive:'+item['entry_key'])
+        for value in identities:
+            tokens[(key,value)] = digest
         if key and key not in canonical:
             canonical[key] = name
             companies.append({**{column: '' for column in vendors.columns}, 'company_key': key,
@@ -104,7 +125,24 @@ def combine_company_documents(vendors, documents, references, aliases=None):
         documents = pd.concat([documents, pd.DataFrame(additions)], ignore_index=True)
     documents['available'] = documents['available'].astype(bool)
     documents['needs_review'] = documents['needs_review'].astype(bool)
-    documents = documents.sort_values('available', ascending=False, kind='stable').drop_duplicates(['company_key', 'file_hash']).sort_index().reset_index(drop=True)
+    def rank(doc):
+        return (bool(doc['available']),bool(doc.get('reviewed')),not bool(doc['needs_review']))
+    unique = {}
+    for row in documents.to_dict('records'):
+        identity = (row['company_key'],row['file_hash'])
+        previous = unique.get(identity)
+        if previous is None:
+            unique[identity] = row
+            continue
+        types = normalize_document_types(list(previous['types'])+list(row['types']))
+        review = bool(previous['needs_review'] or row['needs_review'])
+        if rank(row) > rank(previous):
+            unique[identity] = row
+        primary = unique[identity]
+        primary.update(types=types,types_json=json.dumps(types),needs_review=review)
+    documents = pd.DataFrame(unique.values(),columns=documents.columns).reset_index(drop=True)
+    documents['available'] = documents['available'].astype(bool)
+    documents['needs_review'] = documents['needs_review'].astype(bool)
     return vendors, documents
 
 

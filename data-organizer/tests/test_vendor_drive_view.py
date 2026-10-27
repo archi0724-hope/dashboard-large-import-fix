@@ -228,3 +228,32 @@ def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeyp
     assert 'Drive catalogue and price rows' in [heading.value for heading in app.subheader]
     assert len(app.get('iframe')) == 1
     assert app.file_uploader(key='catalogue_manual_workbook').allowed_type == ['.xlsx']
+
+
+def test_duplicate_drive_documents_merge_types_and_pending_verified_zip_copies(shared):
+    from drive_view import combine_company_documents
+    store, inventory, _ = shared
+    alpha = dict(next(row for row in inventory('dedupe',store)['references'] if row['entry_key']=='alpha'))
+    alpha.update(content_hash='same-sha256',version='123:50:20')
+    copies = [alpha,{**alpha,'entry_key':'pan-copy','member_path':'Alpha Medical/PAN Card.txt'},
+              {**alpha,'entry_key':'pending-copy','drive_id':'otherArchive123','content_hash':'','status':'pending'}]
+    vendors, docs = combine_company_documents(store.vendors(),store.documents(),copies)
+    assert len(vendors) == 1 and len(docs) == 1
+    assert set(docs.iloc[0].types) == {'GST','PAN Card'}
+    assert docs.iloc[0].available and docs.iloc[0].needs_review
+    assert store.documents().empty
+
+
+def test_confirmed_company_alias_is_not_an_extra_headcount(shared):
+    import pandas as pd
+    from drive_view import combine_company_documents
+    store, inventory, _ = shared
+    store.upsert_vendors(pd.DataFrame({'company_name':['Alpha Medical','Alpha Alias']}))
+    aliases = pd.DataFrame([{'alias_key':'alpha alias','canonical_key':'alpha medical','status':'Confirmed'},
+                            {'alias_key':'alpha medical','canonical_key':'alpha medical','status':'Confirmed'}])
+    entry = dict(next(row for row in inventory('alias-dedupe',store)['references'] if row['entry_key']=='alpha'))
+    entry['member_path'] = 'Alpha Alias/GST.txt'
+    vendors, docs = combine_company_documents(store.vendors(),store.documents(),[entry],aliases)
+    assert vendors.company_name.tolist() == ['Alpha Medical']
+    assert docs.company_name.tolist() == ['Alpha Medical']
+    assert len(store.vendors()) == 2  # Original registry and provenance remain stored.

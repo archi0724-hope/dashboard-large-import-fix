@@ -85,7 +85,8 @@ def test_selected_zip_also_resumes_other_saved_sources_and_reuses_directory(inde
     assert index.existing('older-file')['status'] == 'indexed'
     # One discovery reader plus one reader for each of the two archives.
     assert len(opened) == 3
-    assert index.search('folder123456')['total'] == 3
+    assert index.search('folder123456')['total'] == 2  # Identical text copied into both ZIPs is grouped.
+    assert index.status('folder123456')['raw_records'] == 3
 
 
 def test_fresh_pending_entries_are_processed_before_failed_retries(index):
@@ -132,6 +133,59 @@ def test_product_search_is_paginated_and_does_not_publish_unreviewed_rows(index)
     assert index.search('folder123456','Pump',kind='product')['total'] == 1
     with index.store.connection() as db:
         assert db.execute("SELECT count(*) AS n FROM sqlite_master WHERE name='vdd_product_records'").fetchone()['n'] == 0
+
+
+def test_duplicate_source_rows_group_across_files_but_keep_distinct_prices_and_specs(index):
+    base = {'folder_id':'shared','drive_id':'synthetic12345','size_bytes':100,'version':'1'}
+    entries = [{**base,'entry_key':'one','source_name':'one.csv'},
+               {**base,'entry_key':'two','source_name':'two.csv'}]
+    index.discover(entries)
+    row = {'kind':'product','company':'Alpha Medical','product':'Pump','price':'100',
+           'values':{'Product':'Pump','Model':'Steel'}}
+    index.save_records(entries[0],[{**row,'row':1,'source_name':'one.csv'},
+                                  {**row,'price':'120','row':2},
+                                  {**row,'values':{'Product':'Pump','Model':'Plastic'},'row':3}])
+    index.save_records(entries[1],[{**row,'row':8,'source_name':'two.csv'},
+                                  {**row,'company':'Beta Medical','row':9}])
+    result = index.search('shared',kind='product')
+    assert result['total'] == 4 and sum(row['copies'] for row in result['items']) == 5
+    assert max(row['copies'] for row in result['items']) == 2
+    assert index.record_totals('shared') == {'raw_records':5,'unique_records':4}
+    assert index.search('shared',kind='product',offset=4)['items'] == []
+
+
+def test_unknown_vendors_and_individual_ocr_pages_are_not_merged(index):
+    base = {'folder_id':'shared','drive_id':'synthetic12345','size_bytes':100,'version':'1'}
+    entries = [{**base,'entry_key':'one','source_name':'one.pdf'},
+               {**base,'entry_key':'two','source_name':'two.pdf'}]
+    index.discover(entries)
+    row = {'kind':'product','company':'','product':'Pump','price':'100'}
+    index.save_records(entries[0],[row,{'kind':'needs_ocr','page':1},{'kind':'needs_ocr','page':2}])
+    index.save_records(entries[1],[row])
+    assert index.search('shared')['total'] == 4
+
+
+def test_verified_content_hash_refreshes_cached_identity_without_deleting_rows(index):
+    base = {'folder_id':'shared','drive_id':'synthetic12345','size_bytes':100,'version':'1'}
+    entries = [{**base,'entry_key':'one','source_name':'one.csv'},
+               {**base,'entry_key':'two','source_name':'two.csv'}]
+    index.discover(entries)
+    for entry in entries:
+        index.save_records(entry,[{'kind':'product','company':'','product':'Pump','price':'100'}])
+    assert index.record_totals('shared')['unique_records'] == 2
+    for entry in entries:
+        index.mark(entry['entry_key'],'indexed',content_hash='verified-same-content',records=1)
+    assert index.record_totals('shared') == {'raw_records':2,'unique_records':1}
+    assert index.search('shared')['items'][0]['copies'] == 2
+
+
+def test_zero_characters_do_not_equate_different_source_text(index):
+    entry = {'folder_id':'shared','drive_id':'synthetic12345','size_bytes':100,
+             'version':'1','entry_key':'one','source_name':'one.txt'}
+    index.discover([entry])
+    texts = ['A\x00B\ufffd','A\ufffdB\x00','A\ufffdB\ufffd']
+    index.save_records(entry,[{'kind':'text','text':text} for text in texts])
+    assert index.search('shared')['total'] == 3
 
 
 def test_top_level_inventory_is_saved_before_slow_archive_requests(index,monkeypatch):

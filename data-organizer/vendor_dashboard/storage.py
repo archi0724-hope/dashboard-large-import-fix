@@ -1131,6 +1131,15 @@ class Store:
                            (json.dumps(merged), "Catalogue/price-list classification from filename and extracted content.", int(document_id)))
 
     @staticmethod
+    def _unique_product_predicate(alias="p"):
+        fields = ["record_type", "product_name", "sku", "description", "unit", "price", "mrp",
+                  "discount", "gst", "currency", "brand", "product_category", "specification",
+                  "pack_size", "moq", "availability", "image_reference"]
+        owner = "CASE WHEN u.company_key<>'' THEN u.company_key ELSE '__document__'||CAST(u.document_id AS TEXT) END"
+        group = ','.join([owner,*('u.'+field for field in fields)])
+        return f"{alias}.id IN (SELECT min(u.id) FROM vdd_product_records u WHERE u.catalogue_status='approved' GROUP BY {group})"
+
+    @staticmethod
     def _product_filter(query: str, record_type: str):
         clauses, params = [], []
         if query.strip():
@@ -1146,7 +1155,7 @@ class Store:
                                  limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
         if limit < 1 or limit > 500 or offset < 0:
             raise ValueError("Page size must be between 1 and 500 and offset must be non-negative.")
-        clauses, params = ["p.catalogue_status='approved'"], []
+        clauses, params = ["p.catalogue_status='approved'", self._unique_product_predicate()], []
         if vendor_id:
             vendor = self.vendors()
             matches = vendor[vendor.canonical_id.astype(str) == str(vendor_id)]
@@ -1178,7 +1187,8 @@ class Store:
         where, params = self._product_filter(query, record_type)
         with self.connection() as db:
             return int(db.execute(
-                "SELECT COUNT(*) AS n FROM vdd_product_records p WHERE p.catalogue_status='approved'"
+                "SELECT COUNT(*) AS n FROM vdd_product_records p WHERE p.catalogue_status='approved' AND "
+                + self._unique_product_predicate()
                 + (" AND " + where.removeprefix(" WHERE ") if where else ""),
                 params,
             ).fetchone()["n"])
@@ -1189,6 +1199,7 @@ class Store:
             LEFT JOIN vdd_documents d ON d.id=p.document_id
             WHERE p.catalogue_status='approved'"""
         where, params = self._product_filter(query, record_type)
+        sql += ' AND '+self._unique_product_predicate()
         if where:
             sql += " AND " + where.removeprefix(" WHERE ")
         sql += " ORDER BY lower(p.company_name), lower(p.product_name), p.id"
