@@ -626,8 +626,9 @@ aliases = store.aliases()
 from drive_view import combine_company_documents, inventory
 try:
     drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
-    drive_snapshot = inventory(drive_identity, store)
-    vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
+    if st.session_state.get('page') != 'Catalogue & prices':
+        drive_snapshot = inventory(drive_identity, store)
+        vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
 except Exception:
     logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
     st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
@@ -683,7 +684,7 @@ reset_col.button("Reset all history", key="open_reset", on_click=open_data_reset
 if notice := st.session_state.pop("notice", None):
     st.success(notice)
 
-if page != "🤖 Vendor AI Assistant":
+if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
     st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
     from app.purchase_invoices import invoice_count
@@ -944,8 +945,10 @@ elif page == "Companies & documents":
             st.plotly_chart(fig,width="stretch",config={"displayModeBar":False})
 
 elif page == "Catalogue & prices":
-    from drive_view import render_drive_records
-    render_drive_records(store)
+    st.subheader('Drive catalogue and price rows')
+    catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(setting('APP_PASSWORD'))
+    st.link_button('Open Drive catalogue in a new tab', catalogue_url)
+    st.iframe(catalogue_url, height=850)
     st.subheader("Catalogue and price records")
     st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
     manual_workbook = st.file_uploader(

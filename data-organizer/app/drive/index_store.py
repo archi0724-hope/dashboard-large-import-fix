@@ -128,13 +128,19 @@ class DriveIndex:
         return {**(dict(row) if row else {'status':'idle','message':'Ready to index the connected folder.'}),
                 'counts':counts,'records':int(records),'entries':sum(counts.values())}
 
-    def search(self, folder, query='', entries=False, offset=0, limit=100):
+    def search(self, folder, query='', entries=False, offset=0, limit=100, kind=''):
+        if kind not in {'', 'product'}:
+            raise ValueError('Unsupported record kind.')
         table = 'vdd_drive_entries' if entries else 'vdd_drive_records'
         fields = "lower(source_name || ' ' || member_path || ' ' || status || ' ' || error)" if entries else 'search_text'
         params = (folder,'%'+query.casefold()[:200]+'%')
+        condition = 'folder_id=? AND '+fields+' LIKE ?'
+        if kind and not entries:
+            condition += ' AND kind=?'
+            params += (kind,)
         with self.store.connection() as db:
-            total = db.execute(f'SELECT count(*) AS n FROM {table} WHERE folder_id=? AND {fields} LIKE ?',params).fetchone()['n']
-            rows = db.execute(f'''SELECT * FROM {table} WHERE folder_id=? AND {fields} LIKE ?
+            total = db.execute(f'SELECT count(*) AS n FROM {table} WHERE {condition}',params).fetchone()['n']
+            rows = db.execute(f'''SELECT * FROM {table} WHERE {condition}
                 ORDER BY {'source_name,member_path' if entries else 'company,product,record_key'} LIMIT ? OFFSET ?''',
                 (*params,min(100,limit),max(0,offset))).fetchall()
         result = [dict(row) for row in rows]

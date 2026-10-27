@@ -118,6 +118,22 @@ def test_changed_version_removes_stale_rows_and_resume_deduplicates(index):
     assert index.search('folder123456')['total'] == 0
 
 
+def test_product_search_is_paginated_and_does_not_publish_unreviewed_rows(index):
+    entry = {'entry_key':'catalogue','folder_id':'folder123456','drive_id':'file1234567',
+             'source_name':'products.csv','size_bytes':30,'version':'one'}
+    index.discover([entry])
+    index.save_records(entry,[{'company':'Alpha Medical','kind':'product','product':'Pump','price':'120'},
+                              {'company':'Alpha Medical','kind':'product','product':'Valve','price':'50'},
+                              {'company':'Alpha Medical','kind':'document','text':'Unrelated document'}])
+    result = index.search('folder123456',kind='product',limit=1,offset=1)
+    assert result['total'] == 2 and len(result['items']) == 1
+    assert result['items'][0]['product'] == 'Valve'
+    assert result['items'][0]['record']['price'] == '50'
+    assert index.search('folder123456','Pump',kind='product')['total'] == 1
+    with index.store.connection() as db:
+        assert db.execute("SELECT count(*) AS n FROM sqlite_master WHERE name='vdd_product_records'").fetchone()['n'] == 0
+
+
 def test_top_level_inventory_is_saved_before_slow_archive_requests(index,monkeypatch):
     files = [{'id':'archive12345','name':'one.zip','path':'one.zip'},
              {'id':'archive67890','name':'two.zip','path':'two.zip'}]

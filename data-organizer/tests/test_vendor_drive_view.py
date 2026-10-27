@@ -209,3 +209,22 @@ def test_startup_batches_missing_master_aliases_and_keeps_reviewed_assignments()
     sql, rows = db.batches[0]
     assert 'DO NOTHING' in sql and len(rows) == 1
     assert rows[0][:3] == ('beta medical','beta medical','Beta Medical')
+
+
+def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeypatch):
+    import drive_view
+    store, _, _ = shared
+    monkeypatch.setenv('VENDOR_DATA_DIR',str(store.data_dir))
+    monkeypatch.setenv('DATABASE_URL','')
+    monkeypatch.setenv('APP_PASSWORD','')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT','false')
+    def unexpected(*args):
+        raise AssertionError('Catalogue navigation must not load the full Drive inventory')
+    monkeypatch.setattr(drive_view,'inventory',unexpected)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'vendor_dashboard/app.py'))
+    app.session_state['page'] = 'Catalogue & prices'
+    app.run(timeout=30)
+    assert not app.exception and not app.warning
+    assert 'Drive catalogue and price rows' in [heading.value for heading in app.subheader]
+    assert len(app.get('iframe')) == 1
+    assert app.file_uploader(key='catalogue_manual_workbook').allowed_type == ['.xlsx']

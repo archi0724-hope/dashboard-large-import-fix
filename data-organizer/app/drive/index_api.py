@@ -5,6 +5,7 @@ import hmac
 import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -98,6 +99,6 @@ def pause():
 
 
 @router.get('/search')
-def search(q: str='',entries: bool=False,offset: int=0):
+def search(q: str='',entries: bool=False,offset: int=0,kind: Literal['', 'product']=''):
     index = library()
-    return index.search(selection(index)['scope'],q,entries,offset)
+    return index.search(selection(index)['scope'],q,entries,offset,kind=kind)
