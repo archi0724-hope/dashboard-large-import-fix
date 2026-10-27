@@ -212,8 +212,7 @@ class Store:
             db.execute(f"CREATE TABLE IF NOT EXISTS vdd_backups (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload {blob} NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS vdd_audit (event_at TEXT NOT NULL, action TEXT NOT NULL, details TEXT NOT NULL)")
             self._ensure_canonical_ids(db)
-            for row in db.execute("SELECT company_key,company_name FROM vdd_vendors").fetchall():
-                self._record_alias(db, row["company_key"], row["company_name"], "Canonical company master")
+            self._ensure_canonical_aliases(db)
         if not self.cloud:
             self.migrate_original()
         # Avoid reparsing hundreds of documents on every Streamlit startup.
@@ -227,6 +226,21 @@ class Store:
         if product_count == 0 and not self.cloud:
             self.backfill_product_records()
         self.apply_catalogue_policy()
+
+    def _ensure_canonical_aliases(self, db: Query):
+        existing = {row['alias_key'] for row in db.execute('SELECT alias_key FROM vdd_company_aliases').fetchall()}
+        timestamp = now()
+        params = []
+        for row in db.execute('SELECT company_key,company_name FROM vdd_vendors').fetchall():
+            key = company_key(row['company_name'])
+            if key and key not in existing:
+                params.append((key, row['company_key'], clean_company(row['company_name']),
+                               'Canonical company master', 100, 'Confirmed', timestamp))
+                existing.add(key)
+        if params:
+            db.executemany('''INSERT INTO vdd_company_aliases
+                (alias_key,canonical_key,alias_name,source,confidence,status,created_at)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(alias_key) DO NOTHING''', params)
 
     def _ensure_canonical_ids(self, db: Query):
         if self.cloud:

@@ -188,3 +188,24 @@ def test_original_reference_rejects_unsafe_or_incomplete_links(shared, source):
     from storage import drive_original_reference
 
     assert drive_original_reference(source) == ('', '')
+
+
+def test_startup_batches_missing_master_aliases_and_keeps_reviewed_assignments():
+    from storage import Store
+    class Result:
+        def __init__(self, rows): self.rows = rows
+        def fetchall(self): return self.rows
+    class Database:
+        def __init__(self): self.batches = []
+        def execute(self, sql):
+            if sql.startswith('SELECT alias_key'):
+                return Result([{'alias_key':'alpha medical'}])
+            return Result([{'company_key':'alpha medical','company_name':'Alpha Medical'},
+                           {'company_key':'beta medical','company_name':'Beta Medical'}])
+        def executemany(self, sql, params): self.batches.append((sql, params))
+    db = Database()
+    Store._ensure_canonical_aliases(None, db)
+    assert len(db.batches) == 1
+    sql, rows = db.batches[0]
+    assert 'DO NOTHING' in sql and len(rows) == 1
+    assert rows[0][:3] == ('beta medical','beta medical','Beta Medical')
