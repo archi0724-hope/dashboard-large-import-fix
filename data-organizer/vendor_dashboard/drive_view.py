@@ -10,12 +10,13 @@ import pandas as pd
 import streamlit as st
 from vendor_core import classify, company_key, normalize_document_types
 
+from app.drive.catalogue_fields import source_path
 from app.drive.index_store import DriveIndex
 
 
 def company_source_path(path):
     """Ignore generated upload containers when detecting company folders."""
-    return '/'.join(part for part in path.replace('\\', '/').split('/') if not re.fullmatch(r'upload-[a-f0-9]{8,}', part, re.IGNORECASE))
+    return source_path(path)
 
 
 @st.cache_data(ttl=20, max_entries=8, show_spinner=False)

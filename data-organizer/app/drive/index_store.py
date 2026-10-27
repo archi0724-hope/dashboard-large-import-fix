@@ -6,6 +6,8 @@ import json
 import time
 from datetime import UTC, datetime
 
+from .catalogue_fields import catalogue_labels
+
 
 def now():
     return datetime.now(UTC).isoformat()
@@ -245,5 +247,9 @@ class DriveIndex:
             item['url'] = f"https://drive.google.com/file/d/{item.get('drive_id','')}/view" if entries else ''
             if not entries:
                 item['record'] = json.loads(item.pop('record_json'))
+                company, price = catalogue_labels(item['record'])
+                item['company'] = company or 'Needs company review'
+                item['record']['company'] = company
+                item['record']['price'] = price
                 item.pop('search_text',None)
         return {'total':int(total),'items':result}

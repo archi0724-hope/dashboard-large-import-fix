@@ -586,13 +586,13 @@ def test_manual_upload_automatically_joins_saved_catalogue_and_standard_export(t
     assert store.product_record_count() == 2
     assert set(store.product_records().company_name) == {"Alpha Medical", "Beta Medical"}
     assert store.search_index_signature() != signature
-    assert set(row["Product Name"] for row in exported_products(store)) == {"Wheelchair", "Medical examination gloves"}
-    assert any(metric.label == "Extracted records" and metric.value == "2" for metric in page.metric)
+    assert {row["Product Name"] for row in exported_products(store)} == {"Wheelchair", "Medical examination gloves"}
+    assert any(metric.label == "Reviewed catalogue records" and metric.value == "2" for metric in page.metric)
     assert [item.key for item in page.get("download_button")] == ["company_wise_catalogue_price_export"]
     assert not any(item.key == "prepare_manual_catalogue_merge" for item in page.button)
     page.text_input(key="product_search").set_value("G1").run()
     assert not page.exception
-    assert any(metric.label == "Extracted records" and metric.value == "1" for metric in page.metric)
+    assert any(metric.label == "Reviewed catalogue records" and metric.value == "1" for metric in page.metric)
     assert store.product_record_count() == 2
     page.file_uploader[0].clear().run()
     page.file_uploader[0].set_value(upload).run()
@@ -611,7 +611,7 @@ def test_upload_survives_clearing_widget_and_new_session(tmp_path, monkeypatch):
     assert "manual_catalogue_import_result" not in page.session_state
     page = catalogue_page(tmp_path, monkeypatch)
     assert Store(tmp_path).product_record_count() == 1
-    assert any(metric.label == "Extracted records" and metric.value == "1" for metric in page.metric)
+    assert any(metric.label == "Reviewed catalogue records" and metric.value == "1" for metric in page.metric)
 
 
 def test_invalid_workbook_does_not_change_catalogue(tmp_path, monkeypatch):
@@ -625,6 +625,21 @@ def test_invalid_workbook_does_not_change_catalogue(tmp_path, monkeypatch):
     page.file_uploader[0].set_value(manual_upload()).run()
     assert not page.exception and not page.error
     assert store.product_record_count() == 2
+
+
+def test_interrupted_import_offers_retry_instead_of_silently_showing_no_result(tmp_path, monkeypatch):
+    from storage import Store
+
+    page = catalogue_page(tmp_path, monkeypatch)
+    page.file_uploader[0].set_value(manual_upload()).run()
+    # A disconnected rerun can leave the upload token without a completion result.
+    del page.session_state['manual_catalogue_import_result']
+    page.run()
+    assert any('previous workbook import did not finish' in item.value for item in page.warning)
+    page.button(key='retry_manual_catalogue_import').click().run()
+    assert not page.exception and not page.error
+    assert Store(tmp_path).product_record_count() == 1
+    assert page.session_state['manual_catalogue_import_result']['duplicates'] == 1
 
 
 def test_storage_failure_can_be_retried_without_reuploading(tmp_path, monkeypatch):
@@ -740,6 +755,7 @@ def test_same_filename_with_new_contents_appends_without_overwriting(tmp_path):
 
 def test_excel_date_cells_import_and_restore_without_serialization_errors(tmp_path, monkeypatch):
     from datetime import datetime, time
+
     from storage import Store
 
     content = manual_workbook([("Products & Prices", [

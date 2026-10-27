@@ -949,7 +949,8 @@ elif page == "Catalogue & prices":
     catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(setting('APP_PASSWORD'))
     st.link_button('Open Drive catalogue in a new tab', catalogue_url)
     st.iframe(catalogue_url, height=850)
-    st.subheader("Catalogue and price records")
+    st.subheader("Reviewed catalogue and manual Excel records")
+    st.caption("Drive source rows appear in the searchable catalogue above. The table below contains validated catalogue records; its count does not include unreviewed Drive rows.")
     st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
     manual_workbook = st.file_uploader(
         "Upload manual catalogue & prices (.xlsx)", type=["xlsx"], max_upload_size=2048,
@@ -957,8 +958,16 @@ elif page == "Catalogue & prices":
         help="Maximum 2 GB and 200,000 scanned product rows. The original workbook is retained for backup; repeated identical uploads are skipped.",
     )
     retry_import = False
-    if manual_workbook is not None and st.session_state.get("manual_catalogue_import_error"):
-        retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
+    if manual_workbook is not None:
+        interrupted = (
+            st.session_state.get("manual_catalogue_import_token") == (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
+            and not st.session_state.get("manual_catalogue_import_result")
+            and not st.session_state.get("manual_catalogue_import_error")
+        )
+        if interrupted:
+            st.warning("The previous workbook import did not finish. Retry to continue; already saved rows are skipped.")
+        if interrupted or st.session_state.get("manual_catalogue_import_error"):
+            retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
     if manual_workbook is not None:
         token = (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
         if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
@@ -1006,7 +1015,7 @@ elif page == "Catalogue & prices":
     record_type = st.selectbox("Record type", ["All", "catalogue", "price"], key="product_record_type")
     kind = "" if record_type == "All" else record_type
     total_records = store.product_record_count(search, kind)
-    st.metric("Extracted records", f"{total_records:,}")
+    st.metric("Reviewed catalogue records", f"{total_records:,}")
     page_size = 200
     page_count = max(1, (total_records + page_size - 1) // page_size)
     filter_key = (search, kind)

@@ -13,6 +13,7 @@ from collections import OrderedDict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path, PurePosixPath
 
+from .catalogue_fields import PRICE_HEADERS
 from .index_store import DriveIndex
 from .public_drive import MAX_DOCUMENT, download_public_file, list_public_files
 from .range_zip import DriveRangeFile, archive_members
@@ -25,7 +26,7 @@ INDEX_STORAGE_BUDGET = 850 * 1024**2
 EXTRACTABLE = {'.xlsx','.xls','.csv','.txt','.log','.pdf','.docx','.json'}
 COMPANY = {'company','companyname','vendor','vendorname','supplier','suppliername','manufacturer','manufacturername','hospital','hospitalname'}
 PRODUCT = {'product','productname','item','itemname','description','particulars','itemdescription','productdescription'}
-PRICE = {'price','rate','mrp','unitprice','amount','netprice','offerprice'}
+PRICE = set(PRICE_HEADERS)
 
 
 def storage_status(store):
@@ -66,7 +67,7 @@ def table_records(rows, sheet='', fallback_company=''):
         normalized = {normalize(key):value for key,value in data.items()}
         company = next((value for key,value in normalized.items() if key in COMPANY),fallback_company)
         product = next((value for key,value in normalized.items() if key in PRODUCT),'')
-        price = next((value for key,value in normalized.items() if key in PRICE),'')
+        price = next((normalized[key] for key in PRICE_HEADERS if key in normalized),'')
         yield {'kind':'product' if product else 'company' if company else 'row',
                'company':company,'product':product,'price':price,'sheet':sheet,'row':number,'values':data}
 

@@ -119,6 +119,24 @@ def test_changed_version_removes_stale_rows_and_resume_deduplicates(index):
     assert index.search('folder123456')['total'] == 0
 
 
+def test_product_search_labels_existing_rows_without_reindexing_or_mutating_source(index):
+    import json
+
+    entry = indexer.top_entry({'id':'polar', 'name':'catalogue.csv', 'path':'catalogue.csv'}, 'folder')
+    index.discover([entry])
+    record = {'kind':'product', 'company':'', 'product':'Actuator', 'price':'',
+              'member_path':'organized_by_company/Polar Automation/POLAR AUTOMATION PRICE LIST.csv',
+              'values':{'Regular Price':'14080','Sales Price':'12800'}}
+    index.save_records(entry,[record])
+    result = index.search('folder','Polar Automation',kind='product')
+    assert result['total'] == 1
+    assert result['items'][0]['company'] == 'Polar Automation'
+    assert result['items'][0]['record']['price'] == '12800'
+    with index.store.connection() as db:
+        saved = db.execute('SELECT company,record_json FROM vdd_drive_records').fetchone()
+        assert saved['company'] == '' and json.loads(saved['record_json']) == record
+
+
 def test_product_search_is_paginated_and_does_not_publish_unreviewed_rows(index):
     entry = {'entry_key':'catalogue','folder_id':'folder123456','drive_id':'file1234567',
              'source_name':'products.csv','size_bytes':30,'version':'one'}
