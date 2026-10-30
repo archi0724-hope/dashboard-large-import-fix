@@ -52,7 +52,7 @@ if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL
 Store = storage_module.Store
 
 APP_DIR = Path(__file__).resolve().parent
-st.set_page_config(page_title="QuoteSaarthi · Vendor Document Dashboard", page_icon=":material/auto_awesome:", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HOSPkart.com · Vendor Document Dashboard", page_icon=":material/auto_awesome:", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
 .stApp{background:radial-gradient(ellipse at 95% 0%,#eeebff 0%,transparent 48%),#f5f7fc;color:#142d55}
@@ -73,9 +73,8 @@ h2,h3{letter-spacing:-.015em;color:#142d55}
 [data-testid="stBaseButton-primary"]{background:#6655d9;color:#fff;border-color:#6655d9;font-weight:700}
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]{background:#253858;color:#e0e7f4;border-color:#334567}
 [data-testid="stSidebar"] [data-testid="stExpander"]{background:#192942;border-color:#334567;color:#e0e7f4}
-.brand{display:flex;gap:12px;align-items:center;margin:.5rem 0 1.3rem}
-.brand-icon{width:44px;height:44px;flex-shrink:0;display:grid;place-items:center;background:linear-gradient(135deg,#7963f1,#148ba0);color:#fff;border-radius:12px;font-size:1.1rem;font-weight:750}
-.brand-name{font-size:1.1rem;font-weight:750;color:#fff}.brand-sub{font-size:.7rem;color:#a9c8ef;margin-top:3px}
+.brand{display:flex;align-items:center;margin:.5rem 0 1.3rem}
+.brand img{display:block;width:160px;max-width:100%;height:auto}
 .workspace-hero{position:relative;overflow:hidden;background:linear-gradient(120deg,#16254b 0%,#29375f 65%,#154b5b 100%);border:1px solid #34466e;border-radius:18px;padding:30px;margin:1rem 0;color:#fff}
 .workspace-hero::after{content:'✦';position:absolute;right:32px;top:12px;font-size:110px;line-height:1;color:#a2b7ff;opacity:.13;pointer-events:none}
 .workspace-hero .hero-eyebrow{font-size:.64rem;font-weight:750;letter-spacing:.18em;color:#79eaff;text-transform:uppercase}
@@ -660,7 +659,7 @@ view_cleared = bool(st.session_state.get("view_cleared", False))
 display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
-    st.markdown('<div class="brand"><div class="brand-icon" aria-hidden="true">Q✦</div><div><div class="brand-name">QuoteSaarthi</div><div class="brand-sub">Your workspace intelligence.</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand"><img src="/static/hospkart-logo.png" alt="HOSPkart.com"></div>', unsafe_allow_html=True)
     navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
     page_map = {item: item for item in navigation}
     captions = [

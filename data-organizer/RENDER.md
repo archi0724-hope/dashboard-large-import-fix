@@ -2,8 +2,9 @@
 
 ## QuoteSaarthi Vendor design
 
-The Vendor workspace uses QuoteSaarthi branding, a navy sidebar, purple summary
-card accents and a welcome banner. **Ask QuoteSaarthi** opens the existing Vendor
+The Vendor workspace uses the supplied HOSPkart.com sidebar logo, a navy sidebar,
+purple summary card accents and a QuoteSaarthi welcome banner. The logo is served
+from `/static/hospkart-logo.png` in the same Docker image. **Ask QuoteSaarthi** opens the existing Vendor
 AI Assistant. Invoice uploads and Drive search remain under **Workspace tools**
 in the sidebar. Counts still come from the shared live database; the visual update
 does not copy screenshot data, change authentication, or add account/admin roles.
