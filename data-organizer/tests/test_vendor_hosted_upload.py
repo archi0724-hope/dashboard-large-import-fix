@@ -109,7 +109,7 @@ def test_purchase_invoice_card_and_sidebar_use_shared_invoice_records(tmp_path,m
     page = dashboard(tmp_path,monkeypatch).run(timeout=30)
     assert not page.exception
     assert 'Served invoices' in page.radio(key='page').options
-    metric = next(item for item in page.metric if item.label=='Purchase Invoice')
+    metric = next(item for item in page.metric if item.label=='Served data invoices')
     assert metric.value == '0'
     page.radio(key='page').set_value('Purchase Invoice').run(timeout=30)
     assert not page.exception

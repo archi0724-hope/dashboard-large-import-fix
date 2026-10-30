@@ -121,6 +121,25 @@ def test_new_original_workbook_version_keeps_previous_bytes(client):
     assert c.get('/api/purchase-invoices/workbooks/'+a+'/original.xlsx', headers=headers).content == first
 
 
+def test_served_invoice_headcount_deduplicates_item_rows_and_uses_latest_workbook(client):
+    c, headers = client
+    assert served.served_invoice_count(served.database()) == 0
+    c.post('/api/purchase-invoices/workbooks?filename=served.xlsx', headers=headers, content=workbook()).raise_for_status()
+    assert served.served_invoice_count(served.database()) == 1  # 302 rows share one invoice.
+    book = Workbook()
+    book.active.title = 'Client Call List'
+    for row in [['Invoice No.', 'Item'], [' INV-1 ', 'First'], ['inv-1', 'Second'],
+                ['INV-2', 'Third'], ['', 'No invoice number']]:
+        book.active.append(row)
+    summary = book.create_sheet('Client Summary')
+    summary.append(['Invoice No.'])
+    summary.append(['Do not count a second worksheet'])
+    output = io.BytesIO()
+    book.save(output)
+    c.post('/api/purchase-invoices/workbooks?filename=updated.xlsx', headers=headers, content=output.getvalue()).raise_for_status()
+    assert served.served_invoice_count(served.database()) == 2
+
+
 def test_vendor_purchase_invoice_opens_native_worksheet_without_dashboard_cards(client, monkeypatch, tmp_path):
     from streamlit.testing.v1 import AppTest
     c, headers = client

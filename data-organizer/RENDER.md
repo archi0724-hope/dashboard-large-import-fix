@@ -15,6 +15,13 @@ configuration below.
 
 ### Original served-data worksheet view
 
+The workspace card is labelled **Served data invoices**. It counts distinct,
+non-blank invoice numbers in **Client Call List** of the latest saved workbook,
+ignoring outer whitespace and letter case. Repeated item rows count once. It does
+not add the summary/cancelled worksheets or extracted invoice records to this
+count. With no served workbook the card shows zero. For differently named
+workbooks, the first worksheet with an Invoice No./Invoice Number header is used.
+
 The Vendor sidebar's **Served invoices** entry is the Purchase Invoice workspace.
 It opens **Served data invoices** directly in the main panel, with no dashboard
 summary cards or nested page above it. `/vendor/?view=served-invoices` opens it

@@ -36,6 +36,30 @@ def database():
     return store
 
 
+def served_invoice_count(store):
+    """Count invoices once in the latest served register, not once per item row."""
+    with store.connection() as db:
+        db.execute(SCHEMA)
+        row = db.execute('SELECT payload FROM vdd_invoice_workbooks ORDER BY created_at DESC,id LIMIT 1').fetchone()
+    if not row:
+        return 0
+    book = load_workbook(BytesIO(bytes(row['payload'])), read_only=True, data_only=True, keep_links=False)
+    try:
+        candidates = [book['Client Call List']] if 'Client Call List' in book.sheetnames else book.worksheets
+        for sheet in candidates:
+            rows = sheet.iter_rows(values_only=True)
+            headings = [''.join(character for character in cell_text(value).casefold() if character.isalnum())
+                        for value in next(rows, ())]
+            column = next((index for index, value in enumerate(headings)
+                           if value in {'invoiceno', 'invoicenumber'}), None)
+            if column is not None:
+                return len({cell_text(values[column]).strip().casefold() for values in rows
+                            if column < len(values) and cell_text(values[column]).strip()})
+        return 0
+    finally:
+        book.close()
+
+
 def cell_text(value):
     if value is None:
         return ''

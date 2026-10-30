@@ -727,8 +727,8 @@ if page == "Companies & documents":
 if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
     st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
-    from app.purchase_invoices import invoice_count
-    m1.metric("Purchase Invoice", f"{invoice_count(store):,}", help="Confirmed purchase invoices saved in the shared database. Each invoice counts once.")
+    from app.served_workbook import served_invoice_count
+    m1.metric("Served data invoices", f"{served_invoice_count(store):,}", help="Distinct non-blank invoice numbers in Client Call List of the latest served workbook. Each invoice counts once across repeated item rows.")
     m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available uploaded files and Drive references. Drive originals remain in Drive. Known identical content within a company counts once.")
     m3.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
     m4.metric("Needs review", f"{display_counts['review_files']:,}", help="Unassigned, unclassified or unavailable document files.")
@@ -751,9 +751,9 @@ if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
                 help=f"Unique companies with at least one available {document_type} file. Multiple files for one company count once.",
             )
     if view_cleared:
-        st.info("The vendor document view is cleared. Saved documents and purchase invoices are kept; the Purchase Invoice card still counts confirmed invoices. Click **Show saved data** to restore the vendor summary.")
+        st.info("The vendor document view is cleared. Saved documents and original workbooks are kept; the Served data invoices card still counts unique invoices. Click **Show saved data** to restore the vendor summary.")
     else:
-        st.caption("Purchase Invoice counts confirmed shared invoices. Headcount is unique companies; document totals and coverage describe vendor documents.")
+        st.caption("Served data invoices counts unique invoice numbers in the latest served workbook. Headcount is unique companies; document totals and coverage describe vendor documents.")
 
 if page == "Upload documents":
     st.subheader("Upload vendor documents")
