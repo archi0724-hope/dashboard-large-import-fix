@@ -13,6 +13,34 @@ configuration below.
 
 ## Purchase invoices and large collections
 
+### Original served-data worksheet view
+
+The Purchase Invoice page opens with **Served data invoices**, matching the
+original-workbook workflow. Use **Original workbook versions and upload → Save
+original workbook** to add `served data.xlsx` privately; never commit client
+workbooks to the repository. Choose any original worksheet and search across all
+its cells. Rows and columns retain their original positions, including duplicates
+and blank cells. The viewer displays 250 matching rows per page and reports both
+matching and total counts. **Download original Excel** returns the byte-identical
+uploaded file, including every worksheet and original formatting. The viewer is
+read-only and displays cached formula results rather than calculating formulas.
+
+Original workbooks are versioned by SHA-256 in `vdd_invoice_workbooks`, schema
+version 1, independently of extracted invoice records. New contents create a
+version; repeated identical bytes reuse the saved version without overwriting it.
+The existing shared-password/scoped-token checks protect upload, metadata, search
+and download. Upload limits are 20 MiB, 64 MiB expanded ZIP contents, 5,000 ZIP
+entries, 50 worksheets, 50,000 data rows/100 columns per worksheet, and 1,000,000
+cells total. Unsafe compression and corrupt workbooks are rejected before saving.
+The existing database capacity check applies before new workbook writes.
+
+The additive table is created idempotently when the feature is first used and
+stores bytes in PostgreSQL on Render (SQLite locally). Downgrading the application
+leaves the table intact and does not change existing invoices or document counts.
+Keep the source file and use original downloads and provider database backups for
+recovery. Existing dashboard backup/reset actions do not include this table.
+See [ADR 0010](../docs/decisions/0010-original-invoice-workbooks.md).
+
 **Purchase invoices → Search saved invoices → Export Excel** downloads the
 31-column invoice register, from Invoice Date through Source PDF Page. Export
 uses the current search across all saved records, including results beyond the

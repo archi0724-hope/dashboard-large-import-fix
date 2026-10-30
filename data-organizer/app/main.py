@@ -33,6 +33,7 @@ from .services import AppState, get_state
 from .vendor_zip_upload import router as vendor_upload_router
 from .drive.index_api import router as drive_index_router
 from .purchase_invoices import router as purchase_invoice_router
+from .served_workbook import router as invoice_workbook_router
 
 STATIC = Path(__file__).parent / "dashboard" / "static"
 VENDOR_SCRIPT = Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py"
@@ -52,6 +53,7 @@ app = FastAPI(
 app.include_router(vendor_upload_router)
 app.include_router(drive_index_router)
 app.include_router(purchase_invoice_router)
+app.include_router(invoice_workbook_router)
 
 
 def _clean(obj: Any) -> Any:
