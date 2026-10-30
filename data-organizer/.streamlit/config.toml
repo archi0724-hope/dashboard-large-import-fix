@@ -1,6 +1,7 @@
 [theme]
 base = "light"
-primaryColor = "#fa811b"
+baseFontSize = 14
+primaryColor = "#6655d9"
 backgroundColor = "#f5f7fc"
 secondaryBackgroundColor = "#ffffff"
 textColor = "#142d55"
@@ -10,15 +11,15 @@ baseRadius = "10px"
 buttonRadius = "8px"
 dataframeHeaderBackgroundColor = "#f5f7fc"
 dataframeBorderColor = "#dfe6f1"
-chartCategoricalColors = ["#2f70f5", "#fa811b", "#8246e8", "#17975e", "#c72932"]
+chartCategoricalColors = ["#6655d9", "#2f70f5", "#148ba0", "#17975e", "#c72932"]
 
 [server]
 maxUploadSize = 2048
 maxMessageSize = 2200
 
 [theme.sidebar]
-primaryColor = "#fa811b"
-backgroundColor = "#142447"
+primaryColor = "#9a8aff"
+backgroundColor = "#101e38"
 secondaryBackgroundColor = "#253858"
 textColor = "#e0e7f4"
 borderColor = "#334567"

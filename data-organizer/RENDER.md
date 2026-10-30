@@ -1,5 +1,15 @@
 # Organizer preview on Render
 
+## QuoteSaarthi Vendor design
+
+The Vendor workspace uses QuoteSaarthi branding, a navy sidebar, purple summary
+card accents and a welcome banner. **Ask QuoteSaarthi** opens the existing Vendor
+AI Assistant. Invoice uploads and Drive search remain under **Workspace tools**
+in the sidebar. Counts still come from the shared live database; the visual update
+does not copy screenshot data, change authentication, or add account/admin roles.
+Deploy this design through the existing `deploy/organizer` branch and Docker
+configuration below.
+
 ## Purchase invoices and large collections
 
 `/purchase-invoices` provides upload → extraction → review/edit → save → search.

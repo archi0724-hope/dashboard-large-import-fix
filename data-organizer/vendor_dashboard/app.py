@@ -52,34 +52,36 @@ if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL
 Store = storage_module.Store
 
 APP_DIR = Path(__file__).resolve().parent
-st.set_page_config(page_title="Vendor Document Dashboard", page_icon="\U0001f4c2", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="QuoteSaarthi · Vendor Document Dashboard", page_icon=":material/auto_awesome:", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-.stApp{background:#f5f7fc;color:#142d55}
-.block-container{max-width:1460px;padding-top:4.5rem;padding-bottom:3rem}
+.stApp{background:radial-gradient(ellipse at 95% 0%,#eeebff 0%,transparent 48%),#f5f7fc;color:#142d55}
+.block-container{max-width:1460px;padding-top:3.5rem;padding-bottom:3rem}
 h1{font-size:1.65rem!important;font-weight:750!important;letter-spacing:-.025em;color:#142d55}
 h2,h3{letter-spacing:-.015em;color:#142d55}
 [data-testid="stHeader"]{background:#fff;border-bottom:1px solid #dfe6f1}
 [data-testid="stExpandSidebarButton"]{visibility:visible!important;opacity:1!important;width:40px;height:40px;border:1px solid #dfe6f1;border-radius:8px;background:#fff;color:#142d55}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#10203f,#17294f);border-right:1px solid #334567}
-[data-testid="stSidebar"] [data-testid="stRadio"] label{padding:9px 10px;border-radius:8px;margin:2px 0}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#353044;box-shadow:inset 3px 0 #fa811b}
-[data-testid="stMetric"]{background:#fff;border:1px solid #dfe6f1;border-left:4px solid #fa811b;border-radius:12px;padding:1rem;box-shadow:0 8px 22px rgba(20,45,85,.06)}
-[data-testid="stColumn"]:nth-child(4n+2) [data-testid="stMetric"]{border-left-color:#2f70f5}
-[data-testid="stColumn"]:nth-child(4n+3) [data-testid="stMetric"]{border-left-color:#8246e8}
-[data-testid="stColumn"]:nth-child(4n) [data-testid="stMetric"]{border-left-color:#17975e}
+[data-testid="stSidebar"]{background:#101e38;border-right:1px solid #293b59}
+[data-testid="stSidebar"] [data-testid="stRadio"] label{padding:5px 6px;border-radius:8px;margin:2px 0}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#202e50;box-shadow:inset 3px 0 #7765ff}
+[data-testid="stMetric"]{background:#fff;border:1px solid #dfe3f5;border-top:3px solid #7460ff;border-radius:14px;padding:1rem;box-shadow:0 8px 22px rgba(38,44,89,.04)}
 [data-testid="stMetricValue"]{font-size:1.85rem;color:#142d55;font-weight:700}
 [data-testid="stMetricLabel"]{color:#63758e;font-size:.82rem;font-weight:650}
 [data-testid="stFileUploader"]{border:1px dashed #b8c8e0;border-radius:10px;background:#fff}
 [data-testid="stExpander"]{background:#fff;border:1px solid #dfe6f1;border-radius:10px}
 [data-testid="stBaseButton-secondary"]{background:#fff;color:#142d55;border-color:#dfe6f1;font-weight:600}
-[data-testid="stBaseButton-primary"]{background:#fa811b;color:#142447;border-color:#fa811b;font-weight:700}
+[data-testid="stBaseButton-primary"]{background:#6655d9;color:#fff;border-color:#6655d9;font-weight:700}
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]{background:#253858;color:#e0e7f4;border-color:#334567}
-.brand{display:flex;gap:12px;align-items:center;margin:.25rem 0 1.2rem}
-.brand{flex-direction:column;text-align:center;gap:12px}
-.brand-icon{width:100%;min-height:80px;display:grid;place-items:center;background:radial-gradient(ellipse at center,#fff9c1 0%,#ffe754 55%,#ffd51c 100%);color:#142447;border-radius:10px;padding:14px 10px;font-size:1.3rem;font-weight:750}
-.brand-icon span,.brand-name span{color:#e9670b}
-.brand-name{font-size:1.3rem;font-weight:750;color:#fff}.brand-sub{font-size:.65rem;color:#b5c1d8;letter-spacing:.07em;text-transform:uppercase}
+[data-testid="stSidebar"] [data-testid="stExpander"]{background:#192942;border-color:#334567;color:#e0e7f4}
+.brand{display:flex;gap:12px;align-items:center;margin:.5rem 0 1.3rem}
+.brand-icon{width:44px;height:44px;flex-shrink:0;display:grid;place-items:center;background:linear-gradient(135deg,#7963f1,#148ba0);color:#fff;border-radius:12px;font-size:1.1rem;font-weight:750}
+.brand-name{font-size:1.1rem;font-weight:750;color:#fff}.brand-sub{font-size:.7rem;color:#a9c8ef;margin-top:3px}
+.workspace-hero{position:relative;overflow:hidden;background:linear-gradient(120deg,#16254b 0%,#29375f 65%,#154b5b 100%);border:1px solid #34466e;border-radius:18px;padding:30px;margin:1rem 0;color:#fff}
+.workspace-hero::after{content:'✦';position:absolute;right:32px;top:12px;font-size:110px;line-height:1;color:#a2b7ff;opacity:.13;pointer-events:none}
+.workspace-hero .hero-eyebrow{font-size:.64rem;font-weight:750;letter-spacing:.18em;color:#79eaff;text-transform:uppercase}
+.workspace-hero h2{font-size:1.5rem!important;color:#fff;margin:16px 0 18px;max-width:80%}
+.workspace-hero p{font-size:.88rem;line-height:1.7;max-width:650px;color:#e4eaff}
+.hero-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.hero-badges span{border:1px solid #526080;border-radius:30px;padding:5px 10px;font-size:.68rem;color:#e4eaff;background:#ffffff06}
 .summary-label{margin:.9rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .type-label{margin:1.1rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .table-scroll{max-height:470px;overflow:auto;border:1px solid #dee6ed;border-radius:10px;background:#fff}
@@ -658,7 +660,7 @@ view_cleared = bool(st.session_state.get("view_cleared", False))
 display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
-    st.markdown('<div class="brand"><div class="brand-icon"><div><span>HOSP</span>kart.com</div></div><div><div class="brand-name"><span>HOSP</span>kart.com</div><div class="brand-sub">Vendor &amp; document operations</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand"><div class="brand-icon" aria-hidden="true">Q✦</div><div><div class="brand-name">QuoteSaarthi</div><div class="brand-sub">Your workspace intelligence.</div></div></div>', unsafe_allow_html=True)
     navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
     page_map = {item: item for item in navigation}
     captions = [
@@ -667,7 +669,7 @@ with st.sidebar:
         "Add a new vendor batch",
         "Original ZIP uploads saved here",
         "Only files that need correction",
-        "HospKart chat, product search, quotations and vendor documents",
+        "Natural-language vendor search and company answers",
         "Backup, restore or reset saved data",
         "Upload, review and search purchase invoices",
     ]
@@ -682,6 +684,7 @@ with st.sidebar:
         navigation,
         key="page",
         captions=captions,
+        format_func=lambda label: "✦ QuoteSaarthi" if label == "🤖 Vendor AI Assistant" else label,
     )
     page = page_map[page_label]
     if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
@@ -690,9 +693,11 @@ with st.sidebar:
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
 from app.vendor_zip_upload import issue_upload_token
-st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD')))
-if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
-    st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
+with st.sidebar:
+    with st.expander('Workspace tools'):
+        st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD')))
+        if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
+            st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
@@ -702,6 +707,15 @@ else:
 reset_col.button("Reset all history", key="open_reset", on_click=open_data_reset, width="stretch", help="Delete ALL dashboard data, history, backups and uploaded ZIP files. The dashboard returns to 0 / 0 / 0 / 0.")
 if notice := st.session_state.pop("notice", None):
     st.success(notice)
+
+if page == "Companies & documents":
+    st.markdown('''<section class="workspace-hero" aria-label="QuoteSaarthi workspace">
+<div class="hero-eyebrow">QuoteSaarthi · Futuristic intelligence dashboard</div>
+<h2>Your data. A clearer way forward.</h2>
+<p>Explore company documents, find products and compare recorded prices with an assistant connected to your saved workspace.</p>
+<div class="hero-badges"><span>Company-wise records</span><span>Source-backed search</span><span>Team-protected workspace</span></div>
+</section>''', unsafe_allow_html=True)
+    st.button("✦ Ask QuoteSaarthi", key="ask_quotesaarthi", on_click=partial(go_to, "🤖 Vendor AI Assistant"))
 
 if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
     st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)

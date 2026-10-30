@@ -227,7 +227,7 @@ def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeyp
     assert not app.exception and not app.warning
     assert 'Drive catalogue and price rows' in [heading.value for heading in app.subheader]
     assert len(app.get('iframe')) == 1
-    assert app.file_uploader(key='catalogue_manual_workbook').allowed_type == ['.xlsx']
+    assert app.file_uploader(key='catalogue_manual_workbook').allowed_type == ['.xlsx', '.csv']
 
 
 def test_duplicate_drive_documents_merge_types_and_pending_verified_zip_copies(shared):
