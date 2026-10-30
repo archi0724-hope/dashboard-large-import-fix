@@ -13,6 +13,20 @@ configuration below.
 
 ## Purchase invoices and large collections
 
+**Purchase invoices → Search saved invoices → Export Excel** downloads the
+31-column invoice register, from Invoice Date through Source PDF Page. Export
+uses the current search across all saved records, including results beyond the
+current page, and writes one row per item (one row for invoices without items).
+The authenticated `/api/purchase-invoices/export.xlsx` route uses the same access
+control and search rules as saved invoices. Temporary workbooks are removed after
+download; exports are limited to 100,000 item rows and require no schema changes.
+Only saved INR amounts populate ₹ columns. Legacy line amounts with an unspecified
+tax basis are retained in Notes. Client/delivery, GST, feedback/follow-up, payment
+status and PDF-page fields that were not captured remain blank for completion in
+Excel; supplier names are kept in Notes, not substituted for client names.
+Invoice totals repeat per item: count each invoice once when totalling. The Export
+guide sheet explains these limits. Spreadsheet edits do not update saved records.
+
 `/purchase-invoices` provides upload → extraction → review/edit → save → search.
 Both dashboards link to it. It accepts PDF, JPG, PNG, XLSX, XLS and CSV, one
 invoice per file, up to 20 MiB; PDFs up to 20 pages and spreadsheets up to

@@ -1,4 +1,5 @@
 import io
+import json
 import time
 import zipfile
 from pathlib import Path
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from app import invoice_extraction as extraction
 from app import purchase_invoices as invoices
@@ -133,6 +134,95 @@ def test_authorization_and_size_limits_before_extract(client,monkeypatch):
 def test_numeric_review_rejects_nan():
     with pytest.raises(ValueError):
         invoices.Fields(invoice_number='1',supplier='Example',total='NaN')
+
+
+def insert_export_invoice(ident, *, items=None, currency='INR', supplier='Register Supplier'):
+    fields = {'invoice_number': ident, 'invoice_date': '2026-10-30', 'supplier': supplier,
+              'total': '1180.50', 'currency': currency}
+    record = {'fields': fields, 'filename': ident+'.pdf', 'raw_text': '',
+              'items': items if items is not None else [
+                  {'description': 'Medical gloves', 'quantity': '2', 'unit_price': '500.25', 'amount': '1000.50'}]}
+    encoded = json.dumps(record)
+    with invoices.database().connection() as db:
+        db.execute('INSERT INTO vdd_purchase_invoices (id,source_hash,filename,record_json,fields_json,search_text,created_at) VALUES (?,?,?,?,?,?,?)',
+                   (ident, ident, record['filename'], encoded, json.dumps(fields), encoded.casefold(), '2026-10-30T00:00:00Z'))
+
+
+def test_invoice_export_exact_register_format_all_matching_pages_and_safe_values(client):
+    c, headers = client
+    assert c.get('/api/purchase-invoices/export.xlsx').status_code == 401
+    for index in range(26):
+        insert_export_invoice('MATCH-'+str(index).zfill(2))
+    insert_export_invoice('MATCH-26', items=[])
+    insert_export_invoice('OTHER')
+    # A source string must remain literal text even when Excel recognises formula syntax.
+    insert_export_invoice('MATCH-27', items=[{'description': '=1+1', 'quantity': '1', 'unit_price': '10', 'amount': '10'},
+                                           {'description': 'Second item', 'quantity': '3', 'unit_price': '20', 'amount': '60'}])
+    assert len(c.get('/api/purchase-invoices/records?q=MATCH', headers=headers).json()['items']) == 25
+    response = c.get('/api/purchase-invoices/export.xlsx?q=MATCH', headers=headers)
+    assert response.status_code == 200
+    assert 'purchase-invoice-register.xlsx' in response.headers['content-disposition']
+    assert response.headers['cache-control'] == 'no-store'
+    book = load_workbook(io.BytesIO(response.content))
+    sheet = book['Purchase Invoices']
+    assert [cell.value for cell in sheet[1]] == [
+        'Invoice Date', 'Invoice No.', 'Client / Hospital', 'Delivery City / Location',
+        'Full Delivery / Billing Address', 'Client Phone', 'Phone Source', 'Item Name',
+        'Category', 'Subcategory', 'Brand', 'HSN/SAC', 'GST Rate', 'Quantity', 'Unit',
+        'Unit Rate (₹)', 'Taxable Amount (₹)', 'CGST (₹)', 'SGST (₹)',
+        'Item Total incl. GST (₹)', 'Invoice Total (₹)', 'Invoice Status', 'Call Status',
+        'Client Feedback', 'Product Quality', 'Delivery Experience', 'Would Order Again?',
+        'Next Requirement', 'Follow-up Date', 'Notes', 'Source PDF Page',
+    ]
+    assert sheet.max_row == 30  # 28 matching invoices, one has two items, plus header.
+    assert all(str(sheet.cell(row, 2).value).startswith('MATCH') for row in range(2,31))
+    assert sheet['C2'].value is None  # Supplier is not the client/hospital.
+    assert sheet['H2'].value == 'Medical gloves'
+    assert sheet['N2'].value == 2 and sheet['N2'].data_type == 'n'
+    assert sheet['P2'].value == 500.25 and sheet['U2'].value == 1180.5
+    assert all(sheet.cell(2, column).value is None for column in (13,17,18,19,20,22,23,29,31))
+    assert 'Supplier: Register Supplier' in sheet['AD2'].value
+    assert 'tax basis unspecified' in sheet['AD2'].value
+    assert sheet['H29'].value == '=1+1' and sheet['H29'].data_type == 's'
+    assert sheet['B29'].value == sheet['B30'].value == 'MATCH-27'
+    assert sheet['U29'].value == sheet['U30'].value == 1180.5
+    assert sheet.freeze_panes == 'D2' and sheet.auto_filter.ref == 'A1:AE30'
+    assert 'Export guide' in book.sheetnames
+
+
+@pytest.mark.parametrize('currency', ['', 'USD'])
+def test_invoice_export_does_not_label_unknown_or_foreign_amounts_as_rupees(client, currency):
+    c, headers = client
+    insert_export_invoice('FOREIGN', currency=currency)
+    book = load_workbook(io.BytesIO(c.get('/api/purchase-invoices/export.xlsx', headers=headers).content))
+    sheet = book['Purchase Invoices']
+    assert sheet['P2'].value is None and sheet['U2'].value is None
+    assert 'Recorded unit rate: 500.25' in sheet['AD2'].value
+    assert 'Recorded invoice total: 1180.50' in sheet['AD2'].value
+
+
+def test_invoice_export_empty_template_and_temporary_file_cleanup(client, monkeypatch, tmp_path):
+    c, headers = client
+    factory = invoices.tempfile.NamedTemporaryFile
+    paths = []
+    def track(**kwargs):
+        result = factory(dir=tmp_path, **kwargs)
+        paths.append(Path(result.name))
+        return result
+    monkeypatch.setattr(invoices.tempfile, 'NamedTemporaryFile', track)
+    response = c.get('/api/purchase-invoices/export.xlsx', headers=headers)
+    assert response.status_code == 200
+    book = load_workbook(io.BytesIO(response.content))
+    assert book['Purchase Invoices'].max_row == 1
+    assert book['Purchase Invoices'].max_column == 31
+    assert paths and not paths[0].exists()
+    from app.export import invoice_workbook
+    monkeypatch.setattr(invoice_workbook, 'MAX_EXPORT_ROWS', 1)
+    insert_export_invoice('LIMIT-1')
+    insert_export_invoice('LIMIT-2')
+    response = c.get('/api/purchase-invoices/export.xlsx', headers=headers)
+    assert response.status_code == 413 and 'Narrow your invoice search' in response.json()['detail']
+    assert all(not path.exists() for path in paths)
 
 
 def test_worker_failure_deletes_upload_and_releases_slot(client,monkeypatch):
