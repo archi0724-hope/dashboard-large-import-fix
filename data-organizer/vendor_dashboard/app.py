@@ -634,6 +634,9 @@ if st.session_state.pop("reset_completed", False):
 
 # Apply requested navigation before the sidebar widgets are instantiated.
 pending_page = st.session_state.pop("pending_page", None)
+if st.query_params.get('view') == 'served-invoices' and not st.session_state.get('served_deep_link_applied'):
+    pending_page = 'Purchase Invoice'
+    st.session_state['served_deep_link_applied'] = True
 if st.query_params.get("assistant") == "1" and not st.session_state.get("assistant_deep_link_applied"):
     pending_page = "🤖 Vendor AI Assistant"
     st.session_state["assistant_deep_link_applied"] = True
@@ -646,7 +649,7 @@ aliases = store.aliases()
 from drive_view import combine_company_documents, inventory
 try:
     drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
-    if st.session_state.get('page') != 'Catalogue & prices':
+    if (pending_page or st.session_state.get('page')) not in {'Catalogue & prices', 'Purchase Invoice'}:
         drive_snapshot = inventory(drive_identity, store)
         vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
 except Exception:
@@ -660,7 +663,7 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><img src="/static/hospkart-logo.png" alt="HOSPkart.com"></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
     page_map = {item: item for item in navigation}
     captions = [
         "Yes / No checklist + company downloads",
@@ -669,8 +672,8 @@ with st.sidebar:
         "Original ZIP uploads saved here",
         "Only files that need correction",
         "Natural-language vendor search and company answers",
+        "Original served data.xlsx workbook",
         "Backup, restore or reset saved data",
-        "Upload, review and search purchase invoices",
     ]
     if pending_page:
         matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
@@ -683,11 +686,16 @@ with st.sidebar:
         navigation,
         key="page",
         captions=captions,
-        format_func=lambda label: "✦ QuoteSaarthi" if label == "🤖 Vendor AI Assistant" else label,
+        format_func=lambda label: {"🤖 Vendor AI Assistant": "✦ QuoteSaarthi", "Purchase Invoice": "Served invoices"}.get(label, label),
     )
     page = page_map[page_label]
     if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
         st.session_state.clear(); st.rerun()
+
+if page == 'Purchase Invoice':
+    from served_invoices_ui import render_served_invoices
+    render_served_invoices(store)
+    st.stop()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
@@ -747,13 +755,7 @@ if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
     else:
         st.caption("Purchase Invoice counts confirmed shared invoices. Headcount is unique companies; document totals and coverage describe vendor documents.")
 
-if page == 'Purchase Invoice':
-    st.subheader('Purchase invoices')
-    invoice_url = '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD'))
-    st.link_button('Open purchase invoices in a new tab',invoice_url)
-    st.iframe(invoice_url,height=1100)
-
-elif page == "Upload documents":
+if page == "Upload documents":
     st.subheader("Upload vendor documents")
     st.write("Upload documents from your computer, or index the connected Google Drive collection. Drive originals stay in Drive; extracted records are searchable by everyone with dashboard access.")
     connected_drive = setting("GOOGLE_DRIVE_FOLDER_URL") or setting("GOOGLE_DRIVE_FOLDER_ID")

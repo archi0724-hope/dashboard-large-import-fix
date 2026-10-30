@@ -119,3 +119,32 @@ def test_new_original_workbook_version_keeps_previous_bytes(client):
     assert a != b
     assert len(c.get('/api/purchase-invoices/workbooks', headers=headers).json()['items']) == 2
     assert c.get('/api/purchase-invoices/workbooks/'+a+'/original.xlsx', headers=headers).content == first
+
+
+def test_vendor_purchase_invoice_opens_native_worksheet_without_dashboard_cards(client, monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    c, headers = client
+    c.post('/api/purchase-invoices/workbooks?filename=served.xlsx', headers=headers, content=workbook()).raise_for_status()
+    monkeypatch.setenv('APP_PASSWORD', '')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT', 'false')
+    monkeypatch.setenv('DATABASE_URL', '')
+    monkeypatch.setenv('VENDOR_DATA_DIR', str(tmp_path/'store'))
+    import drive_view
+    def unexpected(*args):
+        raise AssertionError('Served invoices must not load the Drive inventory')
+    monkeypatch.setattr(drive_view, 'inventory', unexpected)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'vendor_dashboard'/'app.py'))
+    app.query_params['view'] = 'served-invoices'
+    app.run(timeout=30)
+    assert not app.exception and not app.warning
+    assert [title.value for title in app.title] == ['Served data invoices']
+    assert not app.metric and not app.get('iframe')
+    assert app.selectbox(key='served_original_sheet').options == ['Client Call List', 'Client Summary']
+    app.text_input(key='served_worksheet_search').set_value('Product 299').run()
+    assert not app.exception
+    assert any('1 of 302 rows' in element.value for element in app.markdown)
+    assert any('Original City 299' in element.value for element in app.markdown)
+    app.text_input(key='served_worksheet_search').set_value('').run()
+    app.selectbox(key='served_original_sheet').select('Client Summary').run()
+    assert not app.exception
+    assert any('1 of 1 rows · 4 columns' in element.value for element in app.markdown)

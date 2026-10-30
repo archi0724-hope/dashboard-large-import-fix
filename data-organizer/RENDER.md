@@ -15,8 +15,13 @@ configuration below.
 
 ### Original served-data worksheet view
 
-The Purchase Invoice page opens with **Served data invoices**, matching the
-original-workbook workflow. Use **Original workbook versions and upload → Save
+The Vendor sidebar's **Served invoices** entry is the Purchase Invoice workspace.
+It opens **Served data invoices** directly in the main panel, with no dashboard
+summary cards or nested page above it. `/vendor/?view=served-invoices` opens it
+directly after sign-in. Worksheet selection, search, the table and
+original downloads use native Vendor controls. The separate `/purchase-invoices`
+page retains individual-invoice upload and export tools, also linked below the
+worksheet view. Use **Original workbook versions and upload → Save
 original workbook** to add `served data.xlsx` privately; never commit client
 workbooks to the repository. Choose any original worksheet and search across all
 its cells. Rows and columns retain their original positions, including duplicates

@@ -108,9 +108,10 @@ def test_connected_drive_large_zip_stays_in_drive_and_shows_shared_library(tmp_p
 def test_purchase_invoice_card_and_sidebar_use_shared_invoice_records(tmp_path,monkeypatch):
     page = dashboard(tmp_path,monkeypatch).run(timeout=30)
     assert not page.exception
-    assert 'Purchase Invoice' in page.radio(key='page').options
+    assert 'Served invoices' in page.radio(key='page').options
     metric = next(item for item in page.metric if item.label=='Purchase Invoice')
     assert metric.value == '0'
     page.radio(key='page').set_value('Purchase Invoice').run(timeout=30)
     assert not page.exception
-    assert any(item.proto.src.startswith('/purchase-invoices#') for item in page.get('iframe'))
+    assert [item.value for item in page.title] == ['Served data invoices']
+    assert not page.get('iframe') and not page.metric
