@@ -1,3 +1,7 @@
+## Single administrator login
+
+The starting page uses ADMIN_EMAIL and ADMIN_PASSWORD from Render private environment settings. Only this administrator can change shared data. Viewers can browse, search and download without the old Team password screen. See [ADMIN_ACCESS.md](ADMIN_ACCESS.md) for session expiry and recovery. Keep one ASGI worker for the in-memory admin sessions.
+
 # Organizer preview on Render
 
 ## QuoteSaarthi Vendor design

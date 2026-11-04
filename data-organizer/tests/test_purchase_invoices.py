@@ -125,7 +125,7 @@ def test_extract_review_save_search_and_duplicate(client,tmp_path):
 
 def test_authorization_and_size_limits_before_extract(client,monkeypatch):
     c,headers = client
-    assert c.get('/api/purchase-invoices/records').status_code == 401
+    assert c.get('/api/purchase-invoices/records').status_code == 200  # Viewers can search.
     assert c.post('/api/purchase-invoices/extract?filename=invoice.xlsx',headers={**headers,'Content-Length':str(21*1024**2)},content=b'x').status_code == 413
     assert c.post('/api/purchase-invoices/extract?filename=collection.zip',headers=headers,content=b'x').status_code == 422
     assert c.post('/api/purchase-invoices/extract?filename=invoice.csv',headers=headers,content=b'').status_code == 422
@@ -150,7 +150,7 @@ def insert_export_invoice(ident, *, items=None, currency='INR', supplier='Regist
 
 def test_invoice_export_exact_register_format_all_matching_pages_and_safe_values(client):
     c, headers = client
-    assert c.get('/api/purchase-invoices/export.xlsx').status_code == 401
+    assert c.get('/api/purchase-invoices/export.xlsx').status_code == 200  # Viewer download.
     for index in range(26):
         insert_export_invoice('MATCH-'+str(index).zfill(2))
     insert_export_invoice('MATCH-26', items=[])

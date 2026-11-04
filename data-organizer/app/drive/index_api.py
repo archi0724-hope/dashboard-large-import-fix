@@ -1,7 +1,6 @@
 """Authenticated shared Drive library, independent of the temporary Organizer DB."""
 from __future__ import annotations
 
-import hmac
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -11,18 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..config import get_settings, parse_drive_folder_id
-from ..vendor_zip_upload import require_upload_token
 from . import indexer
 from .index_store import DriveIndex
 from .source_links import parse_source
 
 
 def authorize(request: Request):
-    expected = get_settings().dashboard_token
-    supplied = request.headers.get('x-token','')
-    if expected and supplied and hmac.compare_digest(expected,supplied):
-        return
-    require_upload_token(request)
+    # Shared reads are available to viewers; all writes are guarded centrally.
+    return
 
 
 router = APIRouter(prefix='/api/drive-index',dependencies=[Depends(authorize)])

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import html
 import importlib
 import importlib.util
@@ -103,36 +102,19 @@ def setting(name: str, default: str = "") -> str:
         return os.environ.get(name, default)
 
 
-def authenticated() -> bool:
-    password = setting("APP_PASSWORD")
-    cloud_deployment = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
-    if not password:
-        if cloud_deployment:
-            st.title("Vendor Document Dashboard")
-            st.warning("Production setup is incomplete: APP_PASSWORD is required.")
-            st.caption("Set APP_PASSWORD and DATABASE_URL as private environment variables on the server.")
-            return False
-        return True
-    if st.session_state.get("authenticated"):
-        return True
-    st.title("Vendor Document Dashboard")
-    with st.form("login"):
-        typed = st.text_input("Team password", type="password")
-        submit = st.form_submit_button("Open dashboard", type="primary")
-    if submit:
-        if time.time() < st.session_state.get("retry_after", 0):
-            st.error("Please retry after the sign-in cooldown.")
-        elif hmac.compare_digest(typed.encode(), password.encode()):
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.session_state["retry_after"] = time.time() + 3
-            st.error("Incorrect password.")
-    return False
+from app.admin_access import COOKIE as ADMIN_COOKIE, is_admin
+
+def admin_allowed():
+    return is_admin(st.context.cookies.get(ADMIN_COOKIE, ""))
 
 
-if not authenticated():
-    st.stop()
+def require_admin():
+    if not admin_allowed():
+        st.warning("Admin login required. Use the A icon at the top-right of the main dashboard.")
+        st.stop()
+
+
+can_edit = admin_allowed()
 
 
 @st.cache_resource
@@ -581,6 +563,7 @@ def refresh(message: str):
 
 def execute_delete_all_data():
     """Run the destructive reset as a widget callback, before the next Streamlit rerun."""
+    require_admin()
     acknowledged = bool(st.session_state.get("reset_acknowledged"))
     confirmation = str(st.session_state.get("reset_confirmation", "")).strip()
     if not acknowledged or confirmation != "RESET HISTORY":
@@ -689,8 +672,12 @@ with st.sidebar:
         format_func=lambda label: {"🤖 Vendor AI Assistant": "✦ QuoteSaarthi", "Purchase Invoice": "Served invoices"}.get(label, label),
     )
     page = page_map[page_label]
-    if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
-        st.session_state.clear(); st.rerun()
+
+if not can_edit:
+    st.caption("View only · Browse, search and download. Admin sign in is available through the A icon on the main dashboard.")
+    st.link_button("Admin account ↗", "/")
+if page in {"Upload documents", "Review files", "Data & backups"}:
+    require_admin()
 
 if page == 'Purchase Invoice':
     from served_invoices_ui import render_served_invoices
@@ -699,19 +686,19 @@ if page == 'Purchase Invoice':
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
-from app.vendor_zip_upload import issue_upload_token
+from app.vendor_zip_upload import issue_upload_token, upload_signing_key
 with st.sidebar:
     with st.expander('Workspace tools'):
-        st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD')))
+        st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(upload_signing_key()))
         if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
-            st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
-upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
+            st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(upload_signing_key()))
+upload_col.button("Upload documents", disabled=not can_edit, key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
     clear_col.button("Show saved data", key="show_saved_data", on_click=show_saved_data, width="stretch", help="Show the saved companies and documents again.")
 else:
     clear_col.button("Clear search", key="reset_filters", on_click=reset_filters, width="stretch", help="Clear the dashboard view and show 0 summary counters without deleting saved data.")
-reset_col.button("Reset all history", key="open_reset", on_click=open_data_reset, width="stretch", help="Delete ALL dashboard data, history, backups and uploaded ZIP files. The dashboard returns to 0 / 0 / 0 / 0.")
+reset_col.button("Reset all history", disabled=not can_edit, key="open_reset", on_click=open_data_reset, width="stretch", help="Delete ALL dashboard data, history, backups and uploaded ZIP files. The dashboard returns to 0 / 0 / 0 / 0.")
 if notice := st.session_state.pop("notice", None):
     st.success(notice)
 
@@ -787,7 +774,7 @@ if page == "Upload documents":
             from app.config import parse_drive_folder_id
             folder_url = 'https://drive.google.com/drive/folders/' + parse_drive_folder_id(connected_drive)
             st.link_button("1. Open connected Drive folder and add your ZIP", folder_url)
-        library_url = '/drive-library#' + issue_upload_token(setting('APP_PASSWORD'))
+        library_url = '/drive-library#' + issue_upload_token(upload_signing_key())
         st.link_button("Open Drive library in a new tab", library_url)
         st.caption("Searchable records are shared in PostgreSQL; originals remain in Drive. Drive companies, file references and extracted rows also appear on Companies & documents and Catalogue & prices.")
         st.iframe(library_url, height=1000)
@@ -810,8 +797,8 @@ if page == "Upload documents":
             use_pdf = st.checkbox("Read PDF headings for unclear filenames", value=False, help="Optional local text extraction. No OCR or external service. Scans can still need review.")
             expected = st.number_input("Expected company count (0 = not specified)", min_value=0, value=0, step=1)
     if streamed_upload:
-        from app.vendor_zip_upload import issue_upload_token
-        upload_token = issue_upload_token(setting("APP_PASSWORD"))
+        from app.vendor_zip_upload import issue_upload_token, upload_signing_key
+        upload_token = issue_upload_token(upload_signing_key())
         upload_url = "/vendor-upload?source=computer&company=" + quote_plus(single_company) + "&read_pdf=" + str(use_pdf).lower() + "&expected=" + str(int(expected)) + "#" + upload_token
         st.link_button("Choose ZIP files", upload_url, type="primary", width="stretch")
     if not streamed_upload and not indexing_drive and st.button("Save documents", key="save_documents", disabled=not (uploads or local_zip_path.strip()), type="primary", width="stretch"):
@@ -980,55 +967,56 @@ elif page == "Companies & documents":
 
 elif page == "Catalogue & prices":
     st.subheader('Drive catalogue and price rows')
-    catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(setting('APP_PASSWORD'))
+    catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(upload_signing_key())
     st.link_button('Open Drive catalogue in a new tab', catalogue_url)
     st.iframe(catalogue_url, height=850)
     st.subheader("Saved catalogue and manual Excel records")
     st.caption("Drive source rows appear in the searchable catalogue above. Saved manual/document rows below include both validated records and rows needing review. Their status is shown explicitly.")
-    st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
-    manual_workbook = st.file_uploader(
-        "Upload manual catalogue & prices (.xlsx or .csv)", type=["xlsx", "csv"], max_upload_size=2048,
-        key="catalogue_manual_workbook", on_change=clear_manual_catalogue_import,
-        help="Excel (.xlsx) and CSV (.csv) are supported. Include Company Name and Product Name columns. Maximum 2 GB and 200,000 scanned product rows. Original files are retained; repeated identical uploads are skipped.",
-    )
-    retry_import = False
-    if manual_workbook is not None:
-        interrupted = (
-            st.session_state.get("manual_catalogue_import_token") == (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
-            and not st.session_state.get("manual_catalogue_import_result")
-            and not st.session_state.get("manual_catalogue_import_error")
-            and not catalogue_jobs.status(st.session_state.get('manual_catalogue_job'))
+    if can_edit:
+        st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
+        manual_workbook = st.file_uploader(
+            "Upload manual catalogue & prices (.xlsx or .csv)", type=["xlsx", "csv"], max_upload_size=2048,
+            key="catalogue_manual_workbook", on_change=clear_manual_catalogue_import,
+            help="Excel (.xlsx) and CSV (.csv) are supported. Include Company Name and Product Name columns. Maximum 2 GB and 200,000 scanned product rows. Original files are retained; repeated identical uploads are skipped.",
         )
-        if interrupted:
-            st.warning("The previous workbook import did not finish. Retry to continue; already saved rows are skipped.")
-        if interrupted or st.session_state.get("manual_catalogue_import_error"):
-            retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
-    if manual_workbook is not None:
-        token = (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
-        if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
-            st.session_state["manual_catalogue_import_token"] = token
-            st.session_state.pop("manual_catalogue_import_error", None)
-            st.session_state.pop('manual_catalogue_import_result', None)
-            st.session_state.pop('manual_catalogue_job', None)
-            try:
-                st.session_state['manual_catalogue_job'] = catalogue_jobs.start(
-                    store, manual_workbook.name, manual_workbook.getvalue(), retry=True)
-            except Exception as error:
-                logging.getLogger(__name__).exception("Manual catalogue import failed")
-                st.session_state["manual_catalogue_import_error"] = (
-                    str(error) if isinstance(error, (ValueError, RuntimeError, OSError))
-                    else f"Saving failed ({type(error).__name__}). Retry the import; the server log contains the error details."
-                )
-        manual_import_progress()
-    if st.session_state.get("manual_catalogue_import_error"):
-        st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
-    result = st.session_state.get("manual_catalogue_import_result")
-    if result:
-        if not result['added'] and not result['review'] and result['duplicates']:
-            st.info("This workbook was already imported. No new rows were added; its saved rows remain in the table and full Excel export below.")
-        else:
-            st.success(f"Saved {result['added']:,} validated row(s) and {result['review']:,} row(s) needing review.")
-        st.caption(f"{result['duplicates']:,} already processed source row(s) skipped; {result['excluded']:,} medicine/drug row(s) excluded from this workbook. Source rows can expand into multiple prices or collapse as exact duplicates.")
+        retry_import = False
+        if manual_workbook is not None:
+            interrupted = (
+                st.session_state.get("manual_catalogue_import_token") == (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
+                and not st.session_state.get("manual_catalogue_import_result")
+                and not st.session_state.get("manual_catalogue_import_error")
+                and not catalogue_jobs.status(st.session_state.get('manual_catalogue_job'))
+            )
+            if interrupted:
+                st.warning("The previous workbook import did not finish. Retry to continue; already saved rows are skipped.")
+            if interrupted or st.session_state.get("manual_catalogue_import_error"):
+                retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
+        if manual_workbook is not None:
+            token = (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
+            if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
+                st.session_state["manual_catalogue_import_token"] = token
+                st.session_state.pop("manual_catalogue_import_error", None)
+                st.session_state.pop('manual_catalogue_import_result', None)
+                st.session_state.pop('manual_catalogue_job', None)
+                try:
+                    st.session_state['manual_catalogue_job'] = catalogue_jobs.start(
+                        store, manual_workbook.name, manual_workbook.getvalue(), retry=True)
+                except Exception as error:
+                    logging.getLogger(__name__).exception("Manual catalogue import failed")
+                    st.session_state["manual_catalogue_import_error"] = (
+                        str(error) if isinstance(error, (ValueError, RuntimeError, OSError))
+                        else f"Saving failed ({type(error).__name__}). Retry the import; the server log contains the error details."
+                    )
+            manual_import_progress()
+        if st.session_state.get("manual_catalogue_import_error"):
+            st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
+        result = st.session_state.get("manual_catalogue_import_result")
+        if result:
+            if not result['added'] and not result['review'] and result['duplicates']:
+                st.info("This workbook was already imported. No new rows were added; its saved rows remain in the table and full Excel export below.")
+            else:
+                st.success(f"Saved {result['added']:,} validated row(s) and {result['review']:,} row(s) needing review.")
+            st.caption(f"{result['duplicates']:,} already processed source row(s) skipped; {result['excluded']:,} medicine/drug row(s) excluded from this workbook. Source rows can expand into multiple prices or collapse as exact duplicates.")
     catalogue_counts = store.product_classification_counts()
     st.caption(
         "Medical devices, equipment, diagnostics and consumables only; medicines and drugs are excluded. "
@@ -1178,7 +1166,7 @@ else:
     else:
         st.info("Local data is saved in the vendor_data folder beside app.py. Closing the browser or resetting search does not delete it.")
         st.caption("For Streamlit Community Cloud, configure DATABASE_URL. Its local disk is not guaranteed to persist.")
-    st.caption("Password protection is a shared-team control, not individual roles. Restrict app access when using PAN, Aadhaar and bank documents.")
+    st.caption("Only the configured administrator can change shared data. Keep admin credentials private.")
     st.markdown("#### Download or restore a checkpoint")
     if st.button("Prepare full data backup",key="prepare_backup"):
         try:

@@ -11,7 +11,7 @@ from app.services import AppState, set_state
 
 
 @pytest.fixture()
-def client(settings, demo_dir, tmp_path):
+def client(settings, demo_dir, tmp_path, admin_api):
     state = AppState(settings, db_path=tmp_path / "t.duckdb")
     state.update_config({"source_kind": "local", "local_input_dir": str(demo_dir), "output_dir": str(tmp_path / "out")})
     set_state(state)
@@ -112,7 +112,7 @@ def test_token_protects_the_api(client, settings):
     state = AppState(replace(settings, dashboard_token="s3cret"), db_path=":memory:")
     set_state(state)
     c = TestClient(app)
-    assert c.get("/api/status").status_code == 401
+    assert c.get("/api/status").status_code == 200  # Legacy team gate removed.
     assert c.get("/api/status", headers={"X-Token": "s3cret"}).status_code == 200
     assert c.get("/").status_code == 200                                # the page itself is static
 

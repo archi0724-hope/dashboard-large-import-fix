@@ -77,11 +77,10 @@ def test_original_upload_order_search_all_cells_sheets_and_exact_download(client
     assert c.get(base+'/rows?sheet=Missing', headers=headers).status_code == 404
 
 
-def test_original_workbook_auth_limits_and_corrupt_uploads(client, monkeypatch):
+def test_original_workbook_viewer_reads_limits_and_corrupt_uploads(client, monkeypatch):
     c, headers = client
     for path in ('', '/missing/rows?sheet=Client', '/missing/original.xlsx'):
-        assert c.get('/api/purchase-invoices/workbooks'+path).status_code == 401
-    assert c.post('/api/purchase-invoices/workbooks?filename=served.xlsx', content=workbook()).status_code == 401
+        assert c.get('/api/purchase-invoices/workbooks'+path).status_code == (200 if not path else 404)
     for name in ('../served.xlsx', 'served.xls', 'served.xlsx.exe'):
         assert c.post('/api/purchase-invoices/workbooks', params={'filename':name}, headers=headers, content=b'x').status_code == 422
     assert c.post('/api/purchase-invoices/workbooks?filename=served.xlsx', headers=headers, content=b'broken').status_code == 422

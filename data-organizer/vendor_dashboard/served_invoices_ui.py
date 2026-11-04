@@ -5,6 +5,11 @@ import html
 import streamlit as st
 
 from app.served_workbook import original, save_workbook, workbooks, worksheet_rows
+from app.admin_access import COOKIE, is_admin
+
+
+def can_edit():
+    return is_admin(st.context.cookies.get(COOKIE, ""))
 
 
 @st.cache_data(show_spinner=False, max_entries=2)
@@ -18,6 +23,9 @@ def reset_rows():
 
 
 def save_uploaded_workbook():
+    if not can_edit():
+        st.session_state["served_upload_error"] = "Admin login required to save a workbook."
+        return
     uploaded = st.session_state.get('served_workbook_upload')
     if uploaded is None:
         return
@@ -99,13 +107,13 @@ def render_served_invoices(store):
             st.selectbox('Saved workbook', list(by_id), key='served_workbook_version',
                          format_func=lambda ident:by_id[ident]['filename']+' · '+by_id[ident]['created_at'][:10],
                          on_change=reset_rows)
-        uploaded = st.file_uploader('Original Excel workbook', type=['xlsx'], max_upload_size=20, key='served_workbook_upload')
-        st.button('Save original workbook', disabled=uploaded is None, on_click=save_uploaded_workbook)
+        if can_edit():
+            uploaded = st.file_uploader('Original Excel workbook', type=['xlsx'], max_upload_size=20, key='served_workbook_upload')
+            st.button('Save original workbook', disabled=uploaded is None, on_click=save_uploaded_workbook)
         if error := st.session_state.get('served_upload_error'):
             st.error(error)
         st.caption('All original worksheets, columns and row order are kept. Downloads retain the original file. Uploads create versions without adding extracted invoice records.')
     with st.expander('Individual invoice upload and 31-column export'):
-        from app.vendor_zip_upload import issue_upload_token
-        from hospkart_chat.integration import vendor_setting
-        url = '/purchase-invoices#'+issue_upload_token(vendor_setting('APP_PASSWORD'))
+        from app.vendor_zip_upload import issue_upload_token, upload_signing_key
+        url = '/purchase-invoices#'+issue_upload_token(upload_signing_key())
         st.link_button('Open individual invoice tools', url)

@@ -114,7 +114,8 @@ def test_drive_zip_import_requires_auth_and_supplies_organizer_source(settings, 
     monkeypatch.setattr('vendor_dashboard.drive_import.download_drive_zip', download)
     client = TestClient(main.app)
     try:
-        assert client.post('/api/drive/import-zip', json={'file_id': 'archive12345'}).status_code == 401
+        assert client.post('/api/drive/import-zip', json={'file_id': 'archive12345'}).status_code == 403
+        monkeypatch.setattr(main, 'is_admin', lambda token='': True)
         headers = {'X-Token': 'synthetic-drive-token'}
         assert client.post('/api/drive/import-zip', headers=headers, json={'file_id': 'not-in-folder'}).status_code == 400
         response = client.post('/api/drive/import-zip', headers=headers, json={'file_id': 'archive12345'})

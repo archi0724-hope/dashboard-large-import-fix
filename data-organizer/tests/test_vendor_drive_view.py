@@ -211,7 +211,7 @@ def test_startup_batches_missing_master_aliases_and_keeps_reviewed_assignments()
     assert rows[0][:3] == ('beta medical','beta medical','Beta Medical')
 
 
-def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeypatch):
+def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeypatch, admin_ui):
     import drive_view
     store, _, _ = shared
     monkeypatch.setenv('VENDOR_DATA_DIR',str(store.data_dir))

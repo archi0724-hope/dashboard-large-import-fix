@@ -115,3 +115,8 @@ def test_purchase_invoice_card_and_sidebar_use_shared_invoice_records(tmp_path,m
     assert not page.exception
     assert [item.value for item in page.title] == ['Served data invoices']
     assert not page.get('iframe') and not page.metric
+
+import pytest
+
+
+pytestmark = pytest.mark.usefixtures("admin_ui")

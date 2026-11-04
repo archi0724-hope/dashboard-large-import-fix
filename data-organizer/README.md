@@ -1,3 +1,5 @@
+For the single administrator login and viewer access, see [ADMIN_ACCESS.md](ADMIN_ACCESS.md).
+
 # Data Organizer
 
 This workspace now includes the HospKart BD chatbot connected to the Vendor
