@@ -116,6 +116,13 @@ def require_admin():
 
 can_edit = admin_allowed()
 
+loading_placeholder = st.empty()
+with loading_placeholder.container():
+    st.markdown("### Opening Vendor workspace")
+    startup_status = st.empty()
+    startup_status.info("Connecting to saved data…")
+    st.caption("Your workspace is loading. Please keep this page open.")
+
 
 @st.cache_resource
 def open_store(data_dir: str, database_url: str, storage_schema: str = "product-records-v3") -> Store:
@@ -147,6 +154,7 @@ try:
             raise RuntimeError("Cached vendor storage does not support catalogue classification.")
 except Exception as error:
     logging.getLogger(__name__).error("Storage initialization failed: %s", type(error).__name__)
+    startup_status.error("Could not connect to saved data")
     st.error("Storage could not be opened. Check the data folder or your private database settings. No documents were loaded.")
     st.stop()
 
@@ -624,26 +632,6 @@ if st.query_params.get("assistant") == "1" and not st.session_state.get("assista
     pending_page = "🤖 Vendor AI Assistant"
     st.session_state["assistant_deep_link_applied"] = True
 
-vendors = store.vendors()
-documents = store.documents()
-uploaded_documents = documents
-upload_archives = store.upload_archives()
-aliases = store.aliases()
-from drive_view import combine_company_documents, inventory
-try:
-    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
-    if (pending_page or st.session_state.get('page')) not in {'Catalogue & prices', 'Purchase Invoice'}:
-        drive_snapshot = inventory(drive_identity, store)
-        vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
-except Exception:
-    logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
-    st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
-review_queue = store.review_queue()
-checklist = build_checklist(vendors, documents)
-counts = dashboard_counts(vendors, documents)
-view_cleared = bool(st.session_state.get("view_cleared", False))
-display_counts = {k: 0 for k in counts} if view_cleared else counts
-
 with st.sidebar:
     st.markdown('<div class="brand"><img src="/static/hospkart-logo.png" alt="HOSPkart.com"></div>', unsafe_allow_html=True)
     navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
@@ -677,12 +665,44 @@ if not can_edit:
     st.caption("View only · Browse, search and download. Admin sign in is available through the A icon on the main dashboard.")
     st.link_button("Admin account ↗", "/")
 if page in {"Upload documents", "Review files", "Data & backups"}:
+    if not can_edit:
+        loading_placeholder.empty()
     require_admin()
 
 if page == 'Purchase Invoice':
+    loading_placeholder.empty()
     from served_invoices_ui import render_served_invoices
     render_served_invoices(store)
     st.stop()
+
+startup_status.info("Loading companies and documents…")
+try:
+    vendors = store.vendors()
+    documents = store.documents()
+    uploaded_documents = documents
+    aliases = store.aliases()
+except Exception as error:
+    logging.getLogger(__name__).error("Workspace metadata load failed: %s", type(error).__name__)
+    startup_status.error("Could not load workspace data")
+    st.error("Saved data could not be loaded. Please retry in a moment.")
+    st.button("Retry loading workspace", key="retry_workspace_load")
+    st.stop()
+from drive_view import combine_company_documents, inventory
+try:
+    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
+    if (pending_page or st.session_state.get('page')) not in {'Catalogue & prices', 'Purchase Invoice'}:
+        startup_status.info("Loading Drive document references…")
+        drive_snapshot = inventory(drive_identity, store, include_record_totals=False)
+        vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
+except Exception:
+    logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
+    st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
+checklist = build_checklist(vendors, documents)
+counts = dashboard_counts(vendors, documents)
+view_cleared = bool(st.session_state.get("view_cleared", False))
+display_counts = {k: 0 for k in counts} if view_cleared else counts
+startup_status.success("Workspace ready")
+loading_placeholder.empty()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
 header.title("Vendor Document Dashboard")
@@ -1077,6 +1097,7 @@ elif page == "Catalogue & prices":
         show_table(display)
 
 elif page == "Uploaded ZIPs":
+    upload_archives = store.upload_archives()
     st.subheader("Uploaded ZIP Files")
     st.write("Every original vendor ZIP saved through the dashboard appears here separately. Downloading returns the exact original ZIP bytes and original filename.")
     if upload_archives.empty:
@@ -1107,6 +1128,7 @@ elif page == "Uploaded ZIPs":
                     c2.warning("ZIP unavailable")
 
 elif page == "Review files":
+    review_queue = store.review_queue()
     st.subheader("Check unclear documents")
     product_review = store.product_review_records(limit=1000)
     if not product_review.empty:

@@ -324,3 +324,7 @@ read-only secret mount cannot be used directly for OAuth token persistence.
 Live Drive access cannot be verified until the actual folder is shared and
 credentials are configured. Connection in a chat does not connect the deployed
 server. Never put keys, tokens or Google passwords into the repository or chat.
+
+### Vendor startup feedback
+
+The Vendor UI renders a loading status before opening storage and shows navigation before metadata reads. The company checklist reads Drive file references without counting or deduplicating every catalogue row. ZIP history and review-queue reads run only on their respective pages, and served invoice browsing bypasses company metadata. Stored records, catalogue counts on their own views and access permissions are unchanged.

@@ -257,3 +257,52 @@ def test_confirmed_company_alias_is_not_an_extra_headcount(shared):
     assert vendors.company_name.tolist() == ['Alpha Medical']
     assert docs.company_name.tolist() == ['Alpha Medical']
     assert len(store.vendors()) == 2  # Original registry and provenance remain stored.
+
+
+def test_checklist_metadata_skips_catalogue_record_count(shared, monkeypatch):
+    store, inventory, _ = shared
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Checklist must not count all catalogue rows")
+    monkeypatch.setattr(DriveIndex, "record_totals", unexpected)
+    result = inventory("references-only", store, include_record_totals=False)
+    assert result["source_rows"] is None
+    assert {entry["entry_key"] for entry in result["references"]} == {"archive", "alpha", "beta"}
+
+
+def test_vendor_renders_loading_state_and_navigation_before_metadata(shared, monkeypatch):
+    import streamlit as st
+    from unittest.mock import patch
+    from storage import Store
+    store, inventory, _ = shared
+    monkeypatch.setenv("VENDOR_DATA_DIR", str(store.data_dir))
+    monkeypatch.setenv("DATABASE_URL", "")
+    original_vendors = Store.vendors
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Company page must not read archive, review or catalogue totals")
+    monkeypatch.setattr(Store, "upload_archives", unexpected)
+    monkeypatch.setattr(Store, "review_queue", unexpected)
+    monkeypatch.setattr(DriveIndex, "record_totals", unexpected)
+    inventory.clear()
+    with patch("streamlit.empty", wraps=st.empty) as status, patch("streamlit.radio", wraps=st.radio) as navigation:
+        def vendors_after_visible_ui(self):
+            assert status.called, "Show loading status before waiting on storage"
+            assert navigation.called, "Show navigation before waiting on metadata"
+            return original_vendors(self)
+        monkeypatch.setattr(Store, "vendors", vendors_after_visible_ui)
+        page = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py")).run(timeout=30)
+    assert not page.exception
+    assert "Find a company" in [heading.value for heading in page.subheader]
+
+
+def test_metadata_failure_shows_retry_instead_of_blank_screen(shared, monkeypatch):
+    from storage import Store
+    store, _, _ = shared
+    monkeypatch.setenv("VENDOR_DATA_DIR", str(store.data_dir))
+    monkeypatch.setenv("DATABASE_URL", "")
+    def unavailable(self):
+        raise OSError("synthetic connection failure")
+    monkeypatch.setattr(Store, "vendors", unavailable)
+    page = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py")).run(timeout=30)
+    assert not page.exception
+    assert any("Saved data could not be loaded" in error.value for error in page.error)
+    assert page.button(key="retry_workspace_load")

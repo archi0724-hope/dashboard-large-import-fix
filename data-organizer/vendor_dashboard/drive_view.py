@@ -20,7 +20,7 @@ def company_source_path(path):
 
 
 @st.cache_data(ttl=20, max_entries=8, show_spinner=False)
-def inventory(identity, _store):
+def inventory(identity, _store, *, include_record_totals=True):
     index = DriveIndex(_store)
     selected = index.source_selection()
     # Older indexes predate the saved source-selection setting.
@@ -29,7 +29,7 @@ def inventory(identity, _store):
             rows = db.execute("SELECT * FROM vdd_drive_entries WHERE folder_id=?", (selected['scope'],)).fetchall()
         else:
             rows = db.execute("SELECT * FROM vdd_drive_entries").fetchall()
-    total = index.record_totals(selected['scope'] if selected else None)['unique_records']
+    total = index.record_totals(selected['scope'] if selected else None)['unique_records'] if include_record_totals else None
     result = []
     for row in rows:
         item = dict(row)
@@ -44,7 +44,7 @@ def inventory(identity, _store):
             'Source rows': int(item['record_count']), 'Issue': item['error'],
             'Drive original': 'https://drive.google.com/file/d/'+item['drive_id']+'/view',
         })
-    return {'items': result, 'source_rows': int(total), 'references': [dict(row) for row in rows]}
+    return {'items': result, 'source_rows': int(total) if total is not None else None, 'references': [dict(row) for row in rows]}
 
 
 def combine_company_documents(vendors, documents, references, aliases=None):
