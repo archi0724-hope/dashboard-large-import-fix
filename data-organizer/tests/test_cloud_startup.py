@@ -110,3 +110,29 @@ def test_connection_failure_never_falls_back_to_schema_writes(metadata_store, mo
     monkeypatch.setattr(store, "connection", unavailable)
     with pytest.raises(TimeoutError):
         store.initialize()
+
+
+def test_existing_drive_index_opens_without_repeating_ddl(metadata_store, monkeypatch):
+    from app.drive.index_store import DriveIndex
+    module, store, calls, _ = metadata_store
+    with monkeypatch.context() as local:
+        local.setattr(store, "cloud", False)
+        local.setattr(store, "connection", lambda: module.Store.connection(store))
+        DriveIndex(store)
+    calls.clear()
+    DriveIndex(store)
+    assert len(calls) <= 2
+    assert all(sql.lstrip().startswith("SELECT") for sql in calls)
+
+
+def test_drive_schema_missing_dedup_column_does_not_skip_setup(metadata_store, monkeypatch):
+    from app.drive.index_store import DriveIndex
+    module, store, _, overrides = metadata_store
+    with monkeypatch.context() as local:
+        local.setattr(store, "cloud", False)
+        local.setattr(store, "connection", lambda: module.Store.connection(store))
+        DriveIndex(store)
+    overrides["missing_column"] = ("vdd_drive_records", "dedup_identity")
+    index = object.__new__(DriveIndex)
+    index.store = store
+    assert index._cloud_schema_ready() is False

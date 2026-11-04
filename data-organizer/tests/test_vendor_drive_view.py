@@ -306,3 +306,26 @@ def test_metadata_failure_shows_retry_instead_of_blank_screen(shared, monkeypatc
     assert not page.exception
     assert any("Saved data could not be loaded" in error.value for error in page.error)
     assert page.button(key="retry_workspace_load")
+
+
+def test_reference_only_load_does_not_classify_every_document(shared, monkeypatch):
+    import drive_view
+    store, inventory, _ = shared
+    def unexpected(*args):
+        raise AssertionError("Reference loading must leave classification to the single company projection")
+    drive_view.document_decision.cache_clear()
+    monkeypatch.setattr(drive_view, "classify", unexpected)
+    result = inventory("no-duplicate-classification", store, include_record_totals=False)
+    assert len(result["references"]) == 3
+
+
+def test_counts_reuse_prepared_checklist(shared, monkeypatch):
+    import vendor_core
+    store, _, _ = shared
+    vendors, docs = store.vendors(), store.documents()
+    checklist = vendor_core.build_checklist(vendors, docs)
+    expected = vendor_core.dashboard_counts(vendors, docs)
+    def unexpected(*args):
+        raise AssertionError("Counts must not rebuild an already prepared checklist")
+    monkeypatch.setattr(vendor_core, "build_checklist", unexpected)
+    assert vendor_core.dashboard_counts(vendors, docs, checklist=checklist) == expected

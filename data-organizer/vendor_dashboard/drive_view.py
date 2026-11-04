@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+from functools import lru_cache
 
 import pandas as pd
 import streamlit as st
@@ -19,6 +20,11 @@ def company_source_path(path):
     return source_path(path)
 
 
+@lru_cache(maxsize=10000)
+def document_decision(path):
+    return classify(company_source_path(path))
+
+
 @st.cache_data(ttl=20, max_entries=8, show_spinner=False)
 def inventory(identity, _store, *, include_record_totals=True):
     index = DriveIndex(_store)
@@ -30,13 +36,15 @@ def inventory(identity, _store, *, include_record_totals=True):
         else:
             rows = db.execute("SELECT * FROM vdd_drive_entries").fetchall()
     total = index.record_totals(selected['scope'] if selected else None)['unique_records'] if include_record_totals else None
+    if not include_record_totals:
+        return {"items": [], "source_rows": None, "references": [dict(row) for row in rows]}
     result = []
     for row in rows:
         item = dict(row)
         path = item['member_path'] or item['source_name']
         if not item['member_path'] and path.lower().endswith('.zip'):
             continue  # Archive containers are not additional vendor documents.
-        decision = classify(company_source_path(path))
+        decision = document_decision(path)
         result.append({
             'Detected company': decision.company_name or 'Needs company review',
             'Document types': ', '.join(decision.document_types),
@@ -86,7 +94,7 @@ def combine_company_documents(vendors, documents, references, aliases=None):
             continue
         if not safe_member(path) or not item['drive_id']:
             continue
-        decision = classify(company_source_path(path))
+        decision = document_decision(path)
         name = decision.company_name or ''
         # Match exact normalized names and confirmed aliases only, never fuzzy matches.
         key = company_key(name)

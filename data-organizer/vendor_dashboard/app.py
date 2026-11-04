@@ -693,13 +693,17 @@ try:
     drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
     if (pending_page or st.session_state.get('page')) not in {'Catalogue & prices', 'Purchase Invoice'}:
         startup_status.info("Loading Drive document references…")
+        drive_started = time.perf_counter()
         drive_snapshot = inventory(drive_identity, store, include_record_totals=False)
+        logging.getLogger("organizer.application").info("Drive references read in %.3fs", time.perf_counter() - drive_started)
+        projection_started = time.perf_counter()
         vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
+        logging.getLogger("organizer.application").info("Drive references projected in %.3fs", time.perf_counter() - projection_started)
 except Exception:
     logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
     st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
 checklist = build_checklist(vendors, documents)
-counts = dashboard_counts(vendors, documents)
+counts = dashboard_counts(vendors, documents, checklist=checklist)
 view_cleared = bool(st.session_state.get("view_cleared", False))
 display_counts = {k: 0 for k in counts} if view_cleared else counts
 logging.getLogger("organizer.application").info("Vendor workspace data loaded in %.3fs", time.perf_counter() - workspace_started)
