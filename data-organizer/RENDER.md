@@ -328,3 +328,7 @@ server. Never put keys, tokens or Google passwords into the repository or chat.
 ### Vendor startup feedback
 
 The Vendor UI renders a loading status before opening storage and shows navigation before metadata reads. The company checklist reads Drive file references without counting or deduplicating every catalogue row. ZIP history and review-queue reads run only on their respective pages, and served invoice browsing bypasses company metadata. Stored records, catalogue counts on their own views and access permissions are unchanged.
+
+### Hosted database startup
+
+An initialized PostgreSQL store is opened using at most four read-only checks of schema columns, required indexes, the existing catalogue-policy marker and missing canonical IDs. It skips repeated table/index creation, repair scans and the startup product-table count when the schema is current. Incomplete/legacy databases still use the existing setup path; local SQLite migration behavior is unchanged. This adds no tables, columns, indexes or migration markers. Startup timing is logged without credentials or document content. Keep the readiness contract in storage.py aligned with future schema changes.

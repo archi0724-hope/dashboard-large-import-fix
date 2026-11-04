@@ -116,6 +116,7 @@ def require_admin():
 
 can_edit = admin_allowed()
 
+workspace_started = time.perf_counter()
 loading_placeholder = st.empty()
 with loading_placeholder.container():
     st.markdown("### Opening Vendor workspace")
@@ -124,7 +125,7 @@ with loading_placeholder.container():
     st.caption("Your workspace is loading. Please keep this page open.")
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def open_store(data_dir: str, database_url: str, storage_schema: str = "product-records-v3") -> Store:
     return Store(Path(data_dir), database_url)
 
@@ -701,6 +702,7 @@ checklist = build_checklist(vendors, documents)
 counts = dashboard_counts(vendors, documents)
 view_cleared = bool(st.session_state.get("view_cleared", False))
 display_counts = {k: 0 for k in counts} if view_cleared else counts
+logging.getLogger("organizer.application").info("Vendor workspace data loaded in %.3fs", time.perf_counter() - workspace_started)
 startup_status.success("Workspace ready")
 loading_placeholder.empty()
 
