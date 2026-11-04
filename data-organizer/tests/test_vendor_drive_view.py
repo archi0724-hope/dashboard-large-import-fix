@@ -329,3 +329,26 @@ def test_counts_reuse_prepared_checklist(shared, monkeypatch):
         raise AssertionError("Counts must not rebuild an already prepared checklist")
     monkeypatch.setattr(vendor_core, "build_checklist", unexpected)
     assert vendor_core.dashboard_counts(vendors, docs, checklist=checklist) == expected
+
+
+def test_search_reuses_snapshot_and_refresh_includes_new_uploads(shared, monkeypatch):
+    import pandas as pd
+    from storage import Store
+    store, _, _ = shared
+    monkeypatch.setenv("VENDOR_DATA_DIR", str(store.data_dir))
+    monkeypatch.setenv("DATABASE_URL", "")
+    original = Store.vendors
+    calls = []
+    def tracked(self):
+        calls.append(True)
+        return original(self)
+    monkeypatch.setattr(Store, "vendors", tracked)
+    page = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py")).run(timeout=30)
+    assert not page.exception
+    before = len(calls)
+    page.text_input(key="company_search").set_value("Alpha").run(timeout=30)
+    assert not page.exception and len(calls) == before
+    store.upsert_vendors(pd.DataFrame({"company_name":["Recently Uploaded Medical"]}))
+    page.button(key="refresh_shared_companies").click().run(timeout=30)
+    assert not page.exception and len(calls) > before
+    assert {metric.label:metric.value for metric in page.metric}["Vendor headcount"] == "3"

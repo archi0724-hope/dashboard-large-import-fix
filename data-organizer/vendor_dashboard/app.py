@@ -130,6 +130,32 @@ def open_store(data_dir: str, database_url: str, storage_schema: str = "product-
     return Store(Path(data_dir), database_url)
 
 
+@st.cache_data(ttl=60, max_entries=4, show_spinner=False)
+def load_workspace_data(identity: str, include_drive: bool, _store: Store) -> dict:
+    """Reuse shared read data across UI interactions; writes and Refresh clear it."""
+    from drive_view import combine_company_documents, inventory
+    vendors = _store.vendors()
+    documents = _store.documents()
+    uploaded_documents = documents
+    aliases = _store.aliases()
+    drive_failed = False
+    if include_drive:
+        try:
+            drive_started = time.perf_counter()
+            snapshot = inventory(identity, _store, include_record_totals=False)
+            logging.getLogger("organizer.application").info("Drive references read in %.3fs", time.perf_counter() - drive_started)
+            projection_started = time.perf_counter()
+            vendors, documents = combine_company_documents(vendors, documents, snapshot['references'], aliases)
+            logging.getLogger("organizer.application").info("Drive references projected in %.3fs", time.perf_counter() - projection_started)
+        except Exception as error:
+            logging.getLogger(__name__).error("Drive references unavailable: %s", type(error).__name__)
+            drive_failed = True
+    checklist = build_checklist(vendors, documents)
+    return {"vendors": vendors, "documents": documents, "uploaded_documents": uploaded_documents,
+            "aliases": aliases, "checklist": checklist,
+            "counts": dashboard_counts(vendors, documents, checklist=checklist), "drive_failed": drive_failed}
+
+
 try:
     vendor_data_dir = setting("VENDOR_DATA_DIR", str(APP_DIR / "vendor_data"))
     database_url = setting("DATABASE_URL")
@@ -562,6 +588,7 @@ def open_data_reset():
 
 
 def refresh(message: str):
+    load_workspace_data.clear()
     st.session_state["view_cleared"] = False
     st.session_state["notice"] = message
     for key in list(st.session_state):
@@ -580,6 +607,7 @@ def execute_delete_all_data():
         return
     try:
         store.reset_data("RESET HISTORY")
+        load_workspace_data.clear()
         status = store.reset_status()
         if not status.get("clean", False):
             raise RuntimeError("Some dashboard data is still present after reset.")
@@ -677,33 +705,22 @@ if page == 'Purchase Invoice':
     st.stop()
 
 startup_status.info("Loading companies and documents…")
+from drive_view import inventory
 try:
-    vendors = store.vendors()
-    documents = store.documents()
-    uploaded_documents = documents
-    aliases = store.aliases()
+    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
+    snapshot = load_workspace_data(drive_identity, page != "Catalogue & prices", store)
+    vendors, documents = snapshot["vendors"], snapshot["documents"]
+    uploaded_documents, aliases = snapshot["uploaded_documents"], snapshot["aliases"]
+    checklist, counts = snapshot["checklist"], snapshot["counts"]
+    if snapshot["drive_failed"]:
+        load_workspace_data.clear()
+        st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
 except Exception as error:
     logging.getLogger(__name__).error("Workspace metadata load failed: %s", type(error).__name__)
     startup_status.error("Could not load workspace data")
     st.error("Saved data could not be loaded. Please retry in a moment.")
     st.button("Retry loading workspace", key="retry_workspace_load")
     st.stop()
-from drive_view import combine_company_documents, inventory
-try:
-    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
-    if (pending_page or st.session_state.get('page')) not in {'Catalogue & prices', 'Purchase Invoice'}:
-        startup_status.info("Loading Drive document references…")
-        drive_started = time.perf_counter()
-        drive_snapshot = inventory(drive_identity, store, include_record_totals=False)
-        logging.getLogger("organizer.application").info("Drive references read in %.3fs", time.perf_counter() - drive_started)
-        projection_started = time.perf_counter()
-        vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
-        logging.getLogger("organizer.application").info("Drive references projected in %.3fs", time.perf_counter() - projection_started)
-except Exception:
-    logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
-    st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
-checklist = build_checklist(vendors, documents)
-counts = dashboard_counts(vendors, documents, checklist=checklist)
 view_cleared = bool(st.session_state.get("view_cleared", False))
 display_counts = {k: 0 for k in counts} if view_cleared else counts
 logging.getLogger("organizer.application").info("Vendor workspace data loaded in %.3fs", time.perf_counter() - workspace_started)
@@ -895,7 +912,9 @@ elif page == "Companies & documents":
         st.stop()
     if st.button('Refresh companies and documents', key='refresh_shared_companies'):
         inventory.clear()
+        load_workspace_data.clear()
         st.rerun()
+    st.caption("Use Refresh companies and documents to include newly uploaded files.")
     st.subheader("Find a company")
     col1, col2 = st.columns([3, 1])
     search = col1.text_input("Search company", placeholder="Type a company name...", key="company_search")
