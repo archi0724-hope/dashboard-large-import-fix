@@ -40,6 +40,9 @@
       catch(e) { form.querySelector('.account-error').textContent = e.message; form.elements.password.value = ''; button.disabled = false; }
     };
   }
+  if (!session.admin && session.provider === 'hostinger') {
+    panel.querySelector('[name=password]').closest('label').firstChild.textContent = 'Hostinger Mail password';
+  }
   bar.append(panel);
   const close = () => { panel.hidden = true; avatar.setAttribute('aria-expanded', 'false'); };
   avatar.onclick = () => { panel.hidden = !panel.hidden; avatar.setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden) panel.querySelector('input,button')?.focus(); };

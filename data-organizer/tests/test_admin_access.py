@@ -10,6 +10,7 @@ from app import main
 
 @pytest.fixture
 def client(monkeypatch):
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "password")
     monkeypatch.setattr(access, "credentials", lambda: ("only-admin", "synthetic-admin-password"))
     access.SESSIONS.clear()
     access.ATTEMPTS.clear()
@@ -35,7 +36,7 @@ def test_viewer_cannot_write_even_with_team_token(client, method, path):
 
 
 def test_one_admin_login_cookie_logout_revokes_old_cookie(client):
-    assert client.get("/api/admin/session").json() == {"admin": False, "configured": True}
+    assert client.get("/api/admin/session").json() == {"admin": False, "configured": True, "provider": "password"}
     bad = client.post("/api/admin/login", json={"email": "someone", "password": "synthetic-admin-password"})
     assert bad.status_code == 401
     response = login(client)
@@ -140,3 +141,70 @@ def test_admin_upload_renewal_preserves_existing_job_scope(client):
     response = client.post("/api/vendor-uploads/session", headers={"X-Upload-Token": token})
     assert response.status_code == 200
     assert response.json()["token"].split(":")[1] == token.split(":")[1]
+
+
+def test_hostinger_login_verifies_allowlisted_mailbox_without_storing_password(client, monkeypatch):
+    import ssl
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "hostinger")
+    monkeypatch.setattr(access, "credentials", lambda: ("sales@example.com", ""))
+    mailbox = MagicMock()
+    mailbox.login.return_value = ("OK", [])
+    with patch.object(access.imaplib, "IMAP4_SSL") as connection:
+        connection.return_value.__enter__.return_value = mailbox
+        response = client.post("/api/admin/login", json={"email":"Sales@Example.com", "password":"synthetic-mail-password"})
+    assert response.status_code == 200
+    connection.assert_called_once()
+    args, kwargs = connection.call_args
+    assert args == ("imap.hostinger.com", 993)
+    assert kwargs["timeout"] == 10
+    assert kwargs["ssl_context"].verify_mode == ssl.CERT_REQUIRED
+    assert kwargs["ssl_context"].check_hostname
+    mailbox.login.assert_called_once_with("sales@example.com", "synthetic-mail-password")
+    mailbox.select.assert_not_called()
+    mailbox.search.assert_not_called()
+    mailbox.fetch.assert_not_called()
+    assert access.is_admin(client.cookies.get(access.COOKIE))
+    assert "synthetic-mail-password" not in repr(access.SESSIONS)
+    assert "synthetic-mail-password" not in response.text
+
+
+def test_hostinger_other_email_and_control_characters_do_not_contact_provider(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "hostinger")
+    with patch.object(access.imaplib, "IMAP4_SSL") as connection:
+        for email, password in [("other@example.com", "password"), ("only-admin", "x\r\ny"), ("only-admin", "")]:
+            response = client.post("/api/admin/login", json={"email": email, "password":password})
+            assert response.status_code == 401
+        connection.assert_not_called()
+    assert not access.SESSIONS
+
+
+def test_hostinger_wrong_password_does_not_fall_back_to_dashboard_password(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "hostinger")
+    with patch.object(access.imaplib, "IMAP4_SSL") as connection:
+        mailbox = connection.return_value.__enter__.return_value
+        mailbox.login.side_effect = access.imaplib.IMAP4.error("private provider response")
+        assert login(client).status_code == 401
+    assert not access.SESSIONS
+
+
+@pytest.mark.parametrize("error", [TimeoutError("private timeout"), OSError("private server detail"), access.imaplib.IMAP4.abort("private abort")])
+def test_hostinger_network_failure_fails_closed_without_exposing_details(client, monkeypatch, error):
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "hostinger")
+    with patch.object(access.imaplib, "IMAP4_SSL", side_effect=error):
+        response = login(client)
+    assert response.status_code == 503
+    assert "private" not in response.text
+    assert not access.SESSIONS
+
+
+def test_switching_provider_revokes_existing_session(client, monkeypatch):
+    login(client)
+    token = client.cookies.get(access.COOKIE)
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "hostinger")
+    assert not access.is_admin(token)
+
+
+def test_unknown_auth_provider_fails_closed(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_AUTH_PROVIDER", "unknown")
+    assert login(client).status_code == 503

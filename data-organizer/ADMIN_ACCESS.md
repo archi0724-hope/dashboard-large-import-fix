@@ -15,3 +15,11 @@ Run from data-organizer with the existing isolated environment:
     ..\.venv-organizer-ci\Scripts\python.exe -m app serve
 
 Open http://127.0.0.1:8000/. Local changes do not deploy or restart an existing server. The standalone root app.py is a separate application and retains its existing team gate. There are no dependency or schema changes.
+
+## Hostinger Mail password
+
+Set ADMIN_AUTH_PROVIDER=hostinger and ADMIN_EMAIL to the one permitted mailbox. The login form sends its password over HTTPS to this app; the server verifies it with Hostinger at imap.hostinger.com:993 using validated TLS and a 10-second timeout. Only LOGIN and LOGOUT are used; messages are not opened. Mailbox passwords are never persisted, logged or included in session records. Other emails are rejected before contacting Hostinger, and provider failures never fall back to the old dashboard password. ADMIN_PASSWORD is ignored for login in this mode.
+
+The email password must be accepted by Hostinger IMAP. Recover a forgotten password through Hostinger Mail. Existing dashboard sessions last up to eight hours; changing the mailbox password alone does not immediately revoke an already issued dashboard session. Sign out or restart this app to revoke it sooner. Provider or allowed-email configuration changes revoke existing sessions.
+
+Hostinger connection reference: https://www.hostinger.com/support/1575756-how-to-get-email-account-configuration-details-for-hostinger-email/

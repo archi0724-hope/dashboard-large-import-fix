@@ -108,4 +108,4 @@ $('q').oninput=()=>{clearTimeout(searchTimer);searchController?.abort();searchSe
 $('source').onsubmit=e=>{e.preventDefault();guard(async()=>{await command('start',{link:$('driveLink').value.trim()});await search();});};
 $('catalogueRefresh').onclick=()=>guard(()=>search({refresh:true}));
 guard(async()=>{if(!catalogueMode)await status();await search();});if(!catalogueMode)setInterval(()=>{if(!busy&&!authFailed){busy=true;guard(async()=>{const data=await status();if(data.records!==lastCount&&offset===0&&$('mode').value==='records')await search();lastCount=data.records;}).finally(()=>busy=false);}},5000);
-</script><script src="/static/access.js?v=1"></script></body></html>
+</script><script src="/static/access.js?v=2"></script></body></html>

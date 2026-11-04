@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import imaplib
+import ssl
 import secrets
 import threading
 import time
@@ -25,13 +27,46 @@ def credentials():
     return vendor_setting("ADMIN_EMAIL", vendor_setting("ADMIN_USERNAME", "admin")).strip().casefold(), vendor_setting("ADMIN_PASSWORD")
 
 
+def auth_provider():
+    from hospkart_chat.integration import vendor_setting
+    return vendor_setting("ADMIN_AUTH_PROVIDER", "password").strip().casefold()
+
+
+def configured():
+    email, password = credentials()
+    return bool(email and (auth_provider() == "hostinger" or (auth_provider() == "password" and password)))
+
+
+def verify_credentials(email: str, password: str) -> bool:
+    expected_email, expected_password = credentials()
+    if not hmac.compare_digest(email.encode(), expected_email.encode()):
+        return False
+    if not password or any(ord(char) < 32 or ord(char) == 127 for char in email + password):
+        return False
+    if auth_provider() == "password":
+        return hmac.compare_digest(password.encode(), expected_password.encode())
+    if auth_provider() != "hostinger":
+        raise HTTPException(503, "Admin sign-in is not configured.")
+    # Authenticate only: never SELECT, SEARCH, FETCH or STORE mailbox messages.
+    # The mailbox password is neither persisted nor included in the session.
+    try:
+        with imaplib.IMAP4_SSL("imap.hostinger.com", 993,
+                              ssl_context=ssl.create_default_context(), timeout=10) as mailbox:
+            status, _ = mailbox.login(email, password)
+            return status == "OK"
+    except (imaplib.IMAP4.abort, OSError):
+        raise HTTPException(503, "Hostinger Mail is unavailable. Please try again shortly.") from None
+    except (imaplib.IMAP4.error, UnicodeEncodeError):
+        return False
+
+
 def fingerprint():
     username, password = credentials()
-    return hashlib.sha256((username + "\0" + password).encode()).hexdigest()
+    return hashlib.sha256((auth_provider() + "\0" + username + "\0" + password).encode()).hexdigest()
 
 
 def is_admin(token: str = "") -> bool:
-    if not isinstance(token, str) or not token or not credentials()[1]:
+    if not isinstance(token, str) or not token or not configured():
         return False
     key = hashlib.sha256(token.encode()).hexdigest()
     with LOCK:
@@ -57,7 +92,7 @@ class Login(BaseModel):
 
 @router.get("/session")
 def session(request: Request):
-    response = JSONResponse({"admin": is_admin(request.cookies.get(COOKIE, "")), "configured": bool(credentials()[1])})
+    response = JSONResponse({"admin": is_admin(request.cookies.get(COOKIE, "")), "configured": configured(), "provider": auth_provider()})
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -65,9 +100,8 @@ def session(request: Request):
 @router.post("/login")
 def login(request: Request, body: Login):
     same_origin(request)
-    username, password = credentials()
-    if not password:
-        raise HTTPException(503, "Admin login is not configured. Set ADMIN_PASSWORD privately on the server.")
+    if not configured():
+        raise HTTPException(503, "Admin sign-in is not configured on this server.")
     address = request.client.host if request.client else "unknown"
     now = time.time()
     with LOCK:
@@ -78,10 +112,14 @@ def login(request: Request, body: Login):
                 del ATTEMPTS[key]
         if len(ATTEMPTS.get(address, [])) >= 5 or sum(map(len, ATTEMPTS.values())) >= 100:
             raise HTTPException(429, "Too many attempts. Try again in five minutes.")
-        if not (hmac.compare_digest(body.email.strip().casefold().encode(), username.encode()) and
-                hmac.compare_digest(body.password.encode(), password.encode())):
-            ATTEMPTS.setdefault(address, []).append(now)
-            raise HTTPException(401, "Incorrect admin credentials.")
+        # Reserve before network I/O so concurrent attempts are also limited.
+        ATTEMPTS.setdefault(address, []).append(now)
+    version = fingerprint()
+    if not verify_credentials(body.email.strip().casefold(), body.password):
+        raise HTTPException(401, "Incorrect email or mailbox password." if auth_provider() == "hostinger" else "Incorrect admin credentials.")
+    with LOCK:
+        if not hmac.compare_digest(version, fingerprint()):
+            raise HTTPException(503, "Sign-in settings changed. Please retry.")
         ATTEMPTS.pop(address, None)
         for key in list(SESSIONS):
             if SESSIONS[key][0] <= now:

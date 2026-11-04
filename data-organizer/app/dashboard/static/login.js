@@ -25,3 +25,10 @@ byId('login').onsubmit = async event => {
 byId('viewer').onclick = async () => {
   try { await signIn('viewer', {}); } catch(e) { byId('message').textContent = e.message; }
 };
+
+fetch('/api/admin/session').then(response => response.json()).then(session => {
+  if (session.provider === 'hostinger') {
+    byId('password-label').textContent = 'Hostinger Mail password';
+    byId('recovery').textContent = 'Reset your mailbox password in Hostinger Mail, or contact the person who manages your email account.';
+  }
+}).catch(() => {});
