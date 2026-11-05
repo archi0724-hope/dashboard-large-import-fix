@@ -734,7 +734,8 @@ startup_status.success("Workspace ready")
 loading_placeholder.empty()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
-header.title("Vendor Document Dashboard")
+dashboard_title = header.empty()
+dashboard_title.title("Vendor Document Dashboard")
 from app.vendor_zip_upload import issue_upload_token, upload_signing_key
 with st.sidebar:
     with st.expander('Workspace tools'):
@@ -950,6 +951,7 @@ elif page == "Companies & documents":
             st.session_state["company_selection"] = options[0]
         selected = st.selectbox("Select company", options, format_func=mapping.get, key="company_selection")
         company = mapping[selected]
+        dashboard_title.title(company)
         company_docs = documents[documents.company_key == selected]
         company_checklist = checklist[checklist.company_key == selected]
         signature = hashlib.sha256((selected + repr(company_docs[["id","types_json","reviewed","available","file_hash"]].to_dict("records"))).encode()).hexdigest()
