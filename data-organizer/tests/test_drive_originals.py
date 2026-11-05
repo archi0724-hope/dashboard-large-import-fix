@@ -159,3 +159,23 @@ def test_verified_migrated_document_reads_the_same_archive_bytes(source):
             VALUES(1,'alpha','Alpha Medical','Catalogue.pdf','original.pdf',?,'now',?,?)''',
             (hashlib.sha256(source.content).hexdigest(),url,len(source.content)))
     assert originals.preview_bytes(source.store,'1') == source.content
+
+
+def test_verified_saved_copy_opens_when_drive_archive_is_unavailable(source):
+    digest = hashlib.sha256(source.content).hexdigest()
+    url = 'https://drive.google.com/file/d/archive12345/view#member='+quote(source.member,safe='')
+    with source.store.connection() as db:
+        db.execute("""INSERT INTO vdd_documents
+            (id,company_key,company_name,filename,original_path,file_hash,uploaded_at,stored_path,size_bytes,payload)
+            VALUES(1,'alpha','Alpha Medical','Catalogue.pdf','original.pdf',?,'now',?,?,?)""",
+            (digest,url,len(source.content),source.content))
+    with source.store.connection() as db:
+        db.execute('UPDATE vdd_drive_entries SET content_hash=?',(digest,))
+    assert originals.preview_bytes(source.store,source.ident) == source.content
+    assert originals.preview_bytes(source.store,'1') == source.content
+    assert source.session.transferred == 0
+    with source.store.connection() as db:
+        db.execute("UPDATE vdd_documents SET payload=? WHERE id=1",(b'corrupted bytes',))
+    with pytest.raises(originals.OriginalUnavailable,match='changed'):
+        originals.preview_bytes(source.store,source.ident)
+    assert source.session.transferred == 0

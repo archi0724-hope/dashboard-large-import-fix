@@ -72,7 +72,15 @@ def original_copy(store, document_id, limit=MAX_DOCUMENT):
     with tempfile.TemporaryDirectory(prefix='vendor-original-') as folder:
         target = Path(folder) / 'original'
         try:
-            if entry['member_path']:
+            cached = None
+            expected = entry.get('content_hash', '')
+            if re.fullmatch(r'[a-fA-F0-9]{64}', expected):
+                with store.connection() as db:
+                    row = db.execute('SELECT payload FROM vdd_documents WHERE file_hash=? AND payload IS NOT NULL AND length(payload)<=? LIMIT 1', (expected, limit)).fetchone()
+                cached = bytes(row['payload']) if row else None
+            if cached is not None:
+                target.write_bytes(cached)
+            elif entry['member_path']:
                 with DriveRangeFile(entry['drive_id']) as remote, archive_members(remote) as archive:
                     member = archive.getinfo(entry['member_path'])
                     mode = member.external_attr >> 16
