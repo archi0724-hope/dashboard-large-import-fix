@@ -340,3 +340,9 @@ The assembled company/document snapshot is cached for up to 60 seconds across no
 ### Vendor Drive original cards
 
 Indexed Drive documents use the same filename, eye preview and Download file layout as uploaded documents. Originals are fetched only on demand; ZIP members use bounded range reads without downloading the whole archive. Inline previews are limited to 16 MB and downloads to 128 MB. Temporary copies are removed after use; no document or Drive metadata is rewritten. Sharing/quota errors appear in the preview with a link to the Drive source. The source caption remains Google Drive to preserve classification provenance.
+
+### Private original storage
+
+The optional private original reader uses content-addressed keys (sha256/<existing document hash>) in a private Neon S3 bucket. Existing database copies take priority, then private storage, then the original Drive source. Every returned copy is checked against its registered SHA-256 fingerprint. Streaming download bounds and temporary-file cleanup apply to private copies as well. Missing objects fall back to Drive; storage errors do not expose credentials. This reader adds no schema and performs no storage writes.
+
+Configure VENDOR_ORIGINAL_STORAGE_ENDPOINT, VENDOR_ORIGINAL_STORAGE_BUCKET, VENDOR_ORIGINAL_STORAGE_REGION, VENDOR_ORIGINAL_STORAGE_ACCESS_KEY and VENDOR_ORIGINAL_STORAGE_SECRET_KEY only in the private Render environment. Use a storage:read credential for Render; restoration uploads use separately authorized tooling. Never use a public-read bucket or commit provider credentials, source files or presigned links. Creating the production bucket and granting Render access require the user-approved storage setup.

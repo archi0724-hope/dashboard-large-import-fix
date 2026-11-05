@@ -179,3 +179,19 @@ def test_verified_saved_copy_opens_when_drive_archive_is_unavailable(source):
     with pytest.raises(originals.OriginalUnavailable,match='changed'):
         originals.preview_bytes(source.store,source.ident)
     assert source.session.transferred == 0
+
+
+def test_private_storage_copy_is_verified_before_preview(source,monkeypatch):
+    digest=hashlib.sha256(source.content).hexdigest()
+    with source.store.connection() as db:
+        db.execute('UPDATE vdd_drive_entries SET content_hash=?',(digest,))
+    def saved(expected,target,limit):
+        assert expected==digest
+        target.write_bytes(source.content)
+        return True
+    monkeypatch.setattr(originals,'download_saved_original',saved)
+    assert originals.preview_bytes(source.store,source.ident)==source.content
+    assert source.session.transferred==0
+    monkeypatch.setattr(originals,'download_saved_original',lambda expected,target,limit:(target.write_bytes(b'wrong'),True)[1])
+    with pytest.raises(originals.OriginalUnavailable,match='changed'):
+        originals.preview_bytes(source.store,source.ident)

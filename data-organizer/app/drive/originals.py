@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from .indexer import safe_member
+from .original_storage import download_saved_original, OriginalStorageUnavailable
 from .public_drive import MAX_DOCUMENT, download_public_file
 from .range_zip import DriveRangeFile, archive_members
 
@@ -80,6 +81,8 @@ def original_copy(store, document_id, limit=MAX_DOCUMENT):
                 cached = bytes(row['payload']) if row else None
             if cached is not None:
                 target.write_bytes(cached)
+            elif download_saved_original(expected, target, limit):
+                pass
             elif entry['member_path']:
                 with DriveRangeFile(entry['drive_id']) as remote, archive_members(remote) as archive:
                     member = archive.getinfo(entry['member_path'])
@@ -108,6 +111,8 @@ def original_copy(store, document_id, limit=MAX_DOCUMENT):
                         digest.update(chunk)
                 if digest.hexdigest().lower() != expected.lower():
                     raise OriginalUnavailable('The Drive original changed. Refresh the Drive library before retrying.')
+        except OriginalStorageUnavailable as error:
+            raise OriginalUnavailable(str(error)) from None
         except OriginalUnavailable:
             raise
         except Exception:
