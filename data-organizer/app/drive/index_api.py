@@ -97,3 +97,9 @@ def pause():
 def search(q: str='',entries: bool=False,offset: int=0,kind: Literal['', 'product']=''):
     index = library()
     return index.search(selection(index)['scope'],q,entries,offset,kind=kind)
+
+
+@router.get('/original/{document_id}')
+def download_original(document_id: str):
+    from .originals import download_response
+    return download_response(library().store, document_id)

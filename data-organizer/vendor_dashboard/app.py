@@ -219,6 +219,12 @@ def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | N
     return _store.read_bytes(document_id)
 
 
+@st.cache_data(ttl=60, max_entries=4, show_spinner=False)
+def drive_preview_bytes(identity: str, document_id: str, version: str, _store: Store) -> bytes:
+    from app.drive.originals import preview_bytes
+    return preview_bytes(_store, document_id)
+
+
 @st.cache_data(show_spinner=False, max_entries=2, ttl=600)
 def catalogue_download(_store: Store, store_identity: str, signature: tuple) -> bytes:
     return catalogue_price_workbook_bytes(_store.catalogue_export_records(), include_review_details=True)
@@ -245,7 +251,7 @@ def show_document_preview(filename: str, payload: bytes):
             st.caption("Fast preview: first page. Download the original file for the complete document.")
             st.pdf(preview)
         else:
-            st.info("This PDF could not be reduced to a first-page preview. Download the original file to view it.")
+            st.pdf(payload)
     elif mime.startswith("image/"):
         st.image(payload, caption=filename, width="stretch")
     elif suffix in {".xlsx", ".xls"}:
@@ -975,13 +981,28 @@ elif page == "Companies & documents":
                     for row_number, doc in enumerate(rows.itertuples(index=False)):
                         filename_col, preview_col = st.columns([8.5, 1.5], vertical_alignment="center")
                         filename_col.text(doc.filename)
-                        detail = supporting_category(doc.filename) if not doc.types else doc.method
+                        detail = 'Google Drive' if getattr(doc, 'drive_url', '') else (supporting_category(doc.filename) if not doc.types else doc.method)
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
-                            st.link_button('Open original in Drive', doc.drive_url, key=f'drive_original_{category}_{doc.id}_{row_number}')
-                            st.caption(f'Drive status: {doc.drive_status} · ZIP member/source: {getattr(doc, "drive_member", "") or doc.original_path}')
-                            if doc.reason:
-                                st.caption(doc.reason)
+                            preview_token = f"{category}_{doc.id}_{row_number}"
+                            if preview_col.button("👁", key=f"preview_{preview_token}", help="Preview this document before downloading."):
+                                st.session_state["preview_document_id"] = preview_token
+                            if st.session_state.get("preview_document_id") == preview_token:
+                                with st.container(border=True):
+                                    preview_title, close_preview = st.columns([5, 1])
+                                    preview_title.markdown(f"**Preview: {doc.filename}**")
+                                    if close_preview.button("Close", key=f"close_{preview_token}"):
+                                        st.session_state.pop("preview_document_id", None)
+                                        st.rerun()
+                                    try:
+                                        with st.spinner("Opening original document…"):
+                                            payload = drive_preview_bytes(drive_identity, str(doc.id), getattr(doc, 'drive_version', '') or doc.file_hash, store)
+                                        show_document_preview(doc.filename, payload)
+                                    except Exception as error:
+                                        from app.drive.originals import OriginalUnavailable
+                                        st.warning(str(error) if isinstance(error, OriginalUnavailable) else "The Drive original could not be previewed. Please try again.")
+                                        st.link_button("Open original in Drive", doc.drive_url, key=f"drive_fallback_{preview_token}")
+                            st.link_button("Download file", "/api/drive-index/original/" + str(doc.id), key=f"file_{preview_token}")
                             continue
                         payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
                         if payload is not None:

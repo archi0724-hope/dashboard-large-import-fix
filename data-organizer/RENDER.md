@@ -336,3 +336,7 @@ An initialized PostgreSQL store is opened using at most four read-only checks of
 Drive index startup also uses a read-only readiness check. The main company projection skips unused Drive display-row classification, caches deterministic path classification with a bounded cache, builds checklist aggregates in one pass, and reuses that checklist for summary counts. These changes do not cache user decisions or change record freshness/classification rules.
 
 The assembled company/document snapshot is cached for up to 60 seconds across normal interactions. UI operations using the existing save/correction/merge/reset refresh paths invalidate it; the **Refresh companies and documents** button forces a new read. External worker imports and other sessions can see a previous snapshot until expiry or Refresh. The snapshot contains shared read data only; admin permissions are checked on every run.
+
+### Vendor Drive original cards
+
+Indexed Drive documents use the same filename, eye preview and Download file layout as uploaded documents. Originals are fetched only on demand; ZIP members use bounded range reads without downloading the whole archive. Inline previews are limited to 16 MB and downloads to 128 MB. Temporary copies are removed after use; no document or Drive metadata is rewritten. Sharing/quota errors appear in the preview with a link to the Drive source. The source caption remains Google Drive to preserve classification provenance.
