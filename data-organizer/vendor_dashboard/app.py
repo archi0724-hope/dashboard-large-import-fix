@@ -262,6 +262,17 @@ def show_document_preview(filename: str, payload: bytes):
             sheet_name, rows = preview
             st.caption(f"Preview: {sheet_name} · first {len(rows)} data row(s), up to 50 columns. Download the original file for all sheets and rows.")
             st.dataframe(rows, hide_index=True, height=360)
+    elif suffix == ".docx":
+        try:
+            from docx import Document
+            document = Document(BytesIO(payload))
+            lines = [paragraph.text for paragraph in document.paragraphs[:300] if paragraph.text.strip()]
+            for table in document.tables[:10]:
+                lines.extend(" | ".join(cell.text for cell in row.cells[:20]) for row in table.rows[:100])
+            st.caption("Word document text preview. Download file for the original formatting and complete document.")
+            st.text("\n".join(lines)[:200000] or "This Word document has no readable text.")
+        except Exception:
+            st.info("This Word document could not be previewed. Use Download file to open it.")
     elif mime.startswith("text/") or suffix in {".csv", ".txt", ".log"}:
         try:
             st.code(payload.decode("utf-8", errors="replace"), language="text")
@@ -999,6 +1010,9 @@ elif page == "Companies & documents":
                                     try:
                                         with st.spinner("Opening original document…"):
                                             payload = drive_preview_bytes(drive_identity, str(doc.id), getattr(doc, 'drive_version', '') or doc.file_hash, store)
+                                        from app.drive.originals import PREVIEW_LIMIT
+                                        if doc.size_bytes > PREVIEW_LIMIT and Path(doc.filename).suffix.lower() == '.pdf':
+                                            st.caption("Large PDF: first-page preview. Download file for the complete original.")
                                         show_document_preview(doc.filename, payload)
                                     except Exception as error:
                                         from app.drive.originals import OriginalUnavailable

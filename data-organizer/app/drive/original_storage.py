@@ -62,3 +62,60 @@ def download_saved_original(digest: str, target: Path, limit: int) -> bool:
     finally:
         if body is not None:
             body.close()
+
+# ZIP reads share the existing bounded seek/read implementation.
+from collections import OrderedDict
+import io
+from .range_zip import DriveRangeFile
+
+
+class PrivateArchiveRangeFile(DriveRangeFile):
+    def __init__(self, client, bucket, key):
+        io.RawIOBase.__init__(self)
+        self.client, self.bucket, self.key = client, bucket, key
+        self.position, self.transferred = 0, 0
+        self.cache = OrderedDict()
+        self.size = int(client.head_object(Bucket=bucket, Key=key)['ContentLength'])
+        if not 0 < self.size <= 5*1024**3:
+            raise OriginalStorageUnavailable('Saved original archive exceeds the supported size.')
+
+    def _range(self, start, end):
+        response = self.client.get_object(Bucket=self.bucket, Key=self.key, Range=f'bytes={start}-{end}')
+        body = response['Body']
+        try:
+            if response.get('ContentRange') != f'bytes {start}-{end}/{self.size}':
+                raise OriginalStorageUnavailable('Saved archive returned an invalid partial read.')
+            data = body.read(end-start+2)
+            if len(data) != end-start+1:
+                raise OriginalStorageUnavailable('Saved archive returned an incomplete partial read.')
+            self.transferred += len(data)
+            return data, self.size
+        finally:
+            body.close()
+
+    def close(self):
+        if not self.closed:
+            close = getattr(self.client, 'close', None)
+            if close:
+                close()
+        io.RawIOBase.close(self)
+
+
+def saved_archive_source(drive_id):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{10,200}', drive_id):
+        return None
+    client, bucket = _client()
+    if client is None:
+        return None
+    try:
+        return PrivateArchiveRangeFile(client, bucket, 'archives/'+drive_id+'.zip')
+    except Exception as error:
+        close = getattr(client, 'close', None)
+        if close:
+            close()
+        code = str(getattr(error, 'response', {}).get('Error', {}).get('Code', ''))
+        if code in {'NoSuchKey', '404', 'NotFound'}:
+            return None
+        if isinstance(error, OriginalStorageUnavailable):
+            raise
+        raise OriginalStorageUnavailable('Saved original archive could not be read. Please retry.') from None

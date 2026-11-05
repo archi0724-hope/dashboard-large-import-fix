@@ -95,8 +95,8 @@ def test_unknown_documents_fail_before_network_access(source, ident):
 
 def test_preview_metadata_limit_is_checked_before_download(source):
     with source.store.connection() as db:
-        db.execute('UPDATE vdd_drive_entries SET size_bytes=?', (originals.PREVIEW_LIMIT+1,))
-    with pytest.raises(originals.OriginalUnavailable, match='too large'):
+        db.execute('UPDATE vdd_drive_entries SET size_bytes=?', (originals.MAX_DOCUMENT+1,))
+    with pytest.raises(originals.OriginalUnavailable, match='128 MB'):
         originals.preview_bytes(source.store,source.ident)
     assert source.session.transferred == 0
 
@@ -123,7 +123,7 @@ def test_unsafe_registered_paths_are_never_requested(source, member):
 
 @pytest.mark.parametrize('changes', [
     {'flag_bits':1}, {'external_attr':(stat.S_IFLNK|0o777)<<16},
-    {'file_size':originals.PREVIEW_LIMIT+1}, {'file_size':2000,'compress_size':1},
+    {'file_size':originals.MAX_DOCUMENT+1}, {'file_size':2000,'compress_size':1},
 ])
 def test_encrypted_symlink_oversized_and_extreme_ratio_members_are_rejected(source, monkeypatch, changes):
     from unittest.mock import Mock
@@ -144,7 +144,7 @@ def test_loose_drive_original_uses_bounded_public_download(source, monkeypatch):
     with source.store.connection() as db:
         db.execute("UPDATE vdd_drive_entries SET member_path='',source_name='Catalogue.pdf'")
     def download(file_id, target, max_bytes):
-        assert file_id == 'archive12345' and max_bytes == originals.PREVIEW_LIMIT
+        assert file_id == 'archive12345' and max_bytes == originals.MAX_DOCUMENT
         target.write_bytes(source.content)
     monkeypatch.setattr(originals,'download_public_file',download)
     assert originals.preview_bytes(source.store,source.ident) == source.content
@@ -195,3 +195,83 @@ def test_private_storage_copy_is_verified_before_preview(source,monkeypatch):
     monkeypatch.setattr(originals,'download_saved_original',lambda expected,target,limit:(target.write_bytes(b'wrong'),True)[1])
     with pytest.raises(originals.OriginalUnavailable,match='changed'):
         originals.preview_bytes(source.store,source.ident)
+
+def test_private_backup_zip_uses_partial_reads_without_google(source,monkeypatch):
+    from app.drive import original_storage
+    data=source.session.data
+    class MissingKey(Exception):
+        response={'Error':{'Code':'NoSuchKey'}}
+    class Client:
+        transferred=0
+        closed=False
+        def head_object(self,**kwargs):
+            assert kwargs['Key']=='archives/archive12345.zip'
+            return {'ContentLength':len(data)}
+        def get_object(self,**kwargs):
+            if kwargs['Key'].startswith('sha256/'):
+                raise MissingKey()
+            start,end=map(int,kwargs['Range'][6:].split('-'))
+            self.transferred+=end-start+1
+            return {'Body':BytesIO(data[start:end+1]),'ContentRange':f'bytes {start}-{end}/{len(data)}'}
+        def close(self): self.closed=True
+    client=Client()
+    monkeypatch.setattr(original_storage,'_client',lambda:(client,'private-originals'))
+    assert originals.preview_bytes(source.store,source.ident)==source.content
+    assert source.session.transferred==0
+    assert client.transferred<source.archive_size//2
+    assert client.closed
+
+def test_large_pdf_uses_a_bounded_first_page_without_loading_original_into_cache(tmp_path,monkeypatch):
+    from contextlib import contextmanager
+    from reportlab.pdfgen import canvas
+    import pypdfium2 as pdfium
+    target=tmp_path/'large.pdf'
+    pdf=canvas.Canvas(str(target))
+    pdf.drawString(20,700,'First page of synthetic original')
+    pdf.showPage()
+    pdf.drawString(20,700,'Second page remains in the original download')
+    pdf.save()
+    with target.open('ab') as output:
+        output.write(b'\n%'+b'x'*(200*1024)+b'\n')
+    original=target.read_bytes()
+    monkeypatch.setattr(originals,'PREVIEW_LIMIT',64*1024)
+    monkeypatch.setattr(originals,'registered_original',lambda store,ident:({},'large.pdf'))
+    @contextmanager
+    def disk_original(store,ident,limit):
+        assert limit==originals.MAX_DOCUMENT
+        yield target,'large.pdf'
+    monkeypatch.setattr(originals,'original_copy',disk_original)
+    preview=originals.preview_bytes(None,'registered')
+    assert len(preview)<=64*1024
+    document=pdfium.PdfDocument(preview)
+    try:
+        assert len(document)==1
+    finally:
+        document.close()
+    assert target.read_bytes()==original
+
+def test_drive_index_uses_registered_backup_when_its_original_archive_is_unavailable(source,monkeypatch):
+    from app.drive import original_storage
+    data=source.session.data
+    digest=hashlib.sha256(source.content).hexdigest()
+    backup='https://drive.google.com/file/d/archive12345/view#member='+quote(source.member,safe='')
+    with source.store.connection() as db:
+        db.execute("UPDATE vdd_drive_entries SET drive_id='oldsource12345',content_hash=?",(digest,))
+        db.execute("""INSERT INTO vdd_documents
+            (id,company_key,company_name,filename,original_path,file_hash,uploaded_at,stored_path,size_bytes)
+            VALUES(1,'alpha','Alpha Medical','Catalogue.pdf','original.pdf',?,'now',?,?)""",
+            (digest,backup,len(source.content)))
+    class MissingKey(Exception):
+        response={'Error':{'Code':'NoSuchKey'}}
+    class Client:
+        def head_object(self,**kwargs):
+            if kwargs['Key']!='archives/archive12345.zip': raise MissingKey()
+            return {'ContentLength':len(data)}
+        def get_object(self,**kwargs):
+            if kwargs['Key'].startswith('sha256/'): raise MissingKey()
+            start,end=map(int,kwargs['Range'][6:].split('-'))
+            return {'Body':BytesIO(data[start:end+1]),'ContentRange':f'bytes {start}-{end}/{len(data)}'}
+        def close(self): pass
+    monkeypatch.setattr(original_storage,'_client',lambda:(Client(),'private-originals'))
+    assert originals.preview_bytes(source.store,source.ident)==source.content
+    assert source.session.transferred==0
