@@ -122,7 +122,15 @@ def test_scanned_product_rows_use_ocr_and_keep_original_files(settings, tmp_path
     folder.mkdir(parents=True)
     image = Image.new("RGB", (1600, 300), "white")
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("arial.ttf", 36)
+    font = None
+    for name in ("arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf"):
+        try:
+            font = ImageFont.truetype(name, 36)
+            break
+        except OSError:
+            continue
+    if font is None:
+        font = ImageFont.load_default(size=36)
     for x, header, value in ((50, "Product Name", "Gloves"), (800, "SKU", "G1"), (1100, "Price INR", "125")):
         draw.text((x, 40), header, fill="black", font=font)
         draw.text((x, 130), value, fill="black", font=font)
