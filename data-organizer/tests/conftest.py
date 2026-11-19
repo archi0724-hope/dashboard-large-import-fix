@@ -49,3 +49,21 @@ def done_pipeline(settings, cfg, repo, demo_dir):
     p.run()
     assert not p.progress.snapshot()["error"]
     return p
+
+
+@pytest.fixture
+def admin_api(monkeypatch):
+    """Existing endpoint unit tests run behind an authenticated middleware boundary.
+
+    Real login, viewer denial and revocation are covered by test_admin_access.
+    Scoped upload proofs remain real so ownership tests still exercise them.
+    """
+    from app import main
+    monkeypatch.setattr(main, "is_admin", lambda token="": True)
+
+
+@pytest.fixture
+def admin_ui(monkeypatch):
+    """Existing editing UI tests run as the administrator."""
+    from app import admin_access
+    monkeypatch.setattr(admin_access, "is_admin", lambda token="": True)

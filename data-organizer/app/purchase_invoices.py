@@ -15,10 +15,13 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
+from starlette.background import BackgroundTask
 
 from .drive.index_api import authorize, library
 from .invoice_extraction import ALLOWED, MAX_BYTES
+from .export.invoice_workbook import ExportLimitExceeded, write_invoice_workbook
 
 router = APIRouter(prefix='/api/purchase-invoices', dependencies=[Depends(authorize)])
 LOCK = threading.RLock()
@@ -227,3 +230,24 @@ def detail(ident: str):
     if not row:
         raise HTTPException(404,'Invoice not found.')
     return json.loads(row['record_json'])
+
+
+@router.get('/export.xlsx')
+def export_invoices(q: str = ''):
+    query = '%' + q[:500].casefold().replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+    with tempfile.NamedTemporaryFile(prefix='invoice-register-', suffix='.xlsx', delete=False) as target:
+        path = Path(target.name)
+    try:
+        with database().connection() as db:
+            cursor = db.execute("SELECT record_json FROM vdd_purchase_invoices WHERE search_text LIKE ? ESCAPE '!' ORDER BY created_at DESC,id", (query,))
+            write_invoice_workbook(path, (json.loads(row['record_json']) for row in cursor))
+        return FileResponse(path, filename='purchase-invoice-register.xlsx',
+                            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            headers={'Cache-Control': 'no-store'},
+                            background=BackgroundTask(path.unlink, missing_ok=True))
+    except ExportLimitExceeded as error:
+        path.unlink(missing_ok=True)
+        raise HTTPException(413, str(error)) from None
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise

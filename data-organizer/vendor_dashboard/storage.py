@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, time, timezone
 from io import BytesIO
 from pathlib import Path
+from time import perf_counter
 from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
@@ -28,15 +30,34 @@ from vendor_core import (
     company_key,
     export_filename,
     file_basename,
-    natural_key,
     normalize_document_types,
-    supporting_category,
 )
 
 DOC_COLUMNS = ["id", "company_key", "company_name", "types_json", "filename", "original_path", "stored_path", "file_hash", "uploaded_at", "source_batch", "handover", "method", "reason", "reviewed", "size_bytes"]
 PRODUCT_COLUMNS = ["id", "document_id", "company_key", "company_name", "record_type", "product_name", "sku", "description", "unit", "price", "mrp", "discount", "gst", "currency", "brand", "product_category", "specification", "pack_size", "moq", "availability", "source_file", "source_sheet", "source_page", "source_row", "image_reference", "extraction_confidence", "record_hash", "extracted_at", "catalogue_status", "classification_reason"]
 
 CATALOGUE_POLICY_VERSION = "medical-nondrug-v1"
+
+
+# A read-only readiness check avoids repeating DDL and data scans at each cold
+# web startup. Keep this contract aligned with initialize() below.
+CLOUD_SCHEMA_COLUMNS = {
+    "vdd_meta": set("key value".split()),
+    "vdd_vendors": set("company_key canonical_id company_name created_at updated_at source".split()),
+    "vdd_company_aliases": set("alias_key canonical_key alias_name source confidence status created_at".split()),
+    "vdd_review_queue": set("id detected_name possible_company canonical_id source record confidence evidence status created_at decision".split()),
+    "vdd_documents": set(DOC_COLUMNS) | {"payload"},
+    "vdd_product_records": set(PRODUCT_COLUMNS),
+    "vdd_product_imports": set("id document_id company_key company_name filename file_hash uploaded_at status".split()),
+    "vdd_product_import_rows": set("id import_id source_sheet source_page source_row original_json record_json record_hash status decision updated_at".split()),
+    "vdd_price_history": set("id product_record_id company_key company_name product_name sku pack_size unit old_price new_price currency source_file source_row changed_at changed_by".split()),
+    "vdd_upload_archives": set("id file_hash filename first_uploaded_at last_uploaded_at upload_count size_bytes detected_companies company_names_json processed_files issues_count stored_path payload".split()),
+    "vdd_backups": set("id created_at payload".split()),
+    "vdd_audit": set("event_at action details".split()),
+}
+CLOUD_SCHEMA_INDEXES = {
+    "vdd_docs_company", "vdd_products_search", "vdd_product_import_rows_status", "vdd_price_history_product",
+}
 
 
 def now() -> str:
@@ -136,7 +157,46 @@ class Store:
         finally:
             connection.close()
 
+    def _cloud_schema_ready(self) -> bool:
+        """Validate existing objects and policy using reads only; never hide DB errors."""
+        with self.connection() as db:
+            placeholders = ",".join("?" for _ in CLOUD_SCHEMA_COLUMNS)
+            rows = db.execute(
+                "SELECT table_name,column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name IN (" + placeholders + ")",
+                tuple(CLOUD_SCHEMA_COLUMNS),
+            ).fetchall()
+            actual = {}
+            for row in rows:
+                actual.setdefault(row["table_name"], set()).add(row["column_name"])
+            if any(not columns.issubset(actual.get(table, set()))
+                   for table, columns in CLOUD_SCHEMA_COLUMNS.items()):
+                logging.getLogger("organizer.application").info("Vendor schema check: missing required tables or columns")
+                return False
+            indexes = {row["indexname"] for row in db.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema()"
+            ).fetchall()}
+            if not CLOUD_SCHEMA_INDEXES.issubset(indexes):
+                logging.getLogger("organizer.application").info("Vendor schema check: missing required indexes")
+                return False
+            policy = db.execute(
+                "SELECT value FROM vdd_meta WHERE key='catalogue_policy_version'"
+            ).fetchone()
+            if not policy or policy["value"] != CATALOGUE_POLICY_VERSION:
+                logging.getLogger("organizer.application").info("Vendor schema check: catalogue policy setup required")
+                return False
+            missing_ids = db.execute(
+                "SELECT EXISTS(SELECT 1 FROM vdd_vendors WHERE canonical_id IS NULL OR canonical_id='') AS missing"
+            ).fetchone()
+            return not missing_ids["missing"]
+
     def initialize(self):
+        started = perf_counter()
+        if self.cloud:
+            logging.getLogger("organizer.application").info("Checking existing vendor schema")
+        if self.cloud and self._cloud_schema_ready():
+            logging.getLogger("organizer.application").info("Existing vendor schema ready in %.3fs", perf_counter() - started)
+            return
         ident = "BIGSERIAL PRIMARY KEY" if self.cloud else "INTEGER PRIMARY KEY AUTOINCREMENT"
         blob = "BYTEA" if self.cloud else "BLOB"
         with self.connection() as db:
@@ -217,15 +277,15 @@ class Store:
             self.migrate_original()
         # Avoid reparsing hundreds of documents on every Streamlit startup.
         # New imports and explicit backup restores already extract their rows.
-        with self.connection() as db:
-            product_count = int(db.execute("SELECT COUNT(*) AS n FROM vdd_product_records").fetchone()["n"])
-        # Cloud startup must not download/reparse every saved document while
-        # the catalogue is empty or awaiting approval. Besides blocking the UI,
-        # this legacy backfill can bypass the current staged-import workflow.
-        # Local legacy stores retain their original automatic migration.
-        if product_count == 0 and not self.cloud:
-            self.backfill_product_records()
+        # Only local legacy migration needs this count. Hosted startup must
+        # not scan the entire product table or reparse saved documents.
+        if not self.cloud:
+            with self.connection() as db:
+                product_count = int(db.execute("SELECT COUNT(*) AS n FROM vdd_product_records").fetchone()["n"])
+            if product_count == 0:
+                self.backfill_product_records()
         self.apply_catalogue_policy()
+        logging.getLogger("organizer.application").info("Vendor schema setup completed in %.3fs", perf_counter() - started)
 
     def _ensure_canonical_aliases(self, db: Query):
         existing = {row['alias_key'] for row in db.execute('SELECT alias_key FROM vdd_company_aliases').fetchall()}
@@ -663,7 +723,7 @@ class Store:
             if match_company or company_name:
                 row = db.execute(
                     "SELECT id FROM vdd_documents WHERE file_hash=? AND company_key=?",
-                    (digest, company_key(company_name) if company_name else ""),
+                    (digest, key),
                 ).fetchone()
             else:
                 row = db.execute("SELECT id FROM vdd_documents WHERE file_hash=?", (digest,)).fetchone()
@@ -682,7 +742,7 @@ class Store:
             ).fetchone()
             if not document or not document["company_key"] or not document["company_name"]:
                 raise ValueError("Catalogue rows require a document assigned to a vendor.")
-            cursor = db.execute(
+            db.execute(
                 """INSERT INTO vdd_product_imports(document_id,company_key,company_name,filename,file_hash,uploaded_at)
                    VALUES(?,?,?,?,?,?) ON CONFLICT(document_id) DO NOTHING""",
                 (int(document_id), document["company_key"], document["company_name"], document["filename"],
@@ -1342,6 +1402,7 @@ class Store:
         with self.connection() as db:
             row = db.execute("""
                 SELECT
+                    (SELECT COUNT(*) FROM vdd_audit) AS audit_changes,
                     (SELECT COUNT(*) FROM vdd_vendors) AS vendors,
                     (SELECT COUNT(*) FROM vdd_documents) AS documents,
                     (SELECT COUNT(*) FROM vdd_product_records) AS products,
@@ -1352,7 +1413,7 @@ class Store:
                     (SELECT COALESCE(MAX(extracted_at), '') FROM vdd_product_records) AS latest_product
             """).fetchone()
         return tuple(row[key] for key in (
-            "vendors", "documents", "products", "approved_products", "review_products",
+            "audit_changes", "vendors", "documents", "products", "approved_products", "review_products",
             "excluded_products", "latest_document", "latest_product",
         ))
 
@@ -1435,7 +1496,6 @@ class Store:
         than vendor names, so recovery deliberately trusts only a filename's
         clear vendor prefix. Ambiguous files remain unassigned for review.
         """
-        placeholder_key = company_key(placeholder)
         changed = unresolved = 0
         with self.connection() as db:
             rows = [dict(row) for row in db.execute(
@@ -1474,6 +1534,37 @@ class Store:
             return bytes(row["payload"]) if row["payload"] is not None else None
         path = self.safe_path(row["stored_path"])
         return path.read_bytes() if path and path.is_file() else None
+
+    def delete_document(self, document_id: int) -> bool:
+        stored_path = ""
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT id,company_name,filename,stored_path FROM vdd_documents WHERE id=?",
+                (int(document_id),),
+            ).fetchone()
+            if row is None:
+                return False
+            stored_path = row["stored_path"]
+            db.execute("DELETE FROM vdd_product_import_rows WHERE import_id IN (SELECT id FROM vdd_product_imports WHERE document_id=?)", (int(document_id),))
+            db.execute("DELETE FROM vdd_product_imports WHERE document_id=?", (int(document_id),))
+            db.execute("DELETE FROM vdd_product_records WHERE document_id=?", (int(document_id),))
+            db.execute("DELETE FROM vdd_documents WHERE id=?", (int(document_id),))
+            db.execute("INSERT INTO vdd_audit VALUES(?,?,?)",
+                       (now(), "Document deleted", json.dumps({
+                           "id": int(document_id), "company": row["company_name"], "filename": row["filename"],
+                       })))
+            if stored_path and not db.execute(
+                "SELECT 1 FROM vdd_documents WHERE stored_path=? LIMIT 1", (stored_path,)
+            ).fetchone():
+                path = self.safe_path(stored_path)
+            else:
+                path = None
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as error:
+                raise OSError("Document record was deleted, but its stored file could not be removed.") from error
+        return True
 
     def correct_document(self, document_id: int, company: str, types: list[str], note: str = ""):
         from vendor_core import DOCUMENT_TYPES

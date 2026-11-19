@@ -213,7 +213,7 @@ class RuntimeConfig:
     include_hidden_sheets: bool = True
 
     # ---- validation ---------------------------------------------------------
-    def validate(self) -> "RuntimeConfig":
+    def validate(self) -> RuntimeConfig:
         # Windows "Copy as path" wraps a folder in quotes. Those quotes belong
         # to the clipboard representation, not to the filesystem path.
         for field_name in ("local_input_dir", "output_dir"):
@@ -248,7 +248,7 @@ class RuntimeConfig:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RuntimeConfig":
+    def from_dict(cls, data: dict[str, Any]) -> RuntimeConfig:
         known = {f.name for f in fields(cls)}
         clean = {k: v for k, v in (data or {}).items() if k in known}
         cfg = cls(**clean)

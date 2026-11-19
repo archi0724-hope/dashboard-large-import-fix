@@ -20,10 +20,6 @@ async function api(path, opts = {}) {
   if (t) headers["X-Token"] = t;
   if (opts.body instanceof FormData) delete headers["Content-Type"];
   const res = await fetch(path, { ...opts, headers, body: opts.body && !(opts.body instanceof FormData) ? JSON.stringify(opts.body) : opts.body });
-  if (res.status === 401) {
-    const tok = prompt("This dashboard needs its access token (DASHBOARD_TOKEN):");
-    if (tok) { sessionStorage.setItem(TOKEN_KEY, tok); return api(path, opts); }
-  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : res.statusText);
   return data;
@@ -131,6 +127,8 @@ async function route() {
   localStorage.setItem("workspace", S.workspace);
   const pages = workspacePages();
   S.page = pages.some(p => p[0] === k) ? k : pages[0][0];
+  const access = await fetch("/api/admin/session").then(r => r.json()).catch(() => ({admin: false}));
+  S.admin = access.admin;
   killCharts();
   $("#title").textContent = (S.workspace === "vendor" ? "Vendor workspace · " : "Organizer workspace · ") + pages.find(p => p[0] === S.page)[1];
   $("#topactions").innerHTML = "";
@@ -146,7 +144,14 @@ async function route() {
   }
   await guard(refreshStatus)();
   $("#view").innerHTML = `<div class="empty">Loading...</div>`;
-  await guard(PAGE[S.page])();
+  if (!S.admin && ["source", "preview", "review", "catalogue", "settings", "vendorimports"].includes(S.page)) {
+    $("#view").innerHTML = `<div class="card"><h2>Admin access required</h2><p>Sign in using the A icon in the top-right corner to import, review or change shared data. You can still browse companies, search and download.</p></div>`;
+  } else {
+    await guard(PAGE[S.page])();
+    if (!S.admin) {
+      $$("#view button").filter(b => /rename|merge|run|scan|stop|reset|read files|organize|extract products/i.test(b.textContent)).forEach(b => { b.disabled = true; b.title = "Admin login required"; });
+    }
+  }
   $("#view").focus({ preventScroll: true });
 }
 window.addEventListener("hashchange", route);

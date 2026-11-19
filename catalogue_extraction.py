@@ -73,7 +73,6 @@ def _frame_records(frame: pd.DataFrame, filename: str, sheet: str, kind: str, pa
     headers = _unique_headers(frame.iloc[0].tolist())
     frame = frame.iloc[1:].copy()
     frame.columns = headers
-    columns = {column.casefold(): column for column in frame.columns}
 
     def find_column(names):
         for column in frame.columns:

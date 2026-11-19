@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from a2wsgi import WSGIMiddleware
@@ -24,15 +24,16 @@ import pandas as pd
 from pydantic import BaseModel, Field
 import streamlit as streamlit
 
+from .admin_access import COOKIE, is_admin, needs_admin, router as admin_router, same_origin
 from .config import ConfigError
 from .drive.google_drive import drive_status
 from .logging_setup import get_logger
 from .matching.review import ReviewError
-from .pipeline import make_source
 from .services import AppState, get_state
 from .vendor_zip_upload import router as vendor_upload_router
 from .drive.index_api import router as drive_index_router
 from .purchase_invoices import router as purchase_invoice_router
+from .served_workbook import router as invoice_workbook_router
 
 STATIC = Path(__file__).parent / "dashboard" / "static"
 VENDOR_SCRIPT = Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py"
@@ -49,9 +50,11 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=vendor_dashboard.lifespan(),
 )
+app.include_router(admin_router)
 app.include_router(vendor_upload_router)
 app.include_router(drive_index_router)
 app.include_router(purchase_invoice_router)
+app.include_router(invoice_workbook_router)
 
 
 def _clean(obj: Any) -> Any:
@@ -74,6 +77,15 @@ def st() -> AppState:
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
+    if path.startswith("/api/admin/"):
+        return await call_next(request)
+    if needs_admin(request.method, path):
+        if not is_admin(request.cookies.get(COOKIE, "")):
+            return JSONResponse({"detail": "Admin login required to change shared data."}, status_code=403)
+        try:
+            same_origin(request)
+        except HTTPException as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
     if path.startswith(('/api/drive-index/', '/api/purchase-invoices/')):
         return await call_next(request)
     if path in {"/healthz", "/vendor-upload"} or path == "/api/vendor-uploads" or path.startswith("/api/vendor-uploads/"):
@@ -82,9 +94,6 @@ async def guard(request: Request, call_next):
     # the Organizer database or apply Organizer API authentication to it.
     if path == "/vendor" or path.startswith("/vendor/") or path == "/chatbot" or path.startswith("/chatbot/"):
         return await call_next(request)
-    token = st().settings.dashboard_token
-    if token and path.startswith("/api/") and request.headers.get("x-token") != token and request.query_params.get("token") != token:
-        return JSONResponse({"detail": "Missing or wrong access token"}, status_code=401)
     try:
         response = await call_next(request)
     except ConfigError as exc:
@@ -109,8 +118,9 @@ def J(data: Any) -> JSONResponse:
 
 
 @app.get("/healthz", include_in_schema=False)
-def healthz():
+def healthz(response: Response):
     """Public liveness probe; does not open storage or reveal application data."""
+    response.headers["X-Dashboard-Release"] = "2026-11-19-document-workflows"
     return {"status": "ok"}
 
 
@@ -721,8 +731,14 @@ def purchase_invoices_page():
 
 
 @app.get("/", include_in_schema=False)
-def index():
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+def index(request: Request):
+    page = "index.html" if is_admin(request.cookies.get(COOKIE, "")) or request.cookies.get("dashboard_viewer") == "1" else "login.html"
+    return FileResponse(STATIC / page, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/login", include_in_schema=False)
+def login_page():
+    return FileResponse(STATIC / "login.html", headers={"Cache-Control": "no-store"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

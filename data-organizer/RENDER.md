@@ -1,6 +1,83 @@
+## Document workflow update · 19 November 2026
+
+Saved uploads now have Preview, Review and Delete controls together. Review defaults to all uploaded files and includes the original-file preview. Deletion requires admin access and confirmation, removes related catalogue/import rows, and keeps source archives and Drive originals.
+
+Search all includes uploaded-file text/OCR, saved purchase invoices, all saved invoice worksheets, indexed Drive rows and approved catalogue records. Scans use Tesseract. Missing engines, failed OCR and extraction limits remain visible as issues. Start/Resume the Drive library to retry older OCR-pending or partial sources after this update; deployment does not automatically process the collection. OCR text is unverified source text and does not approve products or train a model.
+
+Served invoice sheets offer sorting by any original column, including numeric values and dates. Original order remains the default, and original Excel downloads are unchanged. Duplicate detection flags repeated raw records without making them inactive.
+
+## Single administrator login
+
+The starting page uses ADMIN_EMAIL and ADMIN_PASSWORD from Render private environment settings. Only this administrator can change shared data. Viewers can browse, search and download without the old Team password screen. See [ADMIN_ACCESS.md](ADMIN_ACCESS.md) for session expiry and recovery. Keep one ASGI worker for the in-memory admin sessions.
+
 # Organizer preview on Render
 
+## QuoteSaarthi Vendor design
+
+The Vendor workspace uses the supplied HOSPkart.com sidebar logo, a navy sidebar,
+purple summary card accents and a QuoteSaarthi welcome banner. The logo is served
+from `/static/hospkart-logo.png` in the same Docker image. **Ask QuoteSaarthi** opens the existing Vendor
+AI Assistant. Invoice uploads and Drive search remain under **Workspace tools**
+in the sidebar. Counts still come from the shared live database; the visual update
+does not copy screenshot data, change authentication, or add account/admin roles.
+Deploy this design through the existing `deploy/organizer` branch and Docker
+configuration below.
+
 ## Purchase invoices and large collections
+
+### Original served-data worksheet view
+
+The workspace card is labelled **Served data invoices**. It counts distinct,
+non-blank invoice numbers in **Client Call List** of the latest saved workbook,
+ignoring outer whitespace and letter case. Repeated item rows count once. It does
+not add the summary/cancelled worksheets or extracted invoice records to this
+count. With no served workbook the card shows zero. For differently named
+workbooks, the first worksheet with an Invoice No./Invoice Number header is used.
+
+The Vendor sidebar's **Served invoices** entry is the Purchase Invoice workspace.
+It opens **Served data invoices** directly in the main panel, with no dashboard
+summary cards or nested page above it. `/vendor/?view=served-invoices` opens it
+directly after sign-in. Worksheet selection, search, the table and
+original downloads use native Vendor controls. The separate `/purchase-invoices`
+page retains individual-invoice upload and export tools, also linked below the
+worksheet view. Use **Original workbook versions and upload → Save
+original workbook** to add `served data.xlsx` privately; never commit client
+workbooks to the repository. Choose any original worksheet and search across all
+its cells. Rows and columns retain their original positions, including duplicates
+and blank cells. The viewer displays 250 matching rows per page and reports both
+matching and total counts. **Download original Excel** returns the byte-identical
+uploaded file, including every worksheet and original formatting. The viewer is
+read-only and displays cached formula results rather than calculating formulas.
+
+Original workbooks are versioned by SHA-256 in `vdd_invoice_workbooks`, schema
+version 1, independently of extracted invoice records. New contents create a
+version; repeated identical bytes reuse the saved version without overwriting it.
+The existing shared-password/scoped-token checks protect upload, metadata, search
+and download. Upload limits are 20 MiB, 64 MiB expanded ZIP contents, 5,000 ZIP
+entries, 50 worksheets, 50,000 data rows/100 columns per worksheet, and 1,000,000
+cells total. Unsafe compression and corrupt workbooks are rejected before saving.
+The existing database capacity check applies before new workbook writes.
+
+The additive table is created idempotently when the feature is first used and
+stores bytes in PostgreSQL on Render (SQLite locally). Downgrading the application
+leaves the table intact and does not change existing invoices or document counts.
+Keep the source file and use original downloads and provider database backups for
+recovery. Existing dashboard backup/reset actions do not include this table.
+See [ADR 0010](../docs/decisions/0010-original-invoice-workbooks.md).
+
+**Purchase invoices → Search saved invoices → Export Excel** downloads the
+31-column invoice register, from Invoice Date through Source PDF Page. Export
+uses the current search across all saved records, including results beyond the
+current page, and writes one row per item (one row for invoices without items).
+The authenticated `/api/purchase-invoices/export.xlsx` route uses the same access
+control and search rules as saved invoices. Temporary workbooks are removed after
+download; exports are limited to 100,000 item rows and require no schema changes.
+Only saved INR amounts populate ₹ columns. Legacy line amounts with an unspecified
+tax basis are retained in Notes. Client/delivery, GST, feedback/follow-up, payment
+status and PDF-page fields that were not captured remain blank for completion in
+Excel; supplier names are kept in Notes, not substituted for client names.
+Invoice totals repeat per item: count each invoice once when totalling. The Export
+guide sheet explains these limits. Spreadsheet edits do not update saved records.
 
 `/purchase-invoices` provides upload → extraction → review/edit → save → search.
 Both dashboards link to it. It accepts PDF, JPG, PNG, XLSX, XLS and CSV, one
@@ -255,3 +332,27 @@ read-only secret mount cannot be used directly for OAuth token persistence.
 Live Drive access cannot be verified until the actual folder is shared and
 credentials are configured. Connection in a chat does not connect the deployed
 server. Never put keys, tokens or Google passwords into the repository or chat.
+
+### Vendor startup feedback
+
+The Vendor UI renders a loading status before opening storage and shows navigation before metadata reads. The company checklist reads Drive file references without counting or deduplicating every catalogue row. ZIP history and review-queue reads run only on their respective pages, and served invoice browsing bypasses company metadata. Stored records, catalogue counts on their own views and access permissions are unchanged.
+
+### Hosted database startup
+
+An initialized PostgreSQL store is opened using at most four read-only checks of schema columns, required indexes, the existing catalogue-policy marker and missing canonical IDs. It skips repeated table/index creation, repair scans and the startup product-table count when the schema is current. Incomplete/legacy databases still use the existing setup path; local SQLite migration behavior is unchanged. This adds no tables, columns, indexes or migration markers. Startup timing is logged without credentials or document content. Keep the readiness contract in storage.py aligned with future schema changes.
+
+Drive index startup also uses a read-only readiness check. The main company projection skips unused Drive display-row classification, caches deterministic path classification with a bounded cache, builds checklist aggregates in one pass, and reuses that checklist for summary counts. These changes do not cache user decisions or change record freshness/classification rules.
+
+The assembled company/document snapshot is cached for up to 60 seconds across normal interactions. UI operations using the existing save/correction/merge/reset refresh paths invalidate it; the **Refresh companies and documents** button forces a new read. External worker imports and other sessions can see a previous snapshot until expiry or Refresh. The snapshot contains shared read data only; admin permissions are checked on every run.
+
+### Vendor Drive original cards
+
+Indexed Drive documents use the same filename, eye preview and Download file layout as uploaded documents. Originals are fetched only on demand; ZIP members use bounded range reads without downloading the whole archive. Cached preview content is limited to 16 MB and downloads to 128 MB. Larger PDFs are read from a temporary disk copy and rendered as a bounded first-page preview; the complete original remains available for download. Temporary copies are removed after use; no document or Drive metadata is rewritten. Sharing/quota errors appear in the preview with a link to the Drive source. The source caption remains Google Drive to preserve classification provenance.
+
+### Private original storage
+
+The optional private original reader uses content-addressed keys (sha256/<existing document hash>) in a private Neon S3 bucket. Existing database copies take priority, then private single-file storage, then registered private backup archives using bounded S3 range reads, then the original Drive source. Every returned copy is checked against its registered SHA-256 fingerprint. Streaming download bounds and temporary-file cleanup apply to private copies as well. Missing objects fall back to Drive; storage errors do not expose credentials. This reader adds no schema and performs no storage writes.
+
+Configure VENDOR_ORIGINAL_STORAGE_ENDPOINT, VENDOR_ORIGINAL_STORAGE_BUCKET, VENDOR_ORIGINAL_STORAGE_REGION, VENDOR_ORIGINAL_STORAGE_ACCESS_KEY and VENDOR_ORIGINAL_STORAGE_SECRET_KEY only in the private Render environment. Use a storage:read credential for Render; restoration uploads use separately authorized tooling. Never use a public-read bucket or commit provider credentials, source files or presigned links. Creating the production bucket and granting Render access require the user-approved storage setup.
+
+Private backup keys are archives/<registered Drive file id>.zip. A Drive-index row may resolve a registered backup by the same content hash in vdd_documents. Arbitrary buckets, URLs, object paths and ZIP members cannot be requested by viewers. The reader reuses the same path, size, symlink, encryption, compression-ratio, CRC/version and SHA-256 checks for private and Drive ZIP members. Word originals have an in-dashboard text preview.

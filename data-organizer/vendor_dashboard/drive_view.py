@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+from functools import lru_cache
 
 import pandas as pd
 import streamlit as st
@@ -19,8 +20,13 @@ def company_source_path(path):
     return source_path(path)
 
 
+@lru_cache(maxsize=10000)
+def document_decision(path):
+    return classify(company_source_path(path))
+
+
 @st.cache_data(ttl=20, max_entries=8, show_spinner=False)
-def inventory(identity, _store):
+def inventory(identity, _store, *, include_record_totals=True):
     index = DriveIndex(_store)
     selected = index.source_selection()
     # Older indexes predate the saved source-selection setting.
@@ -29,14 +35,16 @@ def inventory(identity, _store):
             rows = db.execute("SELECT * FROM vdd_drive_entries WHERE folder_id=?", (selected['scope'],)).fetchall()
         else:
             rows = db.execute("SELECT * FROM vdd_drive_entries").fetchall()
-    total = index.record_totals(selected['scope'] if selected else None)['unique_records']
+    total = index.record_totals(selected['scope'] if selected else None)['unique_records'] if include_record_totals else None
+    if not include_record_totals:
+        return {"items": [], "source_rows": None, "references": [dict(row) for row in rows]}
     result = []
     for row in rows:
         item = dict(row)
         path = item['member_path'] or item['source_name']
         if not item['member_path'] and path.lower().endswith('.zip'):
             continue  # Archive containers are not additional vendor documents.
-        decision = classify(company_source_path(path))
+        decision = document_decision(path)
         result.append({
             'Detected company': decision.company_name or 'Needs company review',
             'Document types': ', '.join(decision.document_types),
@@ -44,7 +52,7 @@ def inventory(identity, _store):
             'Source rows': int(item['record_count']), 'Issue': item['error'],
             'Drive original': 'https://drive.google.com/file/d/'+item['drive_id']+'/view',
         })
-    return {'items': result, 'source_rows': int(total), 'references': [dict(row) for row in rows]}
+    return {'items': result, 'source_rows': int(total) if total is not None else None, 'references': [dict(row) for row in rows]}
 
 
 def combine_company_documents(vendors, documents, references, aliases=None):
@@ -55,7 +63,7 @@ def combine_company_documents(vendors, documents, references, aliases=None):
 
     vendors = vendors.copy()
     documents = documents.copy()
-    for column in ('drive_url', 'drive_status', 'drive_member'):
+    for column in ('drive_url', 'drive_status', 'drive_member', 'drive_version'):
         if column not in documents:
             documents[column] = ''
     canonical = {row.company_key: row.company_name for row in vendors.itertuples(index=False)}
@@ -86,7 +94,7 @@ def combine_company_documents(vendors, documents, references, aliases=None):
             continue
         if not safe_member(path) or not item['drive_id']:
             continue
-        decision = classify(company_source_path(path))
+        decision = document_decision(path)
         name = decision.company_name or ''
         # Match exact normalized names and confirmed aliases only, never fuzzy matches.
         key = company_key(name)
@@ -118,7 +126,7 @@ def combine_company_documents(vendors, documents, references, aliases=None):
             'uploaded_at': item.get('updated_at', ''), 'source_batch': item['source_name'],
             'method': 'Google Drive · '+decision.method, 'reason': item.get('error') or decision.reason,
             'drive_url': 'https://drive.google.com/file/d/'+item['drive_id']+'/view', 'drive_status': item['status'],
-            'drive_member': item['member_path'],
+            'drive_member': item['member_path'], 'drive_version': item.get('version', ''),
         })
     if companies:
         vendors = pd.concat([vendors, pd.DataFrame(companies)], ignore_index=True)
