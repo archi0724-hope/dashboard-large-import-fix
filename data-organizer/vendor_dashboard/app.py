@@ -53,7 +53,7 @@ APP_DIR = Path(__file__).resolve().parent
 st.set_page_config(page_title="HOSPkart.com · Vendor Document Dashboard", page_icon=":material/auto_awesome:", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-.stApp{background:radial-gradient(ellipse at 95% 0%,#eeebff 0%,transparent 48%),#f5f7fc;color:#142d55}
+.stApp{background:linear-gradient(180deg,#f8fafb 0%,#f2f6f8 100%);color:#172b3a}
 .block-container{max-width:1460px;padding-top:3.5rem;padding-bottom:3rem}
 h1{font-size:1.65rem!important;font-weight:750!important;letter-spacing:-.025em;color:#142d55}
 h2,h3{letter-spacing:-.015em;color:#142d55}
@@ -61,14 +61,14 @@ h2,h3{letter-spacing:-.015em;color:#142d55}
 [data-testid="stExpandSidebarButton"]{visibility:visible!important;opacity:1!important;width:40px;height:40px;border:1px solid #dfe6f1;border-radius:8px;background:#fff;color:#142d55}
 [data-testid="stSidebar"]{background:#101e38;border-right:1px solid #293b59}
 [data-testid="stSidebar"] [data-testid="stRadio"] label{padding:5px 6px;border-radius:8px;margin:2px 0}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#202e50;box-shadow:inset 3px 0 #7765ff}
-[data-testid="stMetric"]{background:#fff;border:1px solid #dfe3f5;border-top:3px solid #7460ff;border-radius:14px;padding:1rem;box-shadow:0 8px 22px rgba(38,44,89,.04)}
-[data-testid="stMetricValue"]{font-size:1.85rem;color:#142d55;font-weight:700}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#203c54;box-shadow:inset 3px 0 #167d82}
+[data-testid="stMetric"]{background:#fff;border:1px solid #dbe4ec;border-top:3px solid #167d82;border-radius:12px;padding:1rem;box-shadow:0 6px 18px rgba(23,43,58,.05)}
+[data-testid="stMetricValue"]{font-size:1.85rem;color:#172b3a;font-weight:700}
 [data-testid="stMetricLabel"]{color:#63758e;font-size:.875rem;font-weight:650}
 [data-testid="stFileUploader"]{border:1px dashed #b8c8e0;border-radius:10px;background:#fff}
 [data-testid="stExpander"]{background:#fff;border:1px solid #dfe6f1;border-radius:10px}
 [data-testid="stBaseButton-secondary"]{background:#fff;color:#142d55;border-color:#dfe6f1;font-weight:600}
-[data-testid="stBaseButton-primary"]{background:#6655d9;color:#fff;border-color:#6655d9;font-weight:700}
+[data-testid="stBaseButton-primary"]{background:#167d82;color:#fff;border-color:#167d82;font-weight:700}
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]{background:#253858;color:#e0e7f4;border-color:#334567}
 [data-testid="stSidebar"] [data-testid="stExpander"]{background:#192942;border-color:#334567;color:#e0e7f4}
 .brand{display:flex;align-items:center;margin:.5rem 0 1.3rem}

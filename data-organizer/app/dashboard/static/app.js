@@ -149,7 +149,7 @@ async function route() {
   } else {
     await guard(PAGE[S.page])();
     if (!S.admin) {
-      $("#view button").filter(b => /rename|merge|run|scan|stop|reset|read files|organize|extract products/i.test(b.textContent)).forEach(b => { b.disabled = true; b.title = "Admin login required"; });
+      $$("#view button").filter(b => /rename|merge|run|scan|stop|reset|read files|organize|extract products/i.test(b.textContent)).forEach(b => { b.disabled = true; b.title = "Admin login required"; });
     }
   }
   $("#view").focus({ preventScroll: true });
