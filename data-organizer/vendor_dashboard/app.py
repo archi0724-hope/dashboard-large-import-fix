@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import importlib
 import importlib.util
 import json
@@ -65,7 +64,7 @@ h2,h3{letter-spacing:-.015em;color:#142d55}
 [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#202e50;box-shadow:inset 3px 0 #7765ff}
 [data-testid="stMetric"]{background:#fff;border:1px solid #dfe3f5;border-top:3px solid #7460ff;border-radius:14px;padding:1rem;box-shadow:0 8px 22px rgba(38,44,89,.04)}
 [data-testid="stMetricValue"]{font-size:1.85rem;color:#142d55;font-weight:700}
-[data-testid="stMetricLabel"]{color:#63758e;font-size:.82rem;font-weight:650}
+[data-testid="stMetricLabel"]{color:#63758e;font-size:.875rem;font-weight:650}
 [data-testid="stFileUploader"]{border:1px dashed #b8c8e0;border-radius:10px;background:#fff}
 [data-testid="stExpander"]{background:#fff;border:1px solid #dfe6f1;border-radius:10px}
 [data-testid="stBaseButton-secondary"]{background:#fff;color:#142d55;border-color:#dfe6f1;font-weight:600}
@@ -76,11 +75,11 @@ h2,h3{letter-spacing:-.015em;color:#142d55}
 .brand img{display:block;width:160px;max-width:100%;height:auto}
 .workspace-hero{position:relative;overflow:hidden;background:linear-gradient(120deg,#16254b 0%,#29375f 65%,#154b5b 100%);border:1px solid #34466e;border-radius:18px;padding:30px;margin:1rem 0;color:#fff}
 .workspace-hero::after{content:'✦';position:absolute;right:32px;top:12px;font-size:110px;line-height:1;color:#a2b7ff;opacity:.13;pointer-events:none}
-.workspace-hero .hero-eyebrow{font-size:.64rem;font-weight:750;letter-spacing:.18em;color:#79eaff;text-transform:uppercase}
+.workspace-hero .hero-eyebrow{font-size:.875rem;font-weight:750;letter-spacing:.18em;color:#79eaff;text-transform:uppercase}
 .workspace-hero h2{font-size:1.5rem!important;color:#fff;margin:16px 0 18px;max-width:80%}
 .workspace-hero p{font-size:.88rem;line-height:1.7;max-width:650px;color:#e4eaff}
-.hero-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.hero-badges span{border:1px solid #526080;border-radius:30px;padding:5px 10px;font-size:.68rem;color:#e4eaff;background:#ffffff06}
-.summary-label{margin:.9rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.hero-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.hero-badges span{border:1px solid #526080;border-radius:30px;padding:5px 10px;font-size:.875rem;color:#e4eaff;background:#ffffff06}
+.summary-label{margin:.9rem 0 .45rem;color:#63758e;font-size:.875rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .type-label{margin:1.1rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .table-scroll{max-height:470px;overflow:auto;border:1px solid #dee6ed;border-radius:10px;background:#fff}
 .desk-table{border-collapse:collapse;min-width:100%;font-size:.88rem}
@@ -323,54 +322,179 @@ def vendor_ai_terms(question: str) -> set[str]:
     return {t for t in terms if t}
 
 
-def vendor_ai_extract_text(filename: str, payload: bytes | None) -> str:
+@st.cache_data(show_spinner=False, max_entries=128, ttl=3600)
+def vendor_ai_extract_text(filename: str, payload: bytes | None) -> tuple[str, str]:
     if payload is None:
-        return filename or ""
+        return "", "Original file is unavailable."
     suffix = Path(filename).suffix.lower()
+    warning = ""
     try:
         if suffix == ".pdf":
             from pypdf import PdfReader
-            reader = PdfReader(BytesIO(payload), strict=False)
-            text = "\n".join(page.extract_text() or "" for page in reader.pages[:3])
-            return text[:8000]
-        if suffix in {".csv", ".txt", ".log"}:
-            return payload.decode("utf-8", errors="replace")[:8000]
-        if suffix in {".xlsx", ".xls"}:
-            df = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
-            pages = []
-            for sheet in df.values():
-                pages.append(sheet.to_csv(index=False, header=False))
-            return "\n".join(pages)[:8000]
-        if suffix == ".docx":
+            from pypdf.errors import PdfReadError
+            try:
+                reader = PdfReader(BytesIO(payload), strict=False)
+                pages = [page.extract_text() or "" for page in reader.pages]
+            except (PdfReadError, OSError, ValueError) as error:
+                return "", f"Could not read the PDF ({type(error).__name__})."
+            scanned_pages = [index for index, text in enumerate(pages) if not text.strip()]
+            if scanned_pages:
+                try:
+                    import pypdfium2 as pdfium
+                    import pytesseract
+                except ImportError:
+                    return "\n".join(pages), "Scanned pages were not OCR-indexed because OCR dependencies are unavailable."
+                try:
+                    with pdfium.PdfDocument(payload) as document:
+                        for index in scanned_pages:
+                            bitmap = document[index].render(scale=2)
+                            try:
+                                with bitmap.to_pil() as image:
+                                    pages[index] = pytesseract.image_to_string(image, lang="eng", timeout=30)
+                            finally:
+                                bitmap.close()
+                except pytesseract.TesseractNotFoundError:
+                    warning = "Scanned pages were not OCR-indexed because Tesseract is unavailable."
+                except pytesseract.TesseractError as error:
+                    warning = f"Scanned-page OCR failed ({type(error).__name__})."
+                except (pdfium.PdfiumError, OSError, ValueError) as error:
+                    warning = f"Scanned-page OCR failed ({type(error).__name__})."
+            text = "\n".join(pages)
+        elif suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
+            try:
+                import pytesseract
+                from PIL import Image, ImageSequence
+            except ImportError:
+                return "", "Image OCR was not run because OCR dependencies are unavailable."
+            try:
+                parts = []
+                with Image.open(BytesIO(payload)) as image:
+                    for frame in ImageSequence.Iterator(image):
+                        with frame.copy() as copy:
+                            parts.append(pytesseract.image_to_string(copy, lang="eng", timeout=30))
+                text = "\n".join(parts)
+            except pytesseract.TesseractNotFoundError:
+                return "", "Image OCR was not run because Tesseract is unavailable."
+            except pytesseract.TesseractError as error:
+                return "", f"Image OCR failed ({type(error).__name__})."
+            except (OSError, ValueError) as error:
+                return "", f"Could not read the image ({type(error).__name__})."
+        elif suffix in {".csv", ".txt", ".log", ".json"}:
+            text = payload.decode("utf-8", errors="replace")
+        elif suffix in {".xlsx", ".xls"}:
             import zipfile
-            with zipfile.ZipFile(BytesIO(payload)) as archive:
-                if "word/document.xml" in archive.namelist():
+            try:
+                df = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
+                text = "\n".join(sheet.to_csv(index=False, header=False) for sheet in df.values())
+            except (ImportError, OSError, ValueError, zipfile.BadZipFile) as error:
+                return "", f"Could not read the workbook ({type(error).__name__})."
+        elif suffix == ".docx":
+            import zipfile
+            try:
+                with zipfile.ZipFile(BytesIO(payload)) as archive:
                     xml = archive.read("word/document.xml")
-                    text = re.sub(r"<[^>]+>", " ", xml.decode("utf-8", errors="replace"))
-                    return re.sub(r"\s+", " ", text)[:8000]
-    except Exception:
-        pass
-    return filename or ""
+                text = re.sub(r"<[^>]+>", " ", xml.decode("utf-8", errors="replace"))
+                text = re.sub(r"\s+", " ", text)
+            except (OSError, KeyError, zipfile.BadZipFile) as error:
+                return "", f"Could not read the Word document ({type(error).__name__})."
+        else:
+            return "", "This file type has no text extractor."
+    except ImportError:
+        return "", "Required document-reading dependencies are unavailable."
+    if len(text) > 100_000:
+        text = text[:100_000]
+        warning = "Only the first 100,000 extracted characters are searchable."
+    elif not text.strip() and not warning:
+        warning = "No searchable text was extracted; the filename and vendor remain searchable."
+    return text, warning
+
+
+def vendor_ai_purchase_invoice_signature(store) -> tuple[int, str]:
+    with store.connection() as db:
+        if store.cloud:
+            exists = db.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=?",
+                ("vdd_purchase_invoices",),
+            ).fetchone()
+        else:
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                ("vdd_purchase_invoices",),
+            ).fetchone()
+        if not exists:
+            return 0, ""
+        row = db.execute(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(created_at), '') AS latest FROM vdd_purchase_invoices"
+        ).fetchone()
+    return int(row["n"]), str(row["latest"] or "")
+
+
+def vendor_ai_signature(store) -> tuple:
+    from search_sources import signature
+    return store.search_index_signature(), vendor_ai_purchase_invoice_signature(store), signature(store)
+
+
+def vendor_ai_purchase_invoices(store) -> tuple[list[dict], list[str]]:
+    with store.connection() as db:
+        if store.cloud:
+            exists = db.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=?",
+                ("vdd_purchase_invoices",),
+            ).fetchone()
+        else:
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                ("vdd_purchase_invoices",),
+            ).fetchone()
+        if not exists:
+            return [], []
+        rows = db.execute(
+            "SELECT id,filename,record_json FROM vdd_purchase_invoices ORDER BY created_at DESC"
+        ).fetchall()
+    index = []
+    warnings = []
+    for row in rows:
+        try:
+            record = json.loads(row["record_json"])
+        except json.JSONDecodeError:
+            warnings.append(f"{row['filename']}: saved invoice data could not be read.")
+            continue
+        fields = record.get("fields") or {}
+        items = record.get("items") or []
+        supplier = str(fields.get("supplier") or "").strip()
+        number = str(fields.get("invoice_number") or "").strip()
+        date = str(fields.get("invoice_date") or "").strip()
+        item_text = " ".join(
+            str(item.get(key) or "")
+            for item in items
+            for key in ("description", "quantity", "unit_price", "amount")
+        )
+        index.append({
+            "title": f"{number or row['filename']} · {supplier or 'Purchase invoice'}",
+            "source": "Purchase invoices",
+            "result_id": f"invoice:{row['id']}",
+            "priority": 2,
+            "score_hint": 18,
+            "text": f"{row['filename']} {supplier} {number} {date} {fields.get('gstin', '')} "
+                    f"{fields.get('total', '')} {fields.get('currency', '')} {item_text} {record.get('raw_text', '')}",
+            "vendor": supplier or "Not found in invoice",
+            "product": item_text,
+            "invoice_id": row["id"],
+            "invoice_number": number,
+            "invoice_date": date,
+            "invoice_total": str(fields.get("total") or ""),
+            "source_file": row["filename"],
+        })
+    return index, warnings
 
 
 def vendor_ai_index(store) -> list[dict]:
-    if hasattr(store, "search_index_signature"):
-        signature = store.search_index_signature()
-    else:
-        vendors = store.vendors()
-        documents = store.documents()
-        products = store.product_records()
-        signature = (
-            len(vendors),
-            len(documents),
-            len(products),
-            str(documents.uploaded_at.max()) if not documents.empty else "",
-            str(products.extracted_at.max()) if not products.empty and "extracted_at" in products else "",
-        )
+    signature = vendor_ai_signature(store)
     cached = st.session_state.get("vendor_ai_index_cache")
     if cached and cached.get("signature") == signature:
         return cached["index"]
     index = []
+    warnings = []
     vendors = store.vendors()
     for _, vendor in vendors.iterrows():
         company = str(vendor.get("company_name") or "").strip()
@@ -379,6 +503,7 @@ def vendor_ai_index(store) -> list[dict]:
         index.append({
             "title": company,
             "source": "Vendor master",
+            "result_id": f"vendor:{vendor.get('company_key', company)}",
             "priority": 0,
             "score_hint": 30,
             "text": f"{company} vendor supplier company manufacturer dealer contact details",
@@ -389,10 +514,15 @@ def vendor_ai_index(store) -> list[dict]:
     for _, doc in documents.iterrows():
         company = str(doc.get("company_name") or "").strip()
         filename = str(doc.get("filename") or "").strip()
-        if not filename or not doc.get("available"):
+        if not filename:
             continue
-        payload = store.read_bytes(int(doc["id"]))
-        body = vendor_ai_extract_text(filename, payload)
+        try:
+            payload = store.read_bytes(int(doc["id"])) if doc.get("available") else None
+            body, warning = vendor_ai_extract_text(filename, payload)
+        except Exception as error:
+            body, warning = "", f"Document could not be indexed ({type(error).__name__})."
+        if warning:
+            warnings.append(f"{filename}: {warning}")
         text = f"{company} {filename} {body} {' '.join(doc.get('types', []))}"
         if "catalog" in filename.lower() or "price" in filename.lower() or "rate" in filename.lower():
             priority = 3
@@ -403,22 +533,23 @@ def vendor_ai_index(store) -> list[dict]:
         index.append({
             "title": company or filename,
             "source": "Uploaded documents",
+            "result_id": f"document:{doc['id']}",
             "priority": priority,
             "score_hint": 12,
             "text": text,
             "vendor": company or "Not found in available vendor data",
             "source_file": filename,
+            "document_id": int(doc["id"]),
         })
     for _, record in store.product_records().iterrows():
         company = str(record.get("company_name") or "").strip()
         product = str(record.get("product_name") or "").strip()
-        if len(product) > 180:
-            continue
         price = record.get("price")
         price_text = f" price {price}" if pd.notna(price) else ""
         index.append({
             "title": f"{product} ({company})",
             "source": "Persisted catalogue/price records",
+            "result_id": f"product:{record.get('id')}",
             "priority": 5 if record.get("record_type") == "price" else 4,
             "score_hint": 20,
             "text": (
@@ -439,24 +570,29 @@ def vendor_ai_index(store) -> list[dict]:
             "source_sheet": str(record.get("source_sheet") or ""),
             "source_page": str(record.get("source_page") or ""),
             "price": price,
+            "document_id": int(record.get("document_id")) if pd.notna(record.get("document_id")) else None,
         })
+    invoices, invoice_warnings = vendor_ai_purchase_invoices(store)
+    index.extend(invoices)
+    warnings.extend(invoice_warnings)
     for item in index:
         item["_normalized_text"] = vendor_ai_normalize(f"{item['title']} {item['text']}")
+    st.session_state["vendor_ai_index_warnings"] = warnings
     st.session_state["vendor_ai_index_cache"] = {"signature": signature, "index": index}
     return index
 
 
 def vendor_ai_search(store, question: str) -> list[dict]:
     """Return ranked results, reusing both the normalized index and exact query results."""
-    if hasattr(store, "search_index_signature"):
-        signature = store.search_index_signature()
-    else:
-        signature = None
+    signature = vendor_ai_signature(store)
     cache = st.session_state.setdefault("vendor_ai_result_cache", {})
     cache_key = (signature, vendor_ai_normalize(question))
     if cache_key in cache:
         return cache[cache_key]
-    results = vendor_ai_rank(question, vendor_ai_index(store))
+    from search_sources import results as shared_results
+    extra, warnings = shared_results(store, question)
+    results = vendor_ai_rank(question, [*vendor_ai_index(store), *extra])
+    st.session_state["vendor_ai_index_warnings"] = [*st.session_state.get("vendor_ai_index_warnings", []), *warnings]
     cache[cache_key] = results
     # Keep session memory bounded while retaining the newest searches.
     if len(cache) > 32:
@@ -466,13 +602,24 @@ def vendor_ai_search(store, question: str) -> list[dict]:
 
 def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
     terms = vendor_ai_terms(question)
+    ignored = {"show", "find", "search", "please", "give", "me", "the", "all", "what", "which", "is", "are", "of", "for", "in", "and", "does", "have", "has", "do", "sell", "sells"}
+    required = set(vendor_ai_tokens(question)) - ignored
+    if not required:
+        return []
+    groups = []
+    for token in required:
+        aliases = next(({key, *values} for key, values in VENDOR_AI_SYNONYMS.items() if token == key or token in values), {token})
+        groups.append(aliases)
     question_text = vendor_ai_normalize(question)
     ranked = []
     for item in index:
         haystack = item.get("_normalized_text") or vendor_ai_normalize(f"{item['title']} {item['text']}")
+        matches = lambda term: re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", haystack) is not None
+        if not all(any(matches(term) for term in group) for group in groups):
+            continue
         score = 0
         for term in terms:
-            if term in haystack:
+            if matches(term):
                 score += 8 if " " in term else 4
         if question_text and question_text in haystack:
             score += 24
@@ -487,7 +634,8 @@ def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
     unique = []
     seen = set()
     for item in ranked:
-        key = (
+        key = item.get("result_id") or (
+            item.get("source", ""),
             item.get("vendor", ""),
             item.get("product", item.get("title", "")),
             item.get("sku", ""),
@@ -497,7 +645,7 @@ def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         unique.append(item)
-    return unique[:6]
+    return unique
 
 
 def _display_value(value, fallback: str = "Not found") -> str:
@@ -505,6 +653,168 @@ def _display_value(value, fallback: str = "Not found") -> str:
         return fallback
     text = re.sub(r"\s+", " ", str(value)).strip()
     return text[:180] if text else fallback
+
+
+def vendor_ai_source_payload(store, item: dict) -> bytes | None:
+    if item.get("document_id"):
+        return store.read_bytes(int(item["document_id"]))
+    if not item.get("invoice_id"):
+        return None
+    with store.connection() as db:
+        if store.cloud:
+            column = db.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() "
+                "AND table_name=? AND column_name='original_payload'",
+                ("vdd_purchase_invoices",),
+            ).fetchone()
+        else:
+            columns = db.execute("PRAGMA table_info(vdd_purchase_invoices)").fetchall()
+            column = any(row["name"] == "original_payload" for row in columns)
+        if not column:
+            return None
+        row = db.execute(
+            "SELECT original_payload FROM vdd_purchase_invoices WHERE id=?",
+            (item["invoice_id"],),
+        ).fetchone()
+    return bytes(row["original_payload"]) if row and row["original_payload"] is not None else None
+
+
+def vendor_ai_snippet(item: dict, question: str, limit: int = 260) -> str:
+    text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
+    positions = [text.casefold().find(term.casefold()) for term in vendor_ai_tokens(question)]
+    positions = [position for position in positions if position >= 0]
+    start = max(0, min(positions) - 80) if positions else 0
+    snippet = text[start:start + limit]
+    return ("…" if start else "") + snippet + ("…" if start + limit < len(text) else "")
+
+
+def vendor_ai_results_excel(results: list[dict], question: str) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+
+    headers = [
+        "Type", "Title", "Vendor / Supplier", "Product / Items", "SKU",
+        "Invoice Number", "Invoice Date", "Invoice Total", "Source File", "OCR / Text Snippet",
+    ]
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("Search Results")
+    sheet.freeze_panes = "A2"
+    sheet.append([WriteOnlyCell(sheet, value=value) for value in headers])
+    for item in results:
+        values = [
+            item.get("source", ""),
+            item.get("title", ""),
+            item.get("vendor", ""),
+            item.get("product", ""),
+            item.get("sku", ""),
+            item.get("invoice_number", ""),
+            item.get("invoice_date", ""),
+            item.get("invoice_total", ""),
+            item.get("source_file", ""),
+            vendor_ai_snippet(item, question),
+        ]
+        cells = [WriteOnlyCell(sheet, value=str(value or "")) for value in values]
+        for cell in cells:
+            cell.data_type = "s"
+        sheet.append(cells)
+    sheet.auto_filter.ref = f"A1:J{len(results) + 1}"
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def vendor_ai_search_all_page(store):
+    st.subheader("Search all data")
+    st.caption("Search uploaded documents, purchase invoices, original invoice worksheets, indexed Drive rows and catalogue products. Scans use OCR when Tesseract is available; incomplete reads are listed below.")
+    if st.button("Refresh search index", key="refresh_search_index"):
+        vendor_ai_extract_text.clear()
+        for key in ("vendor_ai_index_cache", "vendor_ai_result_cache", "vendor_ai_all_results"):
+            st.session_state.pop(key, None)
+    query = st.text_input(
+        "Search all records",
+        placeholder="Search a supplier, invoice, product, SKU, or text in an uploaded file...",
+        key="vendor_ai_all_query",
+    )
+    if st.button("Search all", type="primary", key="vendor_ai_all_search"):
+        if query.strip():
+            with st.spinner("Searching records and extracting document text..."):
+                st.session_state["vendor_ai_all_results"] = vendor_ai_search(store, query.strip())
+                st.session_state["vendor_ai_all_last_query"] = query.strip()
+    last_query = st.session_state.get("vendor_ai_all_last_query", "")
+    if last_query:
+        st.session_state["vendor_ai_all_results"] = vendor_ai_search(store, last_query)
+    results = st.session_state.get("vendor_ai_all_results", [])
+    last_query = st.session_state.get("vendor_ai_all_last_query", "")
+    if not last_query:
+        st.info("Enter a search term to find matches across all saved data.")
+        return
+    if results:
+        st.caption(f"{len(results)} matching result(s)")
+        rows = [{
+            "Type": item.get("source", ""),
+            "Title": item.get("title", ""),
+            "Vendor / Supplier": item.get("vendor", ""),
+            "Product / Items": item.get("product", ""),
+            "SKU": item.get("sku", ""),
+            "Invoice Number": item.get("invoice_number", ""),
+            "Invoice Date": item.get("invoice_date", ""),
+            "Invoice Total": item.get("invoice_total", ""),
+            "Source File": item.get("source_file", ""),
+            "Sheet / Row": " · ".join(filter(None, [item.get("source_sheet", ""), str(item.get("source_page", ""))])),
+            "Review status": item.get("review_status", ""),
+            "OCR / Text Snippet": vendor_ai_snippet(item, last_query),
+        } for item in results]
+        source_options = ["All sources", *sorted({item.get("source", "") for item in results})]
+        source = st.selectbox("Filter by source", source_options, key="all_search_source_filter")
+        visible = rows if source == "All sources" else [row for row in rows if row["Type"] == source]
+        st.dataframe(pd.DataFrame(visible), hide_index=True, width="stretch")
+        drive_links = {item["source_url"]: item.get("source_file", "Document") for item in results
+                       if item.get("source_url", "").startswith("https://drive.google.com/")}
+        for url, name in drive_links.items():
+            st.link_button("Open Drive source: " + name, url)
+        st.download_button(
+            "Export all matches to Excel",
+            data=vendor_ai_results_excel(results, last_query),
+            file_name="all_search_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="vendor_ai_all_excel",
+        )
+        source_labels = {
+            f"{index + 1}. {item.get('source', '')} · {item.get('source_file') or item.get('title', '')}": index
+            for index, item in enumerate(results)
+            if item.get("document_id") or item.get("invoice_id")
+        }
+        if source_labels:
+            selected_label = st.selectbox(
+                "Preview or download a source file",
+                list(source_labels),
+                key="vendor_ai_all_source",
+            )
+            item = results[source_labels[selected_label]]
+            payload = vendor_ai_source_payload(store, item)
+            if payload:
+                filename = str(item.get("source_file") or "source-file")
+                st.download_button(
+                    "Download original file",
+                    data=payload,
+                    file_name=filename,
+                    mime=mimetypes.guess_type(filename)[0] or "application/octet-stream",
+                    key=f"vendor_ai_source_download_{item.get('document_id') or item.get('invoice_id')}",
+                )
+                show_document_preview(filename, payload)
+            elif item.get("invoice_id"):
+                st.warning("The invoice record is searchable, but its original file is not available. Older invoices may need to be re-uploaded.")
+            else:
+                st.warning("The original uploaded file is no longer available for preview or download.")
+    else:
+        st.info(f"No records matched “{last_query}”.")
+    warnings = st.session_state.get("vendor_ai_index_warnings", [])
+    if warnings:
+        with st.expander(f"{len(warnings)} file(s) could not be fully indexed"):
+            for warning in warnings[:50]:
+                st.warning(warning)
+            if len(warnings) > 50:
+                st.caption(f"{len(warnings) - 50} additional warning(s) not shown.")
 
 
 def vendor_ai_format(question: str, results: list[dict]) -> str:
@@ -608,6 +918,8 @@ def refresh(message: str):
     load_workspace_data.clear()
     st.session_state["view_cleared"] = False
     st.session_state["notice"] = message
+    for key in ("vendor_ai_index_cache", "vendor_ai_result_cache", "vendor_ai_all_results", "vendor_ai_all_signature"):
+        st.session_state.pop(key, None)
     for key in list(st.session_state):
         if str(key).startswith(("export_", "zip_", "backup_download")):
             del st.session_state[key]
@@ -680,14 +992,15 @@ if st.query_params.get("assistant") == "1" and not st.session_state.get("assista
 
 with st.sidebar:
     st.markdown('<div class="brand"><img src="/static/hospkart-logo.png" alt="HOSPkart.com"></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "Search all", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
     page_map = {item: item for item in navigation}
     captions = [
         "Yes / No checklist + company downloads",
         "Extracted products and prices",
         "Add a new vendor batch",
         "Original ZIP uploads saved here",
-        "Only files that need correction",
+        "Review or correct any uploaded file",
+        "Documents, OCR, invoices and products",
         "Natural-language vendor search and company answers",
         "Original served data.xlsx workbook",
         "Backup, restore or reset saved data",
@@ -956,6 +1269,7 @@ elif page == "Companies & documents":
         checklist_dl2.download_button("Download visible checklist - CSV", csv_bytes(view), visible_csv_name, "text/csv", width="stretch", key="visible_csv")
         st.divider()
         st.markdown("### Company documents")
+        st.caption("Select a company, open a document category, then preview, review or delete an uploaded file using the controls beside its name.")
         options = filtered.company_key.tolist()
         mapping = dict(zip(filtered.company_key, filtered["Company Name"]))
         if st.session_state.get("company_selection") not in options:
@@ -992,8 +1306,36 @@ elif page == "Companies & documents":
                     if rows.empty:
                         st.caption("No file available in this category.")
                     for row_number, doc in enumerate(rows.itertuples(index=False)):
-                        filename_col, preview_col = st.columns([8.5, 1.5], vertical_alignment="center")
+                        document_token = f"{category}_{doc.id}_{row_number}"
+                        filename_col, preview_col, review_col, delete_col = st.columns([6, 1.2, 1.2, 1.2], vertical_alignment="center")
                         filename_col.text(doc.filename)
+                        is_uploaded = str(doc.id).isdigit()
+                        if review_col.button("Review", key=f"review_document_{document_token}", disabled=not can_edit or not is_uploaded):
+                            st.session_state["review_document_request"] = int(doc.id)
+                            st.session_state["review_show_all"] = True
+                            go_to("Review files")
+                            st.rerun()
+                        if delete_col.button("Delete", key=f"delete_document_{document_token}", disabled=not can_edit or not is_uploaded,
+                                             help="Remove this saved upload and its extracted rows. Drive source files are kept."):
+                            st.session_state["delete_document_id"] = int(doc.id)
+                        if is_uploaded and st.session_state.get("delete_document_id") == int(doc.id):
+                            st.warning(f"Delete {doc.filename} and its extracted catalogue rows? Source archives and Drive originals are kept.")
+                            confirm, cancel = st.columns(2)
+                            if confirm.button("Confirm delete", key=f"confirm_delete_document_{document_token}", type="primary"):
+                                require_admin()
+                                try:
+                                    store.delete_document(int(doc.id))
+                                except Exception:
+                                    logging.getLogger(__name__).exception("Document deletion failed")
+                                    st.error("The file could not be completely removed. Refresh and check its status before retrying.")
+                                else:
+                                    document_bytes.clear()
+                                    st.session_state.pop("delete_document_id", None)
+                                    st.session_state.pop("preview_document_id", None)
+                                    refresh("Document deleted. The checklist and search have been refreshed.")
+                            if cancel.button("Cancel", key=f"cancel_delete_document_{document_token}"):
+                                st.session_state.pop("delete_document_id", None)
+                                st.rerun()
                         detail = 'Google Drive' if getattr(doc, 'drive_url', '') else (supporting_category(doc.filename) if not doc.types else doc.method)
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
@@ -1191,7 +1533,7 @@ elif page == "Uploaded ZIPs":
 
 elif page == "Review files":
     review_queue = store.review_queue()
-    st.subheader("Check unclear documents")
+    st.subheader("Review documents")
     product_review = store.product_review_records(limit=1000)
     if not product_review.empty:
         st.markdown("### Product rows needing catalogue validation")
@@ -1206,21 +1548,28 @@ elif page == "Review files":
         st.markdown("### Company match review queue")
         show_table(review_queue[["detected_name", "possible_company", "canonical_id", "confidence", "evidence", "source", "status"]].rename(columns={"detected_name":"Detected name", "possible_company":"Possible company", "canonical_id":"Company ID", "confidence":"Confidence", "evidence":"Evidence", "source":"Source", "status":"Status"}))
         st.caption("These records were not automatically merged because the company match was uncertain.")
-    st.caption("Recognised supporting certificates stay under Other documents. Only unclear classifications and unavailable files need attention.")
-    show_all=st.checkbox("Show all documents for correction")
-    drive_issues = documents[documents.drive_url.ne('') & (documents.needs_review | ~documents.available)] if 'drive_url' in documents else pd.DataFrame()
+    st.caption("Review any uploaded document, including files already classified. Turn off all documents to focus on files needing attention. Drive-only references remain read-only in the library.")
+    show_all=st.checkbox("Show all documents for correction", value=True, key="review_show_all")
+    drive_issues = documents[documents.drive_url.ne('')] if 'drive_url' in documents else pd.DataFrame()
+    if not show_all and not drive_issues.empty:
+        drive_issues = drive_issues[drive_issues.needs_review | ~drive_issues.available]
     if not drive_issues.empty:
-        st.caption('Drive files needing review remain linked to their originals. Their extraction status is shared with the Drive library.')
+        st.caption('Drive files remain linked to their originals. Uploaded copies can be corrected below; Drive-only references can be inspected in the Drive library.')
         show_table(drive_issues[['company_name','filename','drive_status','reason','drive_url']])
     queue=uploaded_documents if show_all else uploaded_documents[uploaded_documents.needs_review | ~uploaded_documents.available]
     show_table(queue[["company_name","filename","method","reason"]].rename(columns={"company_name":"Company Name","filename":"File","method":"Classification","reason":"Reason"}))
     if not queue.empty:
         lookup={int(r.id):f"{r.company_name or 'Unassigned'} | {r.filename}" for r in queue.itertuples(index=False)}
-        selected_doc=st.selectbox("Select file to review",list(lookup),format_func=lookup.get)
+        requested = st.session_state.pop("review_document_request", None)
+        if requested in lookup:
+            st.session_state["review_selected_doc"] = requested
+        if st.session_state.get("review_selected_doc") not in lookup:
+            st.session_state.pop("review_selected_doc", None)
+        selected_doc=st.selectbox("Select file to review",list(lookup),format_func=lookup.get, key="review_selected_doc")
         doc=queue[queue.id==selected_doc].iloc[0]
         with st.form(f"review_{selected_doc}"):
             company=st.text_input("Correct company name",value=doc.company_name)
-            types=st.multiselect("Document type(s)",DOCUMENT_TYPES,default=doc.types)
+            types=st.multiselect("Document type(s)",DOCUMENT_TYPES,default=[value for value in doc.types if value in DOCUMENT_TYPES])
             st.caption("Leave types empty to confirm a supporting/non-checklist document.")
             note=st.text_input("Note (optional)")
             submit=st.form_submit_button("Save correction",type="primary")
@@ -1235,10 +1584,16 @@ elif page == "Review files":
             st.link_button('Open original in Drive for review', doc.drive_url)
             st.caption('Drive archive member: '+getattr(doc, 'drive_member', ''))
         if data is not None:
+            show_document_preview(doc.filename, data)
             st.download_button("Download original for review",data,doc.filename,key="review_download")
+        elif not getattr(doc, "drive_url", ""):
+            st.warning("Original file unavailable. You can still correct its company and document types.")
         st.caption("Source path: "+doc.original_path)
     else:
         st.success("No files are waiting for review.")
+
+elif page == "Search all":
+    vendor_ai_search_all_page(store)
 
 elif page == "🤖 Vendor AI Assistant":
     vendor_ai_page()

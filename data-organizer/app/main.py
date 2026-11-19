@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from a2wsgi import WSGIMiddleware
@@ -29,7 +29,6 @@ from .config import ConfigError
 from .drive.google_drive import drive_status
 from .logging_setup import get_logger
 from .matching.review import ReviewError
-from .pipeline import make_source
 from .services import AppState, get_state
 from .vendor_zip_upload import router as vendor_upload_router
 from .drive.index_api import router as drive_index_router
@@ -119,8 +118,9 @@ def J(data: Any) -> JSONResponse:
 
 
 @app.get("/healthz", include_in_schema=False)
-def healthz():
+def healthz(response: Response):
     """Public liveness probe; does not open storage or reveal application data."""
+    response.headers["X-Dashboard-Release"] = "2026-11-19-document-workflows"
     return {"status": "ok"}
 
 

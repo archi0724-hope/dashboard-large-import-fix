@@ -30,9 +30,7 @@ from vendor_core import (
     company_key,
     export_filename,
     file_basename,
-    natural_key,
     normalize_document_types,
-    supporting_category,
 )
 
 DOC_COLUMNS = ["id", "company_key", "company_name", "types_json", "filename", "original_path", "stored_path", "file_hash", "uploaded_at", "source_batch", "handover", "method", "reason", "reviewed", "size_bytes"]
@@ -725,7 +723,7 @@ class Store:
             if match_company or company_name:
                 row = db.execute(
                     "SELECT id FROM vdd_documents WHERE file_hash=? AND company_key=?",
-                    (digest, company_key(company_name) if company_name else ""),
+                    (digest, key),
                 ).fetchone()
             else:
                 row = db.execute("SELECT id FROM vdd_documents WHERE file_hash=?", (digest,)).fetchone()
@@ -744,7 +742,7 @@ class Store:
             ).fetchone()
             if not document or not document["company_key"] or not document["company_name"]:
                 raise ValueError("Catalogue rows require a document assigned to a vendor.")
-            cursor = db.execute(
+            db.execute(
                 """INSERT INTO vdd_product_imports(document_id,company_key,company_name,filename,file_hash,uploaded_at)
                    VALUES(?,?,?,?,?,?) ON CONFLICT(document_id) DO NOTHING""",
                 (int(document_id), document["company_key"], document["company_name"], document["filename"],
@@ -1404,6 +1402,7 @@ class Store:
         with self.connection() as db:
             row = db.execute("""
                 SELECT
+                    (SELECT COUNT(*) FROM vdd_audit) AS audit_changes,
                     (SELECT COUNT(*) FROM vdd_vendors) AS vendors,
                     (SELECT COUNT(*) FROM vdd_documents) AS documents,
                     (SELECT COUNT(*) FROM vdd_product_records) AS products,
@@ -1414,7 +1413,7 @@ class Store:
                     (SELECT COALESCE(MAX(extracted_at), '') FROM vdd_product_records) AS latest_product
             """).fetchone()
         return tuple(row[key] for key in (
-            "vendors", "documents", "products", "approved_products", "review_products",
+            "audit_changes", "vendors", "documents", "products", "approved_products", "review_products",
             "excluded_products", "latest_document", "latest_product",
         ))
 
@@ -1497,7 +1496,6 @@ class Store:
         than vendor names, so recovery deliberately trusts only a filename's
         clear vendor prefix. Ambiguous files remain unassigned for review.
         """
-        placeholder_key = company_key(placeholder)
         changed = unresolved = 0
         with self.connection() as db:
             rows = [dict(row) for row in db.execute(
@@ -1536,6 +1534,37 @@ class Store:
             return bytes(row["payload"]) if row["payload"] is not None else None
         path = self.safe_path(row["stored_path"])
         return path.read_bytes() if path and path.is_file() else None
+
+    def delete_document(self, document_id: int) -> bool:
+        stored_path = ""
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT id,company_name,filename,stored_path FROM vdd_documents WHERE id=?",
+                (int(document_id),),
+            ).fetchone()
+            if row is None:
+                return False
+            stored_path = row["stored_path"]
+            db.execute("DELETE FROM vdd_product_import_rows WHERE import_id IN (SELECT id FROM vdd_product_imports WHERE document_id=?)", (int(document_id),))
+            db.execute("DELETE FROM vdd_product_imports WHERE document_id=?", (int(document_id),))
+            db.execute("DELETE FROM vdd_product_records WHERE document_id=?", (int(document_id),))
+            db.execute("DELETE FROM vdd_documents WHERE id=?", (int(document_id),))
+            db.execute("INSERT INTO vdd_audit VALUES(?,?,?)",
+                       (now(), "Document deleted", json.dumps({
+                           "id": int(document_id), "company": row["company_name"], "filename": row["filename"],
+                       })))
+            if stored_path and not db.execute(
+                "SELECT 1 FROM vdd_documents WHERE stored_path=? LIMIT 1", (stored_path,)
+            ).fetchone():
+                path = self.safe_path(stored_path)
+            else:
+                path = None
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as error:
+                raise OSError("Document record was deleted, but its stored file could not be removed.") from error
+        return True
 
     def correct_document(self, document_id: int, company: str, types: list[str], note: str = ""):
         from vendor_core import DOCUMENT_TYPES

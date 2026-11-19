@@ -1,6 +1,6 @@
 [theme]
 base = "light"
-baseFontSize = 14
+baseFontSize = 16
 primaryColor = "#6655d9"
 backgroundColor = "#f5f7fc"
 secondaryBackgroundColor = "#ffffff"

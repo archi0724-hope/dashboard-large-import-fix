@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import zipfile
 from datetime import date, datetime, timezone
 from io import BytesIO
@@ -158,8 +159,22 @@ def download(ident: str):
                     headers={'Cache-Control': 'no-store', 'Content-Disposition': "attachment; filename*=UTF-8''"+quote(row['filename'], safe='')})
 
 
+def cell_sort_key(value):
+    if isinstance(value, (date, datetime)):
+        return (0, value.isoformat())
+    text = cell_text(value).strip()
+    try:
+        number = float(text.replace(',', ''))
+        if math.isfinite(number):
+            return (1, number)
+    except ValueError:
+        pass
+    return (2, tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
+                     for part in re.split(r"(\d+)", text)))
+
+
 @router.get('/{ident}/rows')
-def worksheet_rows(ident: str, sheet: str, q: str = '', offset: int = 0):
+def worksheet_rows(ident: str, sheet: str, q: str = '', offset: int = 0, sort_column: int = -1, descending: bool = False):
     row = original(ident)
     metadata = json.loads(row['metadata_json'])
     info = next((item for item in metadata['worksheets'] if item['name'] == sheet), None)
@@ -169,15 +184,29 @@ def worksheet_rows(ident: str, sheet: str, q: str = '', offset: int = 0):
     try:
         rows = book[sheet].iter_rows(values_only=True)
         headers = [cell_text(value) for value in next(rows, ())]
+        if sort_column < -1 or sort_column >= len(headers):
+            raise HTTPException(422, 'Choose an existing worksheet column to sort.')
         offset, matched, items = max(0, offset), 0, []
+        sortable = []
         query = q[:500].casefold().strip()
         for source_row, values in enumerate(rows, 2):
+            raw_values = values
             values = [cell_text(value) for value in values]
             if query and not any(query in value.casefold() for value in values):
                 continue
-            if offset <= matched < offset+250:
-                items.append({'source_row': source_row, 'values': values})
+            item = {'source_row': source_row, 'values': values}
+            if sort_column >= 0:
+                value = raw_values[sort_column] if sort_column < len(raw_values) else None
+                sortable.append((value, item))
+            elif offset <= matched < offset+250:
+                items.append(item)
             matched += 1
+        if sort_column >= 0:
+            filled = [(value, item) for value, item in sortable if cell_text(value).strip()]
+            blank = [item for value, item in sortable if not cell_text(value).strip()]
+            filled.sort(key=lambda pair: cell_sort_key(pair[0]), reverse=descending)
+            ordered = [item for _, item in filled] + blank
+            items = ordered[offset:offset+250]
         return {'headers': headers, 'items': items, 'total': info['rows'], 'matched': matched,
                 'columns': info['columns'], 'offset': offset, 'limit': 250}
     finally:

@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import phonenumbers
 
-from .normalizer import basic_clean, normalize_text, strip_null_like
+from .normalizer import basic_clean, strip_null_like
 
 
 @dataclass

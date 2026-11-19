@@ -166,3 +166,26 @@ def test_vendor_purchase_invoice_opens_native_worksheet_without_dashboard_cards(
     app.selectbox(key='served_original_sheet').select('Client Summary').run()
     assert not app.exception
     assert any('1 of 1 rows · 4 columns' in element.value for element in app.markdown)
+
+
+def test_sorting_is_global_numeric_stable_and_preserves_original(client):
+    c, headers = client
+    book = Workbook()
+    sheet = book.active
+    sheet.title = 'Invoices'
+    sheet.append(['Invoice', 'Amount'])
+    for invoice, amount in [('INV-10', 100), ('INV-2', 2), ('INV-1', None), ('INV-3', 2)]:
+        sheet.append([invoice, amount])
+    data = io.BytesIO()
+    book.save(data)
+    payload = data.getvalue()
+    ident = c.post('/api/purchase-invoices/workbooks?filename=sorting.xlsx', headers=headers, content=payload).json()['id']
+    base = '/api/purchase-invoices/workbooks/'+ident
+    def rows(**params):
+        return c.get(base+'/rows', headers=headers, params={'sheet':'Invoices', **params}).json()['items']
+    assert [row['source_row'] for row in rows(sort_column=0)] == [4, 3, 5, 2]
+    assert [row['source_row'] for row in rows(sort_column=1)] == [3, 5, 2, 4]
+    assert [row['source_row'] for row in rows(sort_column=1, descending=True)] == [2, 3, 5, 4]
+    assert [row['source_row'] for row in rows()] == [2, 3, 4, 5]
+    assert c.get(base+'/rows', headers=headers, params={'sheet':'Invoices','sort_column':99}).status_code == 422
+    assert c.get(base+'/original.xlsx', headers=headers).content == payload

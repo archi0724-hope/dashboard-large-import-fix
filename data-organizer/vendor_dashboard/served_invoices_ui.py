@@ -47,6 +47,7 @@ def save_uploaded_workbook():
 
 def render_served_invoices(store):
     st.title('Served data invoices')
+    st.caption('Browse original Excel sheets, search every cell, or sort the display by any column. Original downloads stay unchanged.')
     available = workbooks()['items']
     identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
     if not available:
@@ -72,8 +73,21 @@ def render_served_invoices(store):
         query = st.text_input('Search this worksheet', placeholder='Client, invoice, product or any cell',
                               key='served_worksheet_search', on_change=reset_rows)
         offset = st.session_state.get('served_row_offset', 0)
-        data = worksheet_rows(selected, sheet, query, offset)
-        caption = f"{data['matched']} of {data['total']} rows · {data['columns']} columns · Original worksheet order"
+        context = (selected, sheet)
+        if st.session_state.get('served_sort_context') != context:
+            st.session_state['served_sort_context'] = context
+            st.session_state.pop('served_sort_column', None)
+            reset_rows()
+            offset = 0
+        data = worksheet_rows(selected, sheet, query, offset,
+                              st.session_state.get("served_sort_column", -1),
+                              st.session_state.get("served_sort_descending", False))
+        sort_col, order_col = st.columns([3, 1])
+        sort_column = sort_col.selectbox('Sort worksheet by', [-1, *range(len(data['headers']))],
+            format_func=lambda index: 'Original Excel order' if index == -1 else f"{data['headers'][index] or 'Unnamed column'} ({index+1})",
+            key='served_sort_column', on_change=reset_rows)
+        order_col.checkbox('Descending', key='served_sort_descending', disabled=sort_column == -1, on_change=reset_rows)
+        caption = f"{data['matched']} of {data['total']} rows · {data['columns']} columns · {"Original worksheet order" if sort_column == -1 else "Sorted display"}"
         if data['matched'] > data['limit']:
             caption += f" · Showing {offset+1}–{offset+len(data['items'])}"
         st.write(caption)
@@ -85,7 +99,7 @@ def render_served_invoices(store):
             '<td>'+html.escape(value)+'</td>' for value in row['values'])+'</tr>' for row in data['items'])
         st.markdown('''<style>
 .served-original{overflow:auto;max-height:720px;border:1px solid #cbd9eb;border-radius:8px;margin-top:4px}
-.served-original table{table-layout:fixed;border-collapse:collapse;font-size:13px}
+.served-original table{table-layout:fixed;border-collapse:collapse;font-size:14px}
 .served-original th{position:sticky;top:0;background:#20547c;color:#fff;text-align:center;padding:20px 10px;border:1px solid #d6e0ef;z-index:1}
 .served-original td{color:#008000;background:#fff;padding:10px;border:1px solid #d6e0ef;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}
 .served-original tr:nth-child(even) td{background:#e9eff7}

@@ -174,7 +174,7 @@ class DriveIndex:
     def pending(self, folder):
         with self.store.connection() as db:
             return [dict(row) for row in db.execute('''SELECT * FROM vdd_drive_entries
-                WHERE folder_id=? AND status IN ('pending','failed','reading')
+                WHERE folder_id=? AND status IN ('pending','failed','reading','needs_ocr','partial')
                 ORDER BY CASE WHEN status='failed' THEN 1 ELSE 0 END,
                          CASE WHEN member_path='' THEN 1 ELSE 0 END,drive_id,size_bytes,entry_key''', (folder,)).fetchall()]
 

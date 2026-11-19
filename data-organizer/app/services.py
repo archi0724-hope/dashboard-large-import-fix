@@ -21,7 +21,7 @@ from .ingestion.ocr_reader import ocr_available
 from .ingestion.base import file_sha256
 from .logging_setup import LOG_NAMES, audit, get_logger, redact, setup_logging
 from .matching.review import ReviewService
-from .pipeline import LocalSource, Pipeline, Progress, dry_run, make_source
+from .pipeline import Pipeline, Progress, dry_run, make_source
 
 log = get_logger("application")
 

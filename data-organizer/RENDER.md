@@ -1,3 +1,11 @@
+## Document workflow update · 19 November 2026
+
+Saved uploads now have Preview, Review and Delete controls together. Review defaults to all uploaded files and includes the original-file preview. Deletion requires admin access and confirmation, removes related catalogue/import rows, and keeps source archives and Drive originals.
+
+Search all includes uploaded-file text/OCR, saved purchase invoices, all saved invoice worksheets, indexed Drive rows and approved catalogue records. Scans use Tesseract. Missing engines, failed OCR and extraction limits remain visible as issues. Start/Resume the Drive library to retry older OCR-pending or partial sources after this update; deployment does not automatically process the collection. OCR text is unverified source text and does not approve products or train a model.
+
+Served invoice sheets offer sorting by any original column, including numeric values and dates. Original order remains the default, and original Excel downloads are unchanged. Duplicate detection flags repeated raw records without making them inactive.
+
 ## Single administrator login
 
 The starting page uses ADMIN_EMAIL and ADMIN_PASSWORD from Render private environment settings. Only this administrator can change shared data. Viewers can browse, search and download without the old Team password screen. See [ADMIN_ACCESS.md](ADMIN_ACCESS.md) for session expiry and recovery. Keep one ASGI worker for the in-memory admin sessions.
