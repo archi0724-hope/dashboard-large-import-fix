@@ -63,6 +63,3 @@ def test_csv_upload_widget_accepts_and_saves_a_csv(tmp_path, monkeypatch):
     assert not page.exception and not page.error
     assert page.session_state['manual_catalogue_import_result']['added'] == 1
     assert Store(tmp_path).product_record_count(status='all') == 2
-
-
-pytestmark = pytest.mark.usefixtures("admin_ui")

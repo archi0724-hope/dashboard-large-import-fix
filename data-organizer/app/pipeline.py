@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import math
 import threading
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
@@ -17,7 +19,7 @@ from typing import Any, Iterator
 import pandas as pd
 
 from .cleaning.name_cleaner import NameCleaner
-from .cleaning.normalizer import Gazetteer, is_null_like
+from .cleaning.normalizer import Gazetteer, is_null_like, normalize_text
 from .cleaning.record_cleaner import RecordCleaner
 from .config import (
     ConfigError, RuntimeConfig, Settings, assert_safe_paths, effective_output_dir, parse_drive_folder_id,

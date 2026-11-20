@@ -29,6 +29,7 @@ class PdfReader(BaseReader):
             raise FileReadError(f"Cannot open PDF (corrupt or password-protected?): {type(exc).__name__}: {exc}") from exc
         scanned: list[int] = []
         ocr_done: list[int] = []
+        tables_total = 0
         with pdf:
             self.meta.update(pages=len(pdf.pages))
             for page_no, page in enumerate(pdf.pages, start=1):

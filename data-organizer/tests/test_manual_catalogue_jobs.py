@@ -134,6 +134,3 @@ def test_background_job_survives_page_reruns_without_false_interrupted_warning(t
         assert page.session_state['manual_catalogue_import_result']['added'] == 1
     finally:
         release.set()
-
-
-pytestmark = pytest.mark.usefixtures("admin_ui")

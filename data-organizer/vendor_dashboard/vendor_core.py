@@ -433,23 +433,23 @@ def build_checklist(vendors: pd.DataFrame, documents: pd.DataFrame) -> pd.DataFr
     columns = ["company_key", *id_column, "Company Name", *DOCUMENT_TYPES, "Available", "Missing", "Completion", "Files", "Needs review"]
     if vendors.empty:
         return pd.DataFrame(columns=columns)
-    grouped = {}
-    if not documents.empty:
-        for key, types, available, needs_review in documents[["company_key", "types", "available", "needs_review"]].itertuples(index=False, name=None):
-            if pd.isna(key):
-                continue
-            present, review, files = grouped.get(key, (set(), 0, 0))
-            if available:
-                present.update(types)
-            grouped[key] = (present, review + int(bool(needs_review or not available)), files + 1)
+    grouped = {key: group for key, group in documents.groupby("company_key")} if not documents.empty else {}
     rows = []
     for vendor in vendors.itertuples(index=False):
-        present, review, files = grouped.get(vendor.company_key, (set(), 0, 0))
+        group = grouped.get(vendor.company_key)
+        present: set[str] = set()
+        review = 0
+        if group is not None:
+            for document in group.itertuples(index=False):
+                if document.available:
+                    present.update(document.types)
+                if document.needs_review or not document.available:
+                    review += 1
         found = len(present.intersection(DOCUMENT_TYPES))
         row = {"company_key": vendor.company_key, "Company Name": vendor.company_name,
                      **{t: "Yes" if t in present else "No" for t in DOCUMENT_TYPES},
                      "Available": found, "Missing": len(DOCUMENT_TYPES) - found, "Completion": found / len(DOCUMENT_TYPES),
-                     "Files": files, "Needs review": review}
+                     "Files": len(group) if group is not None else 0, "Needs review": review}
         if "canonical_id" in vendors.columns:
             row["canonical_id"] = vendor.canonical_id
         rows.append(row)
@@ -534,10 +534,9 @@ def export_filename(company: str, suffix: str, extension: str) -> str:
     return f"{name}_{suffix}.{extension.lstrip('.')}"
 
 
-def dashboard_counts(vendors: pd.DataFrame, documents: pd.DataFrame, *, checklist: pd.DataFrame | None = None) -> dict:
+def dashboard_counts(vendors: pd.DataFrame, documents: pd.DataFrame) -> dict:
     """Global totals never change when a screen filter is applied."""
-    if checklist is None:
-        checklist = build_checklist(vendors, documents)
+    checklist = build_checklist(vendors, documents)
     vendor_keys = set(vendors.company_key.dropna().astype(str)) if "company_key" in vendors else set()
     document_keys = set(documents.loc[documents.company_key.notna() & documents.company_key.ne(""), "company_key"].astype(str)) if "company_key" in documents else set()
     return {

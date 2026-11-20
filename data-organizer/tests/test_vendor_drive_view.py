@@ -211,7 +211,7 @@ def test_startup_batches_missing_master_aliases_and_keeps_reviewed_assignments()
     assert rows[0][:3] == ('beta medical','beta medical','Beta Medical')
 
 
-def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeypatch, admin_ui):
+def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeypatch):
     import drive_view
     store, _, _ = shared
     monkeypatch.setenv('VENDOR_DATA_DIR',str(store.data_dir))
@@ -227,7 +227,7 @@ def test_catalogue_navigation_does_not_load_full_drive_inventory(shared, monkeyp
     assert not app.exception and not app.warning
     assert 'Drive catalogue and price rows' in [heading.value for heading in app.subheader]
     assert len(app.get('iframe')) == 1
-    assert app.file_uploader(key='catalogue_manual_workbook').allowed_type == ['.xlsx', '.csv']
+    assert app.file_uploader(key='catalogue_manual_workbook').allowed_type == ['.xlsx']
 
 
 def test_duplicate_drive_documents_merge_types_and_pending_verified_zip_copies(shared):
@@ -257,98 +257,3 @@ def test_confirmed_company_alias_is_not_an_extra_headcount(shared):
     assert vendors.company_name.tolist() == ['Alpha Medical']
     assert docs.company_name.tolist() == ['Alpha Medical']
     assert len(store.vendors()) == 2  # Original registry and provenance remain stored.
-
-
-def test_checklist_metadata_skips_catalogue_record_count(shared, monkeypatch):
-    store, inventory, _ = shared
-    def unexpected(*args, **kwargs):
-        raise AssertionError("Checklist must not count all catalogue rows")
-    monkeypatch.setattr(DriveIndex, "record_totals", unexpected)
-    result = inventory("references-only", store, include_record_totals=False)
-    assert result["source_rows"] is None
-    assert {entry["entry_key"] for entry in result["references"]} == {"archive", "alpha", "beta"}
-
-
-def test_vendor_renders_loading_state_and_navigation_before_metadata(shared, monkeypatch):
-    import streamlit as st
-    from unittest.mock import patch
-    from storage import Store
-    store, inventory, _ = shared
-    monkeypatch.setenv("VENDOR_DATA_DIR", str(store.data_dir))
-    monkeypatch.setenv("DATABASE_URL", "")
-    original_vendors = Store.vendors
-    def unexpected(*args, **kwargs):
-        raise AssertionError("Company page must not read archive, review or catalogue totals")
-    monkeypatch.setattr(Store, "upload_archives", unexpected)
-    monkeypatch.setattr(Store, "review_queue", unexpected)
-    monkeypatch.setattr(DriveIndex, "record_totals", unexpected)
-    inventory.clear()
-    with patch("streamlit.empty", wraps=st.empty) as status, patch("streamlit.radio", wraps=st.radio) as navigation:
-        def vendors_after_visible_ui(self):
-            assert status.called, "Show loading status before waiting on storage"
-            assert navigation.called, "Show navigation before waiting on metadata"
-            return original_vendors(self)
-        monkeypatch.setattr(Store, "vendors", vendors_after_visible_ui)
-        page = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py")).run(timeout=30)
-    assert not page.exception
-    assert "Find a company" in [heading.value for heading in page.subheader]
-
-
-def test_metadata_failure_shows_retry_instead_of_blank_screen(shared, monkeypatch):
-    from storage import Store
-    store, _, _ = shared
-    monkeypatch.setenv("VENDOR_DATA_DIR", str(store.data_dir))
-    monkeypatch.setenv("DATABASE_URL", "")
-    def unavailable(self):
-        raise OSError("synthetic connection failure")
-    monkeypatch.setattr(Store, "vendors", unavailable)
-    page = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py")).run(timeout=30)
-    assert not page.exception
-    assert any("Saved data could not be loaded" in error.value for error in page.error)
-    assert page.button(key="retry_workspace_load")
-
-
-def test_reference_only_load_does_not_classify_every_document(shared, monkeypatch):
-    import drive_view
-    store, inventory, _ = shared
-    def unexpected(*args):
-        raise AssertionError("Reference loading must leave classification to the single company projection")
-    drive_view.document_decision.cache_clear()
-    monkeypatch.setattr(drive_view, "classify", unexpected)
-    result = inventory("no-duplicate-classification", store, include_record_totals=False)
-    assert len(result["references"]) == 3
-
-
-def test_counts_reuse_prepared_checklist(shared, monkeypatch):
-    import vendor_core
-    store, _, _ = shared
-    vendors, docs = store.vendors(), store.documents()
-    checklist = vendor_core.build_checklist(vendors, docs)
-    expected = vendor_core.dashboard_counts(vendors, docs)
-    def unexpected(*args):
-        raise AssertionError("Counts must not rebuild an already prepared checklist")
-    monkeypatch.setattr(vendor_core, "build_checklist", unexpected)
-    assert vendor_core.dashboard_counts(vendors, docs, checklist=checklist) == expected
-
-
-def test_search_reuses_snapshot_and_refresh_includes_new_uploads(shared, monkeypatch):
-    import pandas as pd
-    from storage import Store
-    store, _, _ = shared
-    monkeypatch.setenv("VENDOR_DATA_DIR", str(store.data_dir))
-    monkeypatch.setenv("DATABASE_URL", "")
-    original = Store.vendors
-    calls = []
-    def tracked(self):
-        calls.append(True)
-        return original(self)
-    monkeypatch.setattr(Store, "vendors", tracked)
-    page = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "vendor_dashboard" / "app.py")).run(timeout=30)
-    assert not page.exception
-    before = len(calls)
-    page.text_input(key="company_search").set_value("Alpha").run(timeout=30)
-    assert not page.exception and len(calls) == before
-    store.upsert_vendors(pd.DataFrame({"company_name":["Recently Uploaded Medical"]}))
-    page.button(key="refresh_shared_companies").click().run(timeout=30)
-    assert not page.exception and len(calls) > before
-    assert {metric.label:metric.value for metric in page.metric}["Vendor headcount"] == "3"

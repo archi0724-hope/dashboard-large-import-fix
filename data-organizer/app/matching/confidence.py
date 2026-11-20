@@ -68,7 +68,7 @@ class RecordFeatures:
         return self.forms.normalized
 
     @classmethod
-    def from_row(cls, row: dict[str, Any], forms: NameForms) -> RecordFeatures:
+    def from_row(cls, row: dict[str, Any], forms: NameForms) -> "RecordFeatures":
         phones = frozenset(json.loads(row.get("phones_all") or "[]"))
         emails = frozenset(json.loads(row.get("emails_all") or "[]"))
         domains = {d for d in (row.get("website_domain") or "",) if d and d not in GENERIC_WEB_DOMAINS}

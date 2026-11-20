@@ -18,7 +18,8 @@ import zipfile
 import shutil
 
 import pandas as pd
-from vendor_core import (Decision, classify, clean_company, company_key, file_basename, export_filename, normalize_document_types)
+from vendor_core import (Decision, classify, clean_company, company_key, file_basename, natural_key,
+                          export_filename, normalize_document_types, supporting_category)
 
 DOC_COLUMNS = ["id", "company_key", "company_name", "types_json", "filename", "original_path", "stored_path", "file_hash", "uploaded_at", "source_batch", "handover", "method", "reason", "reviewed", "size_bytes"]
 PRODUCT_COLUMNS = ["id", "document_id", "company_key", "company_name", "record_type", "product_name", "sku", "description", "unit", "price", "mrp", "discount", "gst", "currency", "brand", "product_category", "specification", "pack_size", "moq", "availability", "source_file", "source_sheet", "source_page", "source_row", "image_reference", "extraction_confidence", "record_hash", "extracted_at"]
@@ -679,6 +680,7 @@ class Store:
         than vendor names, so recovery deliberately trusts only a filename's
         clear vendor prefix. Ambiguous files remain unassigned for review.
         """
+        placeholder_key = company_key(placeholder)
         changed = unresolved = 0
         with self.connection() as db:
             rows = [dict(row) for row in db.execute(
@@ -739,7 +741,7 @@ class Store:
 
     def company_zip(self, company: str, docs: pd.DataFrame) -> bytes:
         """Enforce company isolation even if the caller passes the full register."""
-        from exports import workbook_bytes
+        from exports import workbook_bytes, csv_bytes
         from vendor_core import build_checklist, DOCUMENT_TYPES
         docs = docs[docs.company_key == company_key(company)].copy()
         output = BytesIO()

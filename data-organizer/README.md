@@ -1,5 +1,3 @@
-For the single administrator login and viewer access, see [ADMIN_ACCESS.md](ADMIN_ACCESS.md).
-
 # Data Organizer
 
 This workspace now includes the HospKart BD chatbot connected to the Vendor
@@ -32,8 +30,6 @@ at any point and it picks up exactly where it left off; adding new files never r
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env                 # optional - sensible defaults work out of the box
-# Optional: set DATABASE_URL in .env to a Neon/PostgreSQL URI for shared Vendor storage.
-# Organizer processing data and uploaded source files remain local.
 
 # Safe first run: generates ~11 synthetic sample files (Excel, .xls, CSV, PDF, Word, text, a scanned
 # image, a corrupt file...) with deliberately messy name variants, runs the full pipeline on them,

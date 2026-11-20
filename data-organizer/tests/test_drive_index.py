@@ -306,7 +306,7 @@ def test_pdf_text_and_image_only_pages_use_installed_parser(tmp_path):
     assert rows[1]['kind'] == 'needs_ocr' and rows[1]['page'] == 2
 
 
-def test_index_api_allows_viewers_and_admin_can_pause(index,monkeypatch,admin_api):
+def test_index_api_requires_auth_before_opening_storage(index,monkeypatch):
     from fastapi.testclient import TestClient
 
     from app import main
@@ -315,7 +315,7 @@ def test_index_api_allows_viewers_and_admin_can_pause(index,monkeypatch,admin_ap
     monkeypatch.setattr(index_api,'get_settings',lambda:settings)
     monkeypatch.setattr(index_api,'library',lambda:index)
     client = TestClient(main.app)
-    assert client.get('/api/drive-index/search').status_code == 200
+    assert client.get('/api/drive-index/search').status_code == 401
     response = client.get('/api/drive-index/status',headers={'X-Token':'synthetic-drive-token'})
     assert response.status_code == 200 and response.json()['records'] == 0
     monkeypatch.setenv('APP_PASSWORD','synthetic-library-password')
@@ -350,7 +350,7 @@ def test_cloud_startup_does_not_reparse_stored_documents_or_publish_pending_rows
     store.initialize()
 
 
-def test_storage_pause_is_reported_and_resume_does_not_restart_a_full_database(index, monkeypatch, admin_api):
+def test_storage_pause_is_reported_and_resume_does_not_restart_a_full_database(index, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app import main

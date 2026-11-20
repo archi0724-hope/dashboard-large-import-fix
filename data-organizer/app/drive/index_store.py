@@ -26,21 +26,10 @@ def record_identity(payload, company, entry, content_hash, record_key):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-DRIVE_SCHEMA_COLUMNS = {
-    "vdd_drive_sources": set("key value".split()),
-    "vdd_drive_entries": set("entry_key folder_id drive_id source_name member_path size_bytes version status error content_hash record_count updated_at".split()),
-    "vdd_drive_records": set("record_key folder_id entry_key kind company product search_text record_json dedup_identity dedup_owner".split()),
-    "vdd_drive_jobs": set("folder_id status message updated_at owner".split()),
-}
-DRIVE_SCHEMA_INDEXES = {"vdd_drive_folder_status", "vdd_drive_records_folder", "vdd_drive_records_entry"}
-
-
 class DriveIndex:
     def __init__(self, store):
         self.store = store
         self._totals_cache = {}
-        if store.cloud and self._cloud_schema_ready():
-            return
         with store.connection() as db:
             db.execute('CREATE TABLE IF NOT EXISTS vdd_drive_sources (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
             db.execute('''CREATE TABLE IF NOT EXISTS vdd_drive_entries (
@@ -71,24 +60,6 @@ class DriveIndex:
                 updated_at TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '')''')
             if not store.cloud:
                 self.cache_record_identities(db)
-
-    def _cloud_schema_ready(self):
-        with self.store.connection() as db:
-            placeholders = ",".join("?" for _ in DRIVE_SCHEMA_COLUMNS)
-            rows = db.execute(
-                "SELECT table_name,column_name FROM information_schema.columns "
-                "WHERE table_schema=current_schema() AND table_name IN (" + placeholders + ")",
-                tuple(DRIVE_SCHEMA_COLUMNS),
-            ).fetchall()
-            columns = {}
-            for row in rows:
-                columns.setdefault(row["table_name"], set()).add(row["column_name"])
-            if any(not expected.issubset(columns.get(table, set())) for table, expected in DRIVE_SCHEMA_COLUMNS.items()):
-                return False
-            indexes = {row["indexname"] for row in db.execute(
-                "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema()"
-            ).fetchall()}
-            return DRIVE_SCHEMA_INDEXES.issubset(indexes)
 
     def source_selection(self):
         with self.store.connection() as db:
@@ -174,7 +145,7 @@ class DriveIndex:
     def pending(self, folder):
         with self.store.connection() as db:
             return [dict(row) for row in db.execute('''SELECT * FROM vdd_drive_entries
-                WHERE folder_id=? AND status IN ('pending','failed','reading','needs_ocr','partial')
+                WHERE folder_id=? AND status IN ('pending','failed','reading')
                 ORDER BY CASE WHEN status='failed' THEN 1 ELSE 0 END,
                          CASE WHEN member_path='' THEN 1 ELSE 0 END,drive_id,size_bytes,entry_key''', (folder,)).fetchall()]
 
