@@ -1395,7 +1395,7 @@ elif page == "Companies & documents":
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
                             preview_token = f"{category}_{doc.id}_{row_number}"
-                            if preview_col.button("👁", key=f"preview_{preview_token}", help="Preview this document before downloading."):
+                            if preview_col.button("Preview", key=f"preview_{preview_token}", help="Preview this document before downloading."):
                                 st.session_state["preview_document_id"] = preview_token
                             if st.session_state.get("preview_document_id") == preview_token:
                                 with st.container(border=True):
@@ -1421,7 +1421,7 @@ elif page == "Companies & documents":
                         if payload is not None:
                             preview_token = f"{category}_{doc.id}_{row_number}"
                             preview_key = f"preview_{preview_token}"
-                            if preview_col.button("👁", key=preview_key, help="Preview this document before downloading."):
+                            if preview_col.button("Preview", key=preview_key, help="Preview this document before downloading."):
                                 st.session_state["preview_document_id"] = preview_token
                             if st.session_state.get("preview_document_id") == preview_token:
                                 with st.container(border=True):
