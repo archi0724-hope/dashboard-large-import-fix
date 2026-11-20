@@ -119,6 +119,26 @@ def test_changed_version_removes_stale_rows_and_resume_deduplicates(index):
     assert index.search('folder123456')['total'] == 0
 
 
+def test_deleted_drive_file_stays_deleted_if_an_active_indexer_finishes(index):
+    archive = {
+        'entry_key': 'archive-key', 'folder_id': 'folder123456', 'drive_id': 'archive-file-123',
+        'source_name': 'vendors.zip', 'member_path': '', 'size_bytes': 100, 'version': 'v1',
+        'status': 'container',
+    }
+    member = {**archive, 'entry_key': 'member-key', 'member_path': 'Alpha/GST.txt',
+              'version': 'crc:size:compressed', 'status': 'indexed'}
+    index.discover([archive, member])
+    index.save_records(member, [{'company': 'Alpha', 'product': '', 'kind': 'document'}])
+
+    assert index.remove_drive_file('archive-file-123') == 2
+    index.mark('member-key', 'indexed', '', 'content-hash', 1)
+
+    assert index.existing('archive-key')['status'] == 'deleted'
+    assert index.existing('member-key')['status'] == 'deleted'
+    assert index.existing('member-key')['record_count'] == 0
+    assert index.search('folder123456')['total'] == 0
+
+
 def test_product_search_labels_existing_rows_without_reindexing_or_mutating_source(index):
     import json
 

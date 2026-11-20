@@ -22,17 +22,14 @@ def company_source_path(path):
 @st.cache_data(ttl=20, max_entries=8, show_spinner=False)
 def inventory(identity, _store):
     index = DriveIndex(_store)
-    selected = index.source_selection()
-    # Older indexes predate the saved source-selection setting.
     with _store.connection() as db:
-        if selected:
-            rows = db.execute("SELECT * FROM vdd_drive_entries WHERE folder_id=?", (selected['scope'],)).fetchall()
-        else:
-            rows = db.execute("SELECT * FROM vdd_drive_entries").fetchall()
-    total = index.record_totals(selected['scope'] if selected else None)['unique_records']
+        rows = db.execute("SELECT * FROM vdd_drive_entries WHERE status<>'deleted'").fetchall()
+    total = index.record_totals()['unique_records']
     result = []
     for row in rows:
         item = dict(row)
+        if item.get('status') == 'deleted':
+            continue
         path = item['member_path'] or item['source_name']
         if not item['member_path'] and path.lower().endswith('.zip'):
             continue  # Archive containers are not additional vendor documents.
@@ -150,16 +147,7 @@ def combine_company_documents(vendors, documents, references, aliases=None):
 @st.cache_data(ttl=20, max_entries=24, show_spinner=False)
 def source_rows(identity, query, offset, _store):
     index = DriveIndex(_store)
-    selected = index.source_selection()
-    if not selected:
-        with _store.connection() as db:
-            scope = db.execute('SELECT folder_id FROM vdd_drive_entries ORDER BY folder_id LIMIT 1').fetchone()
-        if not scope:
-            return {'total': 0, 'items': []}
-        folder = scope['folder_id']
-    else:
-        folder = selected['scope']
-    return index.search(folder, query, offset=offset)
+    return index.search(None, query, offset=offset)
 
 
 @st.fragment

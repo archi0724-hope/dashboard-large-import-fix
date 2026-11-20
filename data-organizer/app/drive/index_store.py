@@ -93,7 +93,7 @@ class DriveIndex:
                     (entry_key,folder_id,drive_id,source_name,member_path,size_bytes,version,status,error,updated_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(entry_key) DO UPDATE SET
                     size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE vdd_drive_entries.size_bytes END,source_name=excluded.source_name,
-                    status=CASE WHEN vdd_drive_entries.version=excluded.version THEN vdd_drive_entries.status ELSE excluded.status END,
+                    status=CASE WHEN vdd_drive_entries.status='deleted' OR vdd_drive_entries.version=excluded.version THEN vdd_drive_entries.status ELSE excluded.status END,
                     error=CASE WHEN vdd_drive_entries.version=excluded.version THEN vdd_drive_entries.error ELSE excluded.error END,
                     record_count=CASE WHEN vdd_drive_entries.version=excluded.version THEN vdd_drive_entries.record_count ELSE 0 END,
                     version=excluded.version,updated_at=excluded.updated_at''',
@@ -103,12 +103,13 @@ class DriveIndex:
         self._totals_cache.clear()
         with self.store.connection() as db:
             if records is None:
-                db.execute('UPDATE vdd_drive_entries SET status=?,error=?,updated_at=? WHERE entry_key=?',
+                db.execute("UPDATE vdd_drive_entries SET status=?,error=?,updated_at=? WHERE entry_key=? AND status<>'deleted'",
                            (status,error[:1000],now(),key))
             else:
-                db.execute('''UPDATE vdd_drive_entries SET status=?,error=?,content_hash=?,record_count=?,updated_at=?
-                              WHERE entry_key=?''', (status,error[:1000],content_hash,records,now(),key))
-                self.cache_record_identities(db,key)
+                updated = db.execute('''UPDATE vdd_drive_entries SET status=?,error=?,content_hash=?,record_count=?,updated_at=?
+                              WHERE entry_key=? AND status<>'deleted' ''', (status,error[:1000],content_hash,records,now(),key))
+                if updated.rowcount:
+                    self.cache_record_identities(db,key)
 
     def reset_records(self, key):
         self._totals_cache.clear()
@@ -122,6 +123,10 @@ class DriveIndex:
     def save_records(self, entry, records):
         self._totals_cache.clear()
         with self.store.connection() as db:
+            lock = ' FOR UPDATE' if self.store.cloud else ''
+            current = db.execute('SELECT status FROM vdd_drive_entries WHERE entry_key=?'+lock, (entry['entry_key'],)).fetchone()
+            if current and current['status'] == 'deleted':
+                return
             params = []
             for record in records:
                 payload = json.dumps(record, ensure_ascii=False, sort_keys=True, default=str)
@@ -136,6 +141,30 @@ class DriveIndex:
                     VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(record_key) DO NOTHING''',
                     params)
             self.cache_record_identities(db,entry['entry_key'])
+
+    def remove_entry(self, key):
+        """Remove a dashboard reference and extracted rows; keep the Drive original."""
+        with self.store.connection() as db:
+            lock = ' FOR UPDATE' if self.store.cloud else ''
+            row = db.execute('SELECT entry_key FROM vdd_drive_entries WHERE entry_key=?'+lock, (key,)).fetchone()
+            if not row:
+                raise ValueError('Drive document not found.')
+            db.execute("UPDATE vdd_drive_entries SET status='deleted',record_count=0,updated_at=? WHERE entry_key=?", (now(),key))
+            db.execute('DELETE FROM vdd_drive_records WHERE entry_key=?', (key,))
+        self._totals_cache.clear()
+
+    def remove_drive_file(self, drive_id):
+        """Remove every indexed reference to a Drive original after it is deleted."""
+        with self.store.connection() as db:
+            lock = ' FOR UPDATE' if self.store.cloud else ''
+            rows = db.execute('SELECT entry_key FROM vdd_drive_entries WHERE drive_id=?'+lock, (drive_id,)).fetchall()
+            if rows:
+                db.execute("UPDATE vdd_drive_entries SET status='deleted',record_count=0,updated_at=? WHERE drive_id=?",
+                           (now(),drive_id))
+                db.execute('DELETE FROM vdd_drive_records WHERE entry_key IN (SELECT entry_key FROM vdd_drive_entries WHERE drive_id=?)',
+                           (drive_id,))
+        self._totals_cache.clear()
+        return len(rows)
 
     def existing(self, key):
         with self.store.connection() as db:
@@ -220,8 +249,13 @@ class DriveIndex:
             raise ValueError('Unsupported record kind.')
         table = 'vdd_drive_entries' if entries else 'vdd_drive_records'
         fields = "lower(source_name || ' ' || member_path || ' ' || status || ' ' || error)" if entries else 'search_text'
-        params = (folder,'%'+query.casefold()[:200]+'%')
-        condition = 'folder_id=? AND '+fields+' LIKE ?'
+        params = ('%'+query.casefold()[:200]+'%',)
+        condition = fields+' LIKE ?'
+        if folder is not None:
+            condition = 'folder_id=? AND '+condition
+            params = (folder,*params)
+        if entries:
+            condition += " AND status<>'deleted'"
         if kind and not entries:
             condition += ' AND kind=?'
             params += (kind,)
@@ -233,7 +267,8 @@ class DriveIndex:
                     (*params,min(100,limit),max(0,offset))).fetchall()
             else:
                 identity = self.identity_expression(db)
-                condition = 'r.'+condition.replace(' AND kind=', ' AND r.kind=')
+                condition = condition.replace('folder_id=', 'r.folder_id=').replace('search_text', 'r.search_text').replace(' AND kind=', ' AND r.kind=')
+                condition += " AND coalesce(e.status,'')<>'deleted'"
                 groups = f'''SELECT min(r.record_key) AS record_key,count(*) AS copies
                     FROM vdd_drive_records r LEFT JOIN vdd_drive_entries e ON e.entry_key=r.entry_key
                     WHERE {condition} GROUP BY {identity}'''

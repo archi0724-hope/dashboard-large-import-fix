@@ -1,6 +1,6 @@
-"""Google Drive source (read-only).
+"""Google Drive source.
 
-* scope is ``drive.readonly``: the application can list and download, it cannot modify, move or delete anything
+* scope is ``drive``: the authorized account can list, download and delete Drive files
 * auth: a service account (share the folder with its e-mail) OR an OAuth client (interactive consent once,
   token cached in ``secrets/token.json``). Credentials live in ``secrets/`` / the environment only - never in
   the database, the logs, the API responses or the exports
@@ -24,7 +24,7 @@ from ..ingestion.registry import SUPPORTED_EXTENSIONS
 from ..logging_setup import audit, get_logger
 
 log = get_logger("extraction")
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 FOLDER = "application/vnd.google-apps.folder"
 SHORTCUT = "application/vnd.google-apps.shortcut"
 EXPORTS = {
@@ -66,6 +66,10 @@ def build_service(settings: Settings):
             raise ConfigError(
                 "Google Drive is not authorised yet. Run `python -m app drive-auth` once (needs secrets/client_secret.json), "
                 "or set GOOGLE_SERVICE_ACCOUNT_FILE and share the folder with the service account."
+            )
+        if not creds.has_scopes(SCOPES):
+            raise ConfigError(
+                "Google Drive needs read/write authorization. Run `python -m app drive-auth` again and authorize the full Drive scope."
             )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
@@ -109,6 +113,115 @@ def drive_status(settings: Settings, cfg: RuntimeConfig) -> dict[str, Any]:
 def has_credentials(settings: Settings) -> bool:
     sa = settings.google_service_account_file
     return bool(sa and Path(sa).is_file()) or settings.google_token_file.is_file()
+
+
+def list_account_files(settings: Settings) -> list[dict[str, Any]]:
+    """List files accessible in My Drive, Shared with me, and shared drives."""
+    service = build_service(settings)
+    items = []
+    token = None
+    while True:
+        response = service.files().list(
+            q="trashed = false",
+            corpora="user",
+            pageSize=1000,
+            pageToken=token,
+            fields="nextPageToken,files(id,name,mimeType,size,modifiedTime,parents,driveId,shortcutDetails(targetId,targetMimeType))",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute(num_retries=5)
+        items.extend(response.get("files", []))
+        token = response.get("nextPageToken")
+        if not token:
+            break
+    drive_token = None
+    drive_names = {}
+    while True:
+        drive_response = service.drives().list(
+            pageSize=100,
+            pageToken=drive_token,
+            fields="nextPageToken,drives(id,name)",
+        ).execute(num_retries=5)
+        for drive in drive_response.get("drives", []):
+            drive_id = drive["id"]
+            drive_names[drive_id] = drive["name"]
+            token = None
+            while True:
+                response = service.files().list(
+                    q="trashed = false",
+                    corpora="drive",
+                    driveId=drive_id,
+                    pageSize=1000,
+                    pageToken=token,
+                    fields="nextPageToken,files(id,name,mimeType,size,modifiedTime,parents,driveId,shortcutDetails(targetId,targetMimeType))",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute(num_retries=5)
+                items.extend(response.get("files", []))
+                token = response.get("nextPageToken")
+                if not token:
+                    break
+        drive_token = drive_response.get("nextPageToken")
+        if not drive_token:
+            break
+
+    by_id = {item["id"]: item for item in items}
+    path_cache = {}
+
+    def folder_path(folder_id, visited=None):
+        if folder_id in path_cache:
+            return path_cache[folder_id]
+        if folder_id == "root":
+            return ""
+        if folder_id in drive_names:
+            return drive_names[folder_id] + "/"
+        visited = visited or set()
+        if folder_id in visited:
+            return ""
+        visited.add(folder_id)
+        folder = by_id.get(folder_id)
+        if folder is None:
+            return "Shared with me/"
+        parents = folder.get("parents") or []
+        prefix = folder_path(parents[0], visited) if parents else ""
+        path = prefix + str(folder.get("name", "")) + "/"
+        path_cache[folder_id] = path
+        return path
+
+    files = []
+    for item in by_id.values():
+        name = str(item.get("name", ""))
+        if is_ignorable(name) or item.get("mimeType") == FOLDER:
+            continue
+        mime = item.get("mimeType", "")
+        file_id = item["id"]
+        preview_id = file_id
+        is_shortcut = mime == SHORTCUT
+        if is_shortcut:
+            details = item.get("shortcutDetails") or {}
+            preview_id = details.get("targetId", "")
+            mime = details.get("targetMimeType", "")
+            if not preview_id:
+                continue
+        extension = Path(name).suffix.lower()
+        if mime in EXPORTS and not name.lower().endswith(EXPORTS[mime][0]):
+            name += EXPORTS[mime][0]
+        elif not extension:
+            name += MIME_EXT.get(mime, "")
+        parent_ids = item.get("parents") or []
+        prefix = folder_path(parent_ids[0]) if parent_ids else ""
+        files.append({
+            "id": file_id,
+            "preview_id": preview_id,
+            "name": name,
+            "path": prefix + name,
+            "mime_type": mime,
+            "size_bytes": int(item.get("size") or 0),
+            "modified": item.get("modifiedTime", ""),
+            "is_shortcut": is_shortcut,
+            "url": f"https://drive.google.com/file/d/{preview_id}/view",
+        })
+    return sorted(files, key=lambda item: item["path"].casefold())
 
 
 class DriveSource:

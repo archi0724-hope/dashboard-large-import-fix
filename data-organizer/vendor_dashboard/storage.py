@@ -1475,6 +1475,29 @@ class Store:
         path = self.safe_path(row["stored_path"])
         return path.read_bytes() if path and path.is_file() else None
 
+    def delete_document(self, document_id: int):
+        """Delete one stored document and its derived catalogue rows."""
+        document_id = int(document_id)
+        with self.connection() as db:
+            row = db.execute('SELECT * FROM vdd_documents WHERE id=?', (document_id,)).fetchone()
+            if row is None:
+                raise ValueError('Document not found.')
+            # Manual catalogue companies can share one original byte copy.
+            if self.cloud and row['payload'] is not None:
+                db.execute('UPDATE vdd_documents SET payload=? WHERE id=(SELECT min(id) FROM vdd_documents WHERE file_hash=? AND id<>?) AND payload IS NULL',
+                           (row['payload'],row['file_hash'],document_id))
+            db.execute('DELETE FROM vdd_product_import_rows WHERE import_id IN (SELECT id FROM vdd_product_imports WHERE document_id=?)', (document_id,))
+            db.execute('DELETE FROM vdd_product_imports WHERE document_id=?', (document_id,))
+            db.execute('DELETE FROM vdd_price_history WHERE product_record_id IN (SELECT id FROM vdd_product_records WHERE document_id=?)', (document_id,))
+            db.execute('DELETE FROM vdd_product_records WHERE document_id=?', (document_id,))
+            db.execute('DELETE FROM vdd_documents WHERE id=?', (document_id,))
+            shared = db.execute('SELECT id FROM vdd_documents WHERE stored_path=? LIMIT 1', (row['stored_path'],)).fetchone()
+            db.execute('INSERT INTO vdd_audit VALUES(?,?,?)', (now(),'Document deleted',json.dumps({'id':document_id,'filename':row['filename']})))
+        if not self.cloud and not shared:
+            path = self.safe_path(row['stored_path'])
+            if path and path.is_relative_to(self.files_dir.resolve()):
+                path.unlink(missing_ok=True)
+
     def correct_document(self, document_id: int, company: str, types: list[str], note: str = ""):
         from vendor_core import DOCUMENT_TYPES
         if any(t not in DOCUMENT_TYPES for t in types):

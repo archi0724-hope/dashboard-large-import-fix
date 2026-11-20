@@ -28,6 +28,8 @@ class FakeFiles:
         parent = q.split("'")[1]
         self.calls.append(parent)
         return FakeReq({"files": self.tree.get(parent, [])})
+    def get(self, **kw):
+        return FakeReq({})
 
 
 class FakeService:
@@ -51,8 +53,58 @@ def test_drive_walk_keeps_folders_handles_docs_and_shortcut_loops(settings):
     assert all(f.file_key.startswith("drive:") and f.supported for f in files)
 
 
-def test_drive_source_is_readonly_scope():
+def test_drive_source_requires_write_scope_for_explicit_vendor_deletes():
     from app.drive.google_drive import SCOPES
 
-    assert SCOPES == ["https://www.googleapis.com/auth/drive.readonly"]
+    assert SCOPES == ["https://www.googleapis.com/auth/drive"]
+
+
+def test_account_file_browser_lists_drive_recursively_and_keeps_shortcut_targets(settings, monkeypatch):
+    from app import drive
+
+    class Request:
+        def __init__(self, value):
+            self.value = value
+        def execute(self, num_retries=0):
+            return self.value
+
+    class Files:
+        items = [
+            {"id": "folder123456", "name": "Vendor", "mimeType": "application/vnd.google-apps.folder",
+             "parents": ["root"]},
+            {"id": "direct-file-123", "name": "GST.txt", "mimeType": "text/plain", "size": "20",
+             "parents": ["root"]},
+            {"id": "shortcut-file-123", "name": "GST link.txt", "mimeType": "application/vnd.google-apps.shortcut",
+             "shortcutDetails": {"targetId": "direct-file-123", "targetMimeType": "text/plain"},
+             "parents": ["root"]},
+            {"id": "nested-file-123", "name": "Price List.xlsx",
+             "mimeType": "application/vnd.google-apps.spreadsheet", "size": "40",
+             "parents": ["folder123456"]},
+            {"id": "team-file-123", "name": "Agreement.pdf", "mimeType": "application/pdf", "size": "60",
+             "parents": ["team-drive-123"]},
+        ]
+
+        def list(self, **kwargs):
+            selected = self.items if kwargs.get("corpora") == "user" else [
+                item for item in self.items if item["id"] == "team-file-123"
+            ]
+            return Request({"files": selected})
+
+    class Service:
+        def files(self):
+            return Files()
+        def drives(self):
+            return self
+        def list(self, **kwargs):
+            return Request({"drives": [{"id": "team-drive-123", "name": "Team Drive"}]})
+
+    monkeypatch.setattr(drive.google_drive, "build_service", lambda _settings: Service())
+    files = drive.google_drive.list_account_files(settings)
+
+    assert [item["path"] for item in files] == [
+        "GST link.txt", "GST.txt", "Team Drive/Agreement.pdf", "Vendor/Price List.xlsx",
+    ]
+    shortcut = next(item for item in files if item["is_shortcut"])
+    assert shortcut["id"] == "shortcut-file-123"
+    assert shortcut["preview_id"] == "direct-file-123"
 

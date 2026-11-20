@@ -222,10 +222,10 @@ access; public mode lists them as unsupported rather than silently omitting them
 
 ## Connect one private Google Drive folder
 
-The app already supports read-only private Drive folder scans. The Drive home
+The app supports authenticated Drive scans. The Drive home
 page and a Google account email do not identify or authorize a folder.
 
-For a server deployment, use the existing service-account option:
+For read-only folder indexing, use the existing service-account option:
 
 1. In a Google Cloud project you control, enable Google Drive API and create a
    service account with a JSON key. Keep the key private.
@@ -241,16 +241,22 @@ For a server deployment, use the existing service-account option:
 5. Open Organizer, enter your private `DASHBOARD_TOKEN`, choose Google Drive on
    **Source & files**, and scan the folder. Use a small synthetic folder first.
 
-The code requests `drive.readonly`. It reads source files without moving,
-modifying or deleting them. Its cached copies and generated folders live on the
-server. It does not write organized results back to Google Drive.
-Everyone with the dashboard token shares this Drive connection.
+OAuth requests the full Drive scope. Use OAuth, not the Viewer service-account
+setup, when the Vendor dashboard needs to browse a personal account or delete
+originals. The authorized account must have permission to delete the selected
+file. The Organizer pipeline reads source files without changing them, while
+the Vendor dashboard only deletes an original after a separate confirmation.
+Everyone with the dashboard password shares this Drive connection.
 
-OAuth is also supported: create a Desktop OAuth client and run
-`python -m app drive-auth` locally, authorizing the intended account once.
-Treat the generated token JSON as a secret. Configure `GOOGLE_TOKEN_FILE` to a
-writable private token file; the app refreshes and writes this file, so a
-read-only secret mount cannot be used directly for OAuth token persistence.
+OAuth is also supported: create a Google OAuth client and run
+`python -m app drive-auth` locally, authorizing the intended account once. The
+token now requests full Drive access; reauthorize an existing read-only token.
+Treat the generated token JSON as a write-enabled secret. Configure
+`GOOGLE_TOKEN_FILE` to a writable private token file; the app refreshes and
+writes this file, so a read-only secret mount cannot be used directly for OAuth
+token persistence. OAuth browsing covers files accessible to that account,
+including Shared with me and shared drives. A service account only sees files
+explicitly shared with it.
 
 Live Drive access cannot be verified until the actual folder is shared and
 credentials are configured. Connection in a chat does not connect the deployed

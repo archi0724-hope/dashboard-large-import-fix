@@ -25,6 +25,10 @@ import exports as exports_module
 import catalogue_jobs
 from import_service import import_documents
 from drive_import import DiskUpload
+from document_actions import (
+    delete_drive_original, drive_account_file_bytes, drive_account_files,
+    preview_bytes, remove_document,
+)
 import storage as storage_module
 from vendor_core import (ALLOWED_EXTENSIONS, DOCUMENT_TYPES, build_checklist, dashboard_counts,
                          documents_for_category, export_filename, filter_checklist, read_vendor_file, supporting_category)
@@ -245,6 +249,158 @@ def show_document_preview(filename: str, payload: bytes):
             st.info("This text file could not be decoded for inline preview.")
     else:
         st.info("Inline preview is not available for this format. Use Download file to open it.")
+
+
+def render_document_actions(doc, token):
+    preview_col, delete_col = st.columns(2)
+    if preview_col.button('Preview', key='preview_'+token, width='stretch'):
+        st.session_state['preview_document_id'] = token
+    if delete_col.button('Delete from dashboard', key='delete_'+token, width='stretch'):
+        st.session_state['delete_document_id'] = token
+    if st.session_state.get('delete_document_id') == token:
+        with st.container(border=True):
+            st.warning(f'Delete {doc.filename} from the dashboard? Extracted rows for this file will also be removed. This does not delete the Drive original or source ZIP.')
+            confirm, cancel = st.columns(2)
+            if confirm.button('Confirm delete', key='confirm_delete_'+token, type='primary'):
+                try:
+                    remove_document(store, doc.id)
+                except Exception:
+                    logging.getLogger(__name__).exception('Document deletion failed')
+                    st.error('Could not delete this document. Refresh and retry.')
+                else:
+                    document_bytes.clear()
+                    st.session_state.pop('delete_document_id', None)
+                    st.session_state.pop('preview_document_id', None)
+                    refresh('Deleted '+doc.filename+' from the dashboard.')
+            if cancel.button('Cancel', key='cancel_delete_'+token):
+                st.session_state.pop('delete_document_id', None)
+                st.rerun()
+    if st.session_state.get('preview_document_id') == token:
+        with st.container(border=True):
+            title, close = st.columns([5, 1])
+            title.markdown(f'**Preview: {doc.filename}**')
+            if close.button('Close', key='close_'+token):
+                st.session_state.pop('preview_document_id', None)
+                st.rerun()
+            try:
+                with st.spinner('Loading document preview…'):
+                    payload = preview_bytes(store, doc)
+            except Exception:
+                logging.getLogger(__name__).exception('Document preview failed')
+                st.warning('Preview could not be loaded. Open the original in Drive, check access, or retry.')
+                payload = None
+            if payload is not None:
+                show_document_preview(doc.filename, payload)
+                st.download_button('Download file', payload, doc.filename,
+                    mimetypes.guess_type(doc.filename)[0] or 'application/octet-stream', key='file_'+token)
+            else:
+                st.info('Original bytes unavailable for preview. Use the source link or re-upload the file.')
+
+
+def render_drive_account_browser(store):
+    st.subheader('All files in Google Drive')
+    try:
+        files = drive_account_files()
+    except Exception as error:
+        logging.getLogger(__name__).exception('Google Drive account inventory could not be loaded')
+        message = str(error) if isinstance(error, ValueError) else 'Google Drive could not be listed. Check the authorized account and Drive permissions.'
+        st.warning(message)
+        return
+    if files is None:
+        st.info('Configure Google Drive credentials for the account you want to browse. The shared-folder library below remains available.')
+        return
+    st.caption(f"{len(files):,} files found recursively in My Drive and shared drives accessible to the authorized account. Search and preview are read-only until you explicitly confirm a Drive deletion.")
+    query = st.text_input('Search all Google Drive files', key='drive_account_query')
+    if st.session_state.get('_drive_account_previous_query') != query:
+        st.session_state['_drive_account_previous_query'] = query
+        st.session_state['drive_account_page'] = 1
+    rows = [item for item in files if query.casefold() in (item['path'] + ' ' + item['name']).casefold()]
+    if not rows:
+        st.info('No Drive files match this search.')
+        return
+    page_count = max(1, (len(rows) + 99) // 100)
+    if st.session_state.get('drive_account_page', 1) > page_count:
+        st.session_state['drive_account_page'] = 1
+    page = st.number_input('Google Drive files page', min_value=1, max_value=page_count, key='drive_account_page')
+    start = (int(page) - 1) * 100
+    visible = rows[start:start + 100]
+    st.caption(f'{len(rows):,} matching files. Showing up to 100 per page.')
+    if visible:
+        display = pd.DataFrame([{
+            'File': item['name'],
+            'Drive path': item['path'],
+            'Type': item['mime_type'],
+            'Size (KB)': round(item['size_bytes'] / 1024, 1),
+            'Modified': item['modified'],
+            'Shortcut': 'Yes' if item['is_shortcut'] else '',
+            'Open in Drive': item['url'],
+        } for item in visible])
+        st.dataframe(display, hide_index=True, width='stretch',
+            column_config={'Open in Drive': st.column_config.LinkColumn('Open in Drive', display_text='Open')})
+        options = {item['id']: item for item in visible}
+        selected_id = st.selectbox(
+            'Choose a Drive file to preview or delete',
+            list(options),
+            format_func=lambda file_id: options[file_id]['path'],
+            key='drive_account_file_selection',
+        )
+        selected = options[selected_id]
+        preview_col, delete_col = st.columns(2)
+        if preview_col.button('Preview Drive file', key='preview_drive_original', width='stretch'):
+            st.session_state['drive_account_preview_id'] = selected_id
+        delete_label = 'Delete shortcut from Drive' if selected['is_shortcut'] else 'Delete from Google Drive'
+        if delete_col.button(delete_label, key='delete_drive_original', width='stretch'):
+            st.session_state['drive_account_delete_id'] = selected_id
+        if st.session_state.get('drive_account_delete_id') == selected_id:
+            if selected['is_shortcut']:
+                st.warning(f"Remove the shortcut {selected['name']} from Google Drive? Its original target will remain.")
+            else:
+                st.warning(f"Permanently delete {selected['name']} from Google Drive? This cannot be undone.")
+            confirmation = st.text_input(
+                f"Type DELETE {selected['name']} to confirm",
+                key='drive_account_delete_confirmation',
+            )
+            if st.button(
+                'Confirm permanent Drive delete',
+                key='confirm_drive_original_delete',
+                type='primary',
+                disabled=confirmation != f"DELETE {selected['name']}",
+            ):
+                try:
+                    delete_drive_original(store, selected['id'])
+                except Exception as error:
+                    logging.getLogger(__name__).exception('Google Drive original deletion failed')
+                    message = str(error) if isinstance(error, (ValueError, RuntimeError)) else 'Google Drive did not delete this file. Check that the authorized account can delete it.'
+                    st.error(message)
+                else:
+                    st.session_state.pop('drive_account_delete_id', None)
+                    st.session_state.pop('drive_account_preview_id', None)
+                    st.session_state.pop('drive_account_delete_confirmation', None)
+                    st.session_state.pop('drive_account_file_selection', None)
+                    refresh(f"Permanently deleted {selected['name']} from Google Drive.")
+            if st.button('Cancel Drive delete', key='cancel_drive_original_delete'):
+                st.session_state.pop('drive_account_delete_id', None)
+                st.session_state.pop('drive_account_delete_confirmation', None)
+                st.rerun()
+        if st.session_state.get('drive_account_preview_id') == selected_id:
+            st.markdown(f"#### Preview: {selected['name']}")
+            try:
+                with st.spinner('Loading file from Google Drive...'):
+                    payload = drive_account_file_bytes(
+                        selected['preview_id'], selected['mime_type'], selected['size_bytes'])
+            except Exception as error:
+                logging.getLogger(__name__).exception('Google Drive file preview failed')
+                message = str(error) if isinstance(error, ValueError) else 'Google Drive preview failed. Check file access and download quota.'
+                st.warning(message)
+            else:
+                show_document_preview(selected['name'], payload)
+                st.download_button(
+                    'Download Drive file',
+                    payload,
+                    selected['name'],
+                    mimetypes.guess_type(selected['name'])[0] or 'application/octet-stream',
+                    key='download_drive_original',
+                )
 
 
 VENDOR_AI_SUGGESTIONS = [
@@ -659,7 +815,7 @@ display_counts = {k: 0 for k in counts} if view_cleared else counts
 
 with st.sidebar:
     st.markdown('<div class="brand"><div class="brand-icon"><div><span>HOSP</span>kart.com</div></div><div><div class="brand-name"><span>HOSP</span>kart.com</div><div class="brand-sub">Vendor &amp; document operations</div></div></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
+    navigation = ["Companies & documents", "Catalogue & prices", "Google Drive files", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
     page_map = {item: item for item in navigation}
     captions = [
         "Yes / No checklist + company downloads",
@@ -691,8 +847,7 @@ header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25,
 header.title("Vendor Document Dashboard")
 from app.vendor_zip_upload import issue_upload_token
 st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD')))
-if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
-    st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
+st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
 upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
@@ -739,6 +894,27 @@ if page == 'Purchase Invoice':
     invoice_url = '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD'))
     st.link_button('Open purchase invoices in a new tab',invoice_url)
     st.iframe(invoice_url,height=1100)
+
+elif page == 'Google Drive files':
+    render_drive_account_browser(store)
+    from drive_view import render_drive_records
+    render_drive_records(store)
+    references = inventory(drive_identity, store)['references']
+    if references:
+        from types import SimpleNamespace
+        options = {item['entry_key']: item for item in references}
+        selected_file = st.selectbox('Choose any Drive file to preview or delete', list(options),
+            format_func=lambda key: options[key]['source_name'] + (' / '+options[key]['member_path'] if options[key]['member_path'] else ''),
+            key='drive_file_action_selection')
+        item = options[selected_file]
+        filename = Path(item['member_path'] or item['source_name']).name
+        st.link_button('Open original in Drive', 'https://drive.google.com/file/d/'+item['drive_id']+'/view')
+        if not item['member_path'] and filename.lower().endswith('.zip'):
+            st.info('Select a document inside this ZIP to preview or delete its dashboard reference. Open the archive in Drive to see the complete source.')
+        else:
+            doc = SimpleNamespace(id='drive:'+selected_file, filename=filename, file_hash=item['version'],
+                drive_url='https://drive.google.com/file/d/'+item['drive_id']+'/view', drive_member=item['member_path'])
+            render_document_actions(doc, 'library_'+selected_file)
 
 elif page == "Upload documents":
     st.subheader("Upload vendor documents")
@@ -926,8 +1102,7 @@ elif page == "Companies & documents":
                     if rows.empty:
                         st.caption("No file available in this category.")
                     for row_number, doc in enumerate(rows.itertuples(index=False)):
-                        filename_col, preview_col = st.columns([8.5, 1.5], vertical_alignment="center")
-                        filename_col.text(doc.filename)
+                        st.text(doc.filename)
                         detail = supporting_category(doc.filename) if not doc.types else doc.method
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
@@ -935,25 +1110,7 @@ elif page == "Companies & documents":
                             st.caption(f'Drive status: {doc.drive_status} · ZIP member/source: {getattr(doc, "drive_member", "") or doc.original_path}')
                             if doc.reason:
                                 st.caption(doc.reason)
-                            continue
-                        payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
-                        if payload is not None:
-                            preview_token = f"{category}_{doc.id}_{row_number}"
-                            preview_key = f"preview_{preview_token}"
-                            if preview_col.button("👁", key=preview_key, help="Preview this document before downloading."):
-                                st.session_state["preview_document_id"] = preview_token
-                            if st.session_state.get("preview_document_id") == preview_token:
-                                with st.container(border=True):
-                                    preview_title, close_preview = st.columns([5, 1])
-                                    preview_title.markdown(f"**Preview: {doc.filename}**")
-                                    if close_preview.button("Close", key=f"close_{preview_token}"):
-                                        st.session_state.pop("preview_document_id", None)
-                                        st.rerun()
-                                    show_document_preview(doc.filename, payload)
-                            st.download_button("Download file", payload, doc.filename,
-                                mimetypes.guess_type(doc.filename)[0] or "application/octet-stream", key=f"file_{preview_token}")
-                        else:
-                            st.warning("Original bytes unavailable. Re-upload this file; it does not count as Yes.")
+                        render_document_actions(doc, f'{category}_{doc.id}_{row_number}')
         with st.expander("Document coverage across these companies"):
             import plotly.graph_objects as go
             values=[int((filtered[t]=="Yes").sum()) for t in DOCUMENT_TYPES]

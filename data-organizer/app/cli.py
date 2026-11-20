@@ -8,7 +8,7 @@
     run         run the full pipeline (resumable)
     export      write the output files
     reviews     list pending manual reviews
-    drive-auth  one-time Google Drive authorisation (read-only)
+    drive-auth  one-time Google Drive authorisation (read/write)
     reset       clear derived results (add --all to also clear raw data and decisions)
     benchmark   time the pipeline on N synthetic records
 """

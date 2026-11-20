@@ -146,6 +146,99 @@ def test_actual_vendor_dashboard_has_one_company_checklist_for_drive_files(share
     assert any('Price' in expander.label for expander in app.expander)
 
 
+def test_drive_files_page_previews_files_and_confirms_original_deletion(shared, monkeypatch):
+    import document_actions
+
+    store, _, _ = shared
+    monkeypatch.setenv('VENDOR_DATA_DIR', str(store.data_dir))
+    monkeypatch.setenv('DATABASE_URL', '')
+    monkeypatch.setenv('APP_PASSWORD', '')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT', 'false')
+    monkeypatch.setattr(document_actions, 'drive_account_file_bytes', lambda *_args: b'Synthetic preview')
+    file_item = {
+        'id': 'drive-file-12345', 'preview_id': 'drive-file-12345',
+        'name': 'GST.txt', 'path': 'Vendor/GST.txt', 'mime_type': 'text/plain',
+        'size_bytes': 20, 'modified': '', 'is_shortcut': False,
+        'url': 'https://drive.google.com/file/d/drive-file-12345/view',
+    }
+    monkeypatch.setattr(document_actions, 'drive_account_files', lambda: [file_item])
+    deleted = []
+    monkeypatch.setattr(document_actions, 'delete_drive_original', lambda _store, file_id: deleted.append(file_id))
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'vendor_dashboard' / 'app.py'))
+    app.session_state['page'] = 'Google Drive files'
+    app.run(timeout=40)
+
+    assert not app.exception
+    assert app.button(key='preview_drive_original').label == 'Preview Drive file'
+    app.button(key='preview_drive_original').click().run(timeout=40)
+    assert not app.exception and any('Synthetic preview' in item.value for item in app.code)
+    app.button(key='delete_drive_original').click().run(timeout=40)
+    assert not app.exception
+    assert any('Permanently delete GST.txt' in item.value for item in app.warning)
+    app.text_input(key='drive_account_delete_confirmation').set_value('DELETE GST.txt').run(timeout=40)
+    assert not app.button(key='confirm_drive_original_delete').disabled
+    app.button(key='confirm_drive_original_delete').click().run(timeout=40)
+
+    assert not app.exception
+    assert deleted == ['drive-file-12345']
+
+
+def test_drive_original_delete_calls_google_and_hides_all_indexed_zip_members(shared, monkeypatch):
+    import document_actions
+
+    from app.drive.index_store import DriveIndex
+
+    store, _, _ = shared
+    index = DriveIndex(store)
+    entries = [
+        {'entry_key': 'delete-archive', 'folder_id': 'shared', 'drive_id': 'archive-id-12345',
+         'source_name': 'vendors.zip', 'member_path': '', 'size_bytes': 100, 'version': 'v1', 'status': 'container'},
+        {'entry_key': 'delete-member', 'folder_id': 'shared', 'drive_id': 'archive-id-12345',
+         'source_name': 'vendors.zip', 'member_path': 'Alpha/GST.txt', 'size_bytes': 10, 'version': 'v1', 'status': 'indexed'},
+    ]
+    index.discover(entries)
+    index.save_records(entries[1], [{'company': 'Alpha', 'product': 'Drive Delete Fixture', 'kind': 'product'}])
+    assert index.search('shared', 'Drive Delete Fixture')['total'] == 1
+    calls = []
+
+    class Request:
+        def execute(self, num_retries=0):
+            return None
+
+    class Files:
+        def delete(self, **kwargs):
+            calls.append(kwargs)
+            return Request()
+
+    class Service:
+        def files(self):
+            return Files()
+
+    monkeypatch.setattr(document_actions, 'build_service', lambda _settings: Service())
+    document_actions.delete_drive_original(store, 'archive-id-12345')
+
+    assert calls == [{'fileId': 'archive-id-12345', 'supportsAllDrives': True}]
+    assert index.existing('delete-archive')['status'] == 'deleted'
+    assert index.existing('delete-member')['status'] == 'deleted'
+    assert index.search('shared', 'Drive Delete Fixture')['total'] == 0
+
+
+def test_dashboard_delete_removes_only_the_selected_stored_copy(shared):
+    from document_actions import remove_document
+    from vendor_core import classify
+
+    store, _, _ = shared
+    store.save_document('Alpha Medical/GST.txt', b'Synthetic dashboard document', classify('Alpha Medical/GST.txt'))
+    document = store.documents().iloc[0]
+    path = store.safe_path(document.stored_path)
+    assert path.is_file()
+
+    remove_document(store, int(document.id))
+
+    assert store.documents().empty
+    assert not path.exists()
+
+
 def test_migrated_original_keeps_its_company_checklist_and_source_link(shared):
     import zipfile
     from io import BytesIO

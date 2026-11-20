@@ -5,6 +5,10 @@ catalogue. Run `python -m app serve` and open <http://127.0.0.1:8000/> to switch
 between Organizer and Vendor. HospKart chat is inside Vendor AI Assistant. See [MERGED_APP.md](MERGED_APP.md)
 for the shared setup, API routes and catalogue behavior.
 
+The Vendor **Google Drive files** page lists files accessible to the authorized
+account, previews supported files, and separates removing a dashboard entry
+from permanently deleting its Drive original.
+
 A production-ready pipeline and dashboard that takes a messy pile of files — Excel, legacy `.xls`, CSV, PDF,
 Word, plain text, scanned images — and turns them into one clean, traceable master list of entities (hospitals,
 companies, or any other kind of organisation you choose), with every name variant recorded and every record
@@ -16,7 +20,7 @@ every file you process afterwards.
 
 ## What it does, in one paragraph
 
-Point it at a folder (local or a read-only Google Drive folder). It discovers every file, extracts every row
+Point it at a folder (local or Google Drive). It discovers every file, extracts every row
 into a raw, fully-traceable staging layer (original values untouched), cleans and normalises names/addresses/
 phones/emails/registration IDs, matches records to master entities using a layered scoring system (exact
 mappings → identifiers → fuzzy name + corroborating evidence → optional AI opinion for genuinely ambiguous
@@ -227,7 +231,7 @@ app/
   matching/       name similarity, blocking index + TF-IDF retrieval, confidence scoring, entity aggregation,
                   the resolver orchestrator, duplicate detection, manual-review service, learned mappings
   database/       DuckDB schema and repository (all persistence goes through here)
-  drive/          read-only Google Drive source (OAuth or service account)
+  drive/          Google Drive source and account browser (OAuth or service account)
   export/         Excel/CSV/JSON/Parquet writers, grouped exports, the processing report
   dashboard/      static single-page dashboard (no build step: plain HTML/CSS/JS + Chart.js)
   pipeline.py     end-to-end orchestrator: discover → extract → clean → resolve → duplicates → quality
@@ -243,16 +247,18 @@ tests/            pytest suite (cleaning, ingestion, matching rules, full pipeli
 
 ## Data safety
 
-- Source files are **read-only** at every step; the output folder is checked at startup to make sure it can
-  never overlap the input folder.
+- Organizer imports do not modify source files; the output folder is checked at startup to make sure it can
+  never overlap the input folder. The Vendor dashboard has a separate, explicit Drive-delete action.
 - The raw layer keeps every original value forever, in full — cleaning and matching only ever *add* columns.
 - Nothing is ever deleted automatically. Duplicates are reported as groups with a suggested primary; merges
   only happen when you (or a saved decision) say so, and a merge is reversible in that the absorbed entity's
   data is kept (`merged_into`), never dropped.
 - Every processing failure is isolated to its file/sheet/page/row, logged with full context, and never stops
   the rest of the run.
-- Google Drive access uses the `drive.readonly` scope only — the app can list and download, never write, move,
-  or delete anything in your Drive.
+- Google Drive OAuth uses the full Drive scope so the Vendor dashboard can browse My Drive, shared items and
+  shared drives, and delete an individual original only after a separate
+  confirmation. The Organizer pipeline itself never modifies Drive source files.
+  Treat the OAuth token as a write-enabled secret and reauthorize after upgrading.
 
 ## Testing
 
