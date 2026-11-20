@@ -1,4 +1,4 @@
-"""Duplicate detection with source records retained for review.
+"""Duplicate detection and removal of exact duplicate records.
 
 * record level  ``exact_name_phone``         same normalised name AND same phone
                 ``exact_name_registration``  same normalised name AND same registration id
@@ -7,7 +7,7 @@
                                               addresses in the same place - candidates for a manual merge
 
 Every group carries a suggested "primary" (the record / entity with the strongest evidence). Exact
-duplicates remain active and traceable; detection records groups without changing source records.
+duplicate records are marked inactive after detection; source files and audit groups are retained.
 """
 from __future__ import annotations
 
@@ -92,5 +92,10 @@ def detect_duplicates(repo: Repository, near_min: float = 92.0, max_block: int =
                                  "is_suggested_primary": primary, "detected_at": now})
     if rows:
         repo.insert_df("duplicate_groups", pd.DataFrame(rows, columns=_COLS))
+        exact_duplicate_ids = [r["record_id"] for r in rows
+                               if r["dup_type"] == "identical_record" and not r["is_suggested_primary"]]
+        if exact_duplicate_ids:
+            repo.conn.executemany("UPDATE raw_records SET is_current = FALSE WHERE record_id = ?",
+                                  [(record_id,) for record_id in exact_duplicate_ids])
     return {t: len({r["group_id"] for r in rows if r["dup_type"] == t})
             for t in ("exact_name_phone", "exact_name_registration", "identical_record", "near_duplicate_entity")}

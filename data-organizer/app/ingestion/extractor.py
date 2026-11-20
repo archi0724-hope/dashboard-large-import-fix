@@ -19,7 +19,7 @@ from ..cleaning.normalizer import Gazetteer, basic_clean, normalize_text, to_tex
 from ..config import RuntimeConfig, Settings
 from ..schema_mapping import SINGLE_VALUED, ColumnMap, SchemaMapper, join_values
 from .base import (
-    RawRecord, ReadOptions, SourceFile, TableBlock, TextBlock, UnsupportedFileError,
+    Block, FileReadError, RawRecord, ReadOptions, SourceFile, TableBlock, TextBlock, UnsupportedFileError,
     make_record_id,
 )
 from .registry import reader_for

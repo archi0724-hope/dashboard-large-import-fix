@@ -27,14 +27,6 @@ _jobs: dict[str, dict] = {}
 _active: str | None = None
 
 
-_PROCESS_UPLOAD_KEY = secrets.token_urlsafe(32)
-
-def upload_signing_key():
-    from hospkart_chat.integration import vendor_setting
-    # Legacy APP_PASSWORD remains only a signing-key fallback, never a UI gate.
-    return vendor_setting("UPLOAD_TOKEN_SECRET") or vendor_setting("APP_PASSWORD") or _PROCESS_UPLOAD_KEY
-
-
 def issue_upload_token(password: str, nonce: str | None = None) -> str:
     payload = f"{int(time.time()) + TOKEN_LIFETIME}:{nonce or secrets.token_hex(16)}"
     signature = hmac.new(
@@ -62,12 +54,9 @@ def _token_nonce(token: str, password: str, grace: int = 0) -> str | None:
 
 
 def require_upload_token(request: Request) -> str:
-    from .admin_access import COOKIE, is_admin
+    from hospkart_chat.integration import vendor_setting
 
-    nonce = _token_nonce(request.headers.get("x-upload-token", ""), upload_signing_key())
-    admin_cookie = request.cookies.get(COOKIE, "")
-    if not nonce and is_admin(admin_cookie):
-        return hashlib.sha256(admin_cookie.encode()).hexdigest()
+    nonce = _token_nonce(request.headers.get("x-upload-token", ""), vendor_setting("APP_PASSWORD"))
     if not nonce:
         raise HTTPException(
             401,
@@ -249,19 +238,20 @@ def upload_capacity(owner: str = Depends(require_upload_token)):
 
 @router.post('/session')
 def upload_session(request: Request):
+    from hospkart_chat.integration import vendor_setting
+
     from .config import get_settings
 
-    password = upload_signing_key()
-    from .admin_access import COOKIE, is_admin
+    password = vendor_setting('APP_PASSWORD')
     # A recently expired, correctly signed proof may renew its own scope only.
     nonce = _token_nonce(request.headers.get('x-upload-token',''), password, grace=24 * 3600)
     if nonce:
         return {'token':issue_upload_token(password, nonce)}
-    if is_admin(request.cookies.get(COOKIE, '')):
-        return {'token': issue_upload_token(password)}
     expected = get_settings().dashboard_token
     supplied = request.headers.get('x-token','')
     if expected and supplied and hmac.compare_digest(expected,supplied):
+        if not password:
+            raise HTTPException(503,'The shared upload password must be configured on the server.')
         return {'token':issue_upload_token(password)}
     require_upload_token(request)
     return {'token':request.headers['x-upload-token']}

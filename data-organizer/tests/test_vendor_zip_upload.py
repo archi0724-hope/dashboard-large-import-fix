@@ -352,6 +352,3 @@ def test_disconnect_mid_chunk_keeps_confirmed_offset_and_allows_retry(client):
     assert c.put(f"/api/vendor-uploads/{job}/chunk?offset=0", headers=headers, content=body).status_code == 200
     assert c.post(f"/api/vendor-uploads/{job}/complete", headers=headers).status_code == 200
     assert wait_for_job(c, headers, job)["result"]["saved"] == 1
-
-
-pytestmark = pytest.mark.usefixtures("admin_api")

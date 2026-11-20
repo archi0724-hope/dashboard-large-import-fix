@@ -888,6 +888,3 @@ def test_manual_sheets_with_different_optional_columns_fit_storage_types(tmp_pat
     with store.connection() as db:
         rows = db.execute("SELECT typeof(price) AS price_type,typeof(mrp) AS mrp_type,typeof(gst) AS gst_type FROM vdd_product_records").fetchall()
     assert all(row[field] in {"real", "null"} for row in rows for field in ("price_type", "mrp_type", "gst_type"))
-
-
-pytestmark = pytest.mark.usefixtures("admin_ui")

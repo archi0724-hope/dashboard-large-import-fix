@@ -34,7 +34,7 @@ class AliasInfo:
         return {"a": self.alias, "n": self.count, "s": self.source, "sc": round(self.score, 1), "m": self.method, "v": self.verified}
 
     @classmethod
-    def from_json(cls, d: dict) -> AliasInfo:
+    def from_json(cls, d: dict) -> "AliasInfo":
         return cls(d["a"], d.get("n", 1), d.get("s", ""), d.get("sc", 100.0), d.get("m", ""), d.get("v", False))
 
 
@@ -130,7 +130,7 @@ class EntityState:
         self.score_min = min(self.score_min, score)
         self.dirty = True
 
-    def absorb(self, other: EntityState) -> None:
+    def absorb(self, other: "EntityState") -> None:
         """Merge another entity into this one (used when a reviewer accepts a match)."""
         for k, info in other.aliases.items():
             mine = self.aliases.get(k)
@@ -237,7 +237,7 @@ class EntityState:
         return json.dumps(d, ensure_ascii=False, default=dict)
 
     @classmethod
-    def from_json(cls, entity_id: str, payload: str, created_at: datetime | None = None) -> EntityState:
+    def from_json(cls, entity_id: str, payload: str, created_at: datetime | None = None) -> "EntityState":
         d = json.loads(payload)
         e = cls(id=entity_id, created_at=created_at or datetime.now())
         e.aliases = {k: AliasInfo.from_json(v) for k, v in d.get("al", {}).items()}

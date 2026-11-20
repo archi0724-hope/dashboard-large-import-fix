@@ -42,16 +42,16 @@ CHAT_PAGE = """<!doctype html>
   <link rel="icon" type="image/jpeg" href="__CHAT_PREFIX__/assets/hospkart-logo">
   <style>
     :root {
-      --bg: #f4f7fa;
+      --bg: #f5f8ff;
       --panel: #ffffff;
-      --panel-2: #f8fafb;
-      --border: #dbe4ec;
-      --text: #1b344b;
-      --muted: #65798b;
-      --accent: #e67a20;
-      --accent-strong: #c76516;
+      --panel-2: #f9fbff;
+      --border: #d8e4f4;
+      --text: #173a70;
+      --muted: #6b7d95;
+      --accent: #f08a00;
+      --accent-strong: #d66d00;
       --gold: #f5c84c;
-      --blue-strong: #167d82;
+      --blue-strong: #1e4f92;
       --success: #18a957;
       --danger: #dc2626;
     }
@@ -59,7 +59,7 @@ CHAT_PAGE = """<!doctype html>
     body {
       margin: 0;
       font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
-      background: linear-gradient(180deg, #f8fafb 0%, #edf3f5 100%);
+      background: linear-gradient(180deg, #fff6d9 0%, #f7fbff 26%, #eef4ff 100%);
       color: var(--text);
       height: 100vh;
       overflow: hidden;
@@ -72,16 +72,16 @@ CHAT_PAGE = """<!doctype html>
       justify-content: center;
       padding: 20px;
       background:
-        radial-gradient(circle at 12% 10%, rgba(22, 125, 130, 0.08) 0%, rgba(22, 125, 130, 0) 36%),
-        radial-gradient(circle at 88% 86%, rgba(30, 79, 146, 0.07) 0%, rgba(30, 79, 146, 0) 38%),
-        linear-gradient(160deg, #f8fafb 0%, #f3f7f9 48%, #edf3f5 100%);
+        radial-gradient(circle at 12% 10%, rgba(240, 138, 0, 0.16) 0%, rgba(240, 138, 0, 0) 36%),
+        radial-gradient(circle at 88% 86%, rgba(30, 79, 146, 0.14) 0%, rgba(30, 79, 146, 0) 38%),
+        linear-gradient(160deg, #fff7e5 0%, #f6faff 48%, #eef5ff 100%);
     }
     .landing-card {
       width: min(1120px, 100%);
       border-radius: 24px;
       border: 1px solid #d6e3f5;
       background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
-      box-shadow: 0 18px 45px rgba(23, 43, 58, 0.12);
+      box-shadow: 0 18px 45px rgba(18, 54, 102, 0.18);
       display: grid;
       grid-template-columns: 1.1fr 0.9fr;
       gap: 18px;
@@ -680,7 +680,7 @@ CHAT_PAGE = """<!doctype html>
         padding-right: 0;
       }
       .layout { grid-template-columns: 1fr; }
-      .side-panel { order: 1; max-height: 42vh; }
+      .side-panel { order: -1; }
       .shell { padding: 12px; }
       .hero-banner img { max-height: 170px; }
     }

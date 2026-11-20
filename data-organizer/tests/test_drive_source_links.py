@@ -47,6 +47,7 @@ def test_pasted_source_persists_and_does_not_hide_existing_records(tmp_path,monk
     app.include_router(index_api.router)
     client = TestClient(app)
     headers = {'X-Token':'source-test-token'}
+    assert client.post('/api/drive-index/start',json={'link':'https://drive.google.com/file/d/archive12345/view'}).status_code == 401
     invalid = client.post('/api/drive-index/start',headers=headers,json={'link':'https://evil.example/file.zip'})
     assert invalid.status_code == 422
     worker.assert_not_called()
@@ -73,6 +74,3 @@ def test_pasted_source_persists_and_does_not_hide_existing_records(tmp_path,monk
     assert worker.call_args.args[2]['kind'] == 'folder'
     assert index.source_selection()['scope'] == 'folder123456'
     assert client.get('/api/drive-index/search',headers=headers).json()['total'] == 1
-
-
-pytestmark = pytest.mark.usefixtures("admin_api")

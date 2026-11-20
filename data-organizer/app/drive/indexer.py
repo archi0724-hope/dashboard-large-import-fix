@@ -23,8 +23,7 @@ LOCK = threading.RLock()
 CANCEL = threading.Event()
 ACTIVE = None
 INDEX_STORAGE_BUDGET = 850 * 1024**2
-IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp'}
-EXTRACTABLE = {'.xlsx','.xls','.csv','.txt','.log','.pdf','.docx','.json'} | IMAGE_EXTENSIONS
+EXTRACTABLE = {'.xlsx','.xls','.csv','.txt','.log','.pdf','.docx','.json'}
 COMPANY = {'company','companyname','vendor','vendorname','supplier','suppliername','manufacturer','manufacturername','hospital','hospitalname'}
 PRODUCT = {'product','productname','item','itemname','description','particulars','itemdescription','productdescription'}
 PRICE = set(PRICE_HEADERS)
@@ -73,43 +72,6 @@ def table_records(rows, sheet='', fallback_company=''):
                'company':company,'product':product,'price':price,'sheet':sheet,'row':number,'values':data}
 
 
-def scanned_text(path, page=None):
-    """Bound each OCR call and return an explicit issue when a scan cannot be read."""
-    try:
-        import pytesseract
-        from PIL import Image, ImageSequence
-        from ..ingestion.ocr_reader import resolve_tesseract
-        executable = resolve_tesseract()
-        if not executable:
-            return '', 'Tesseract is unavailable.'
-        pytesseract.pytesseract.tesseract_cmd = executable
-        if page is not None:
-            import pypdfium2 as pdfium
-            with pdfium.PdfDocument(str(path)) as document:
-                source = document[page]
-                try:
-                    width, height = source.get_size()
-                    if width * height * 4 > 32_000_000:
-                        return '', 'Scanned page exceeds the OCR pixel limit.'
-                    bitmap = source.render(scale=2)
-                    try:
-                        with bitmap.to_pil() as image:
-                            return pytesseract.image_to_string(image, lang='eng', timeout=30), ''
-                    finally:
-                        bitmap.close()
-                finally:
-                    source.close()
-        parts = []
-        with Image.open(path) as image:
-            for frame in ImageSequence.Iterator(image):
-                if frame.width * frame.height > 32_000_000:
-                    return '', 'Image exceeds the OCR pixel limit.'
-                parts.append(pytesseract.image_to_string(frame, lang='eng', timeout=30))
-        return '\n'.join(parts), ''
-    except Exception as error:
-        return '', f'OCR could not read this scan ({type(error).__name__}).'
-
-
 def extracted_records(path, fallback_company=''):
     ext = path.suffix.lower()
     if ext == '.xlsx':
@@ -133,25 +95,13 @@ def extracted_records(path, fallback_company=''):
             for number,page in enumerate(reader.pages,1):
                 try:
                     text = page.extract_text() or ''
-                    method, issue = 'native_text', ''
                     if not text.strip():
-                        text, issue = scanned_text(path, number-1)
-                        method = 'ocr'
-                    if not text.strip():
-                        yield {'kind':'needs_ocr','company':fallback_company,'product':'','page':number,'text':issue or 'No readable text found after OCR.'}
+                        yield {'kind':'needs_ocr','company':fallback_company,'product':'','page':number,'text':'Image-only page; OCR needed.'}
                     else:
                         for offset in range(0,len(text),20000):
-                            yield {'kind':'document','company':fallback_company,'product':'','page':number,'part':offset//20000+1,'text':text[offset:offset+20000], 'extraction_method':method}
+                            yield {'kind':'document','company':fallback_company,'product':'','page':number,'part':offset//20000+1,'text':text[offset:offset+20000]}
                 finally:
                     page.close()
-    elif ext in IMAGE_EXTENSIONS:
-        text, issue = scanned_text(path)
-        if text.strip():
-            for offset in range(0, len(text), 20000):
-                yield {'kind':'document', 'company':fallback_company, 'product':'', 'part':offset//20000+1,
-                       'text':text[offset:offset+20000], 'extraction_method':'ocr'}
-        else:
-            yield {'kind':'needs_ocr', 'company':fallback_company, 'product':'', 'text':issue or 'No readable text found after OCR.'}
     elif ext == '.docx':
         from docx import Document
         doc = Document(path)
@@ -335,17 +285,14 @@ def run_index(store, folder, source=None):
                             with target.open('rb') as content:
                                 digest = hashlib.file_digest(content,'sha256').hexdigest()
                             existing = index.existing(entry['entry_key'])
-                            if existing['content_hash'] == digest and existing['record_count'] and target.suffix not in IMAGE_EXTENSIONS | {'.pdf'}:
+                            if existing['content_hash'] == digest and existing['record_count'] and target.suffix != '.pdf':
                                 index.mark(entry['entry_key'],'indexed','',digest,existing['record_count'])
                                 continue
-                            if existing['content_hash'] and (existing['content_hash'] != digest or target.suffix in IMAGE_EXTENSIONS | {'.pdf'}):
+                            if existing['content_hash'] and existing['content_hash'] != digest:
                                 index.reset_records(entry['entry_key'])
-                            total,batch,ocr,readable = 0,[],False,False
+                            total,batch,ocr = 0,[],False
                             for record in extracted_records(target):
                                 ocr = ocr or record['kind'] == 'needs_ocr'
-                                if record['kind'] == 'needs_ocr':
-                                    continue
-                                readable = True
                                 # Retain traceability and keep unverified rows out of the approved catalogue.
                                 record.update(source_name=entry['source_name'],member_path=entry['member_path'],
                                     source_url=f"https://drive.google.com/file/d/{entry['drive_id']}/view",review_status='Needs review')
@@ -367,7 +314,7 @@ def run_index(store, folder, source=None):
                                         return
                             if batch:
                                 index.save_records(entry,batch)
-                            index.mark(entry['entry_key'],('partial' if readable else 'needs_ocr') if ocr else 'indexed',
+                            index.mark(entry['entry_key'],'partial' if ocr else 'indexed',
                                 'Some pages need OCR.' if ocr else '',digest,total)
                 except Exception as error:  # noqa: BLE001 - retain completed documents and report this file
                     index.mark(entry['entry_key'],'failed',str(error) if isinstance(error,ValueError) else 'Extraction failed: '+type(error).__name__)

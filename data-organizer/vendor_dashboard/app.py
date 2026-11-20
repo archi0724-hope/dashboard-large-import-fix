@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import html
 import importlib
 import importlib.util
 import json
@@ -50,36 +52,35 @@ if getattr(storage_module.Store, "manual_catalogue_import_version", 0) != MANUAL
 Store = storage_module.Store
 
 APP_DIR = Path(__file__).resolve().parent
-st.set_page_config(page_title="HOSPkart.com · Vendor Document Dashboard", page_icon=":material/auto_awesome:", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Vendor Document Dashboard", page_icon="\U0001f4c2", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-.stApp{background:linear-gradient(180deg,#f8fafb 0%,#f2f6f8 100%);color:#172b3a}
-.block-container{max-width:1460px;padding-top:3.5rem;padding-bottom:3rem}
+.stApp{background:#f5f7fc;color:#142d55}
+.block-container{max-width:1460px;padding-top:4.5rem;padding-bottom:3rem}
 h1{font-size:1.65rem!important;font-weight:750!important;letter-spacing:-.025em;color:#142d55}
 h2,h3{letter-spacing:-.015em;color:#142d55}
 [data-testid="stHeader"]{background:#fff;border-bottom:1px solid #dfe6f1}
 [data-testid="stExpandSidebarButton"]{visibility:visible!important;opacity:1!important;width:40px;height:40px;border:1px solid #dfe6f1;border-radius:8px;background:#fff;color:#142d55}
-[data-testid="stSidebar"]{background:#101e38;border-right:1px solid #293b59}
-[data-testid="stSidebar"] [data-testid="stRadio"] label{padding:5px 6px;border-radius:8px;margin:2px 0}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#203c54;box-shadow:inset 3px 0 #167d82}
-[data-testid="stMetric"]{background:#fff;border:1px solid #dbe4ec;border-top:3px solid #167d82;border-radius:12px;padding:1rem;box-shadow:0 6px 18px rgba(23,43,58,.05)}
-[data-testid="stMetricValue"]{font-size:1.85rem;color:#172b3a;font-weight:700}
-[data-testid="stMetricLabel"]{color:#63758e;font-size:.875rem;font-weight:650}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,#10203f,#17294f);border-right:1px solid #334567}
+[data-testid="stSidebar"] [data-testid="stRadio"] label{padding:9px 10px;border-radius:8px;margin:2px 0}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:#353044;box-shadow:inset 3px 0 #fa811b}
+[data-testid="stMetric"]{background:#fff;border:1px solid #dfe6f1;border-left:4px solid #fa811b;border-radius:12px;padding:1rem;box-shadow:0 8px 22px rgba(20,45,85,.06)}
+[data-testid="stColumn"]:nth-child(4n+2) [data-testid="stMetric"]{border-left-color:#2f70f5}
+[data-testid="stColumn"]:nth-child(4n+3) [data-testid="stMetric"]{border-left-color:#8246e8}
+[data-testid="stColumn"]:nth-child(4n) [data-testid="stMetric"]{border-left-color:#17975e}
+[data-testid="stMetricValue"]{font-size:1.85rem;color:#142d55;font-weight:700}
+[data-testid="stMetricLabel"]{color:#63758e;font-size:.82rem;font-weight:650}
 [data-testid="stFileUploader"]{border:1px dashed #b8c8e0;border-radius:10px;background:#fff}
 [data-testid="stExpander"]{background:#fff;border:1px solid #dfe6f1;border-radius:10px}
 [data-testid="stBaseButton-secondary"]{background:#fff;color:#142d55;border-color:#dfe6f1;font-weight:600}
-[data-testid="stBaseButton-primary"]{background:#167d82;color:#fff;border-color:#167d82;font-weight:700}
+[data-testid="stBaseButton-primary"]{background:#fa811b;color:#142447;border-color:#fa811b;font-weight:700}
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]{background:#253858;color:#e0e7f4;border-color:#334567}
-[data-testid="stSidebar"] [data-testid="stExpander"]{background:#192942;border-color:#334567;color:#e0e7f4}
-.brand{display:flex;align-items:center;margin:.5rem 0 1.3rem}
-.brand img{display:block;width:160px;max-width:100%;height:auto}
-.workspace-hero{position:relative;overflow:hidden;background:linear-gradient(120deg,#16254b 0%,#29375f 65%,#154b5b 100%);border:1px solid #34466e;border-radius:18px;padding:30px;margin:1rem 0;color:#fff}
-.workspace-hero::after{content:'✦';position:absolute;right:32px;top:12px;font-size:110px;line-height:1;color:#a2b7ff;opacity:.13;pointer-events:none}
-.workspace-hero .hero-eyebrow{font-size:.875rem;font-weight:750;letter-spacing:.18em;color:#79eaff;text-transform:uppercase}
-.workspace-hero h2{font-size:1.5rem!important;color:#fff;margin:16px 0 18px;max-width:80%}
-.workspace-hero p{font-size:.88rem;line-height:1.7;max-width:650px;color:#e4eaff}
-.hero-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.hero-badges span{border:1px solid #526080;border-radius:30px;padding:5px 10px;font-size:.875rem;color:#e4eaff;background:#ffffff06}
-.summary-label{margin:.9rem 0 .45rem;color:#63758e;font-size:.875rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.brand{display:flex;gap:12px;align-items:center;margin:.25rem 0 1.2rem}
+.brand{flex-direction:column;text-align:center;gap:12px}
+.brand-icon{width:100%;min-height:80px;display:grid;place-items:center;background:radial-gradient(ellipse at center,#fff9c1 0%,#ffe754 55%,#ffd51c 100%);color:#142447;border-radius:10px;padding:14px 10px;font-size:1.3rem;font-weight:750}
+.brand-icon span,.brand-name span{color:#e9670b}
+.brand-name{font-size:1.3rem;font-weight:750;color:#fff}.brand-sub{font-size:.65rem;color:#b5c1d8;letter-spacing:.07em;text-transform:uppercase}
+.summary-label{margin:.9rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .type-label{margin:1.1rem 0 .45rem;color:#63758e;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .table-scroll{max-height:470px;overflow:auto;border:1px solid #dee6ed;border-radius:10px;background:#fff}
 .desk-table{border-collapse:collapse;min-width:100%;font-size:.88rem}
@@ -101,58 +102,41 @@ def setting(name: str, default: str = "") -> str:
         return os.environ.get(name, default)
 
 
-from app.admin_access import COOKIE as ADMIN_COOKIE, is_admin
+def authenticated() -> bool:
+    password = setting("APP_PASSWORD")
+    cloud_deployment = setting("CLOUD_DEPLOYMENT").strip().lower() in {"1", "true", "yes", "on"}
+    if not password:
+        if cloud_deployment:
+            st.title("Vendor Document Dashboard")
+            st.warning("Production setup is incomplete: APP_PASSWORD is required.")
+            st.caption("Set APP_PASSWORD and DATABASE_URL as private environment variables on the server.")
+            return False
+        return True
+    if st.session_state.get("authenticated"):
+        return True
+    st.title("Vendor Document Dashboard")
+    with st.form("login"):
+        typed = st.text_input("Team password", type="password")
+        submit = st.form_submit_button("Open dashboard", type="primary")
+    if submit:
+        if time.time() < st.session_state.get("retry_after", 0):
+            st.error("Please retry after the sign-in cooldown.")
+        elif hmac.compare_digest(typed.encode(), password.encode()):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.session_state["retry_after"] = time.time() + 3
+            st.error("Incorrect password.")
+    return False
 
-def admin_allowed():
-    return is_admin(st.context.cookies.get(ADMIN_COOKIE, ""))
+
+if not authenticated():
+    st.stop()
 
 
-def require_admin():
-    if not admin_allowed():
-        st.warning("Admin login required. Use the A icon at the top-right of the main dashboard.")
-        st.stop()
-
-
-can_edit = admin_allowed()
-
-workspace_started = time.perf_counter()
-loading_placeholder = st.empty()
-with loading_placeholder.container():
-    st.markdown("### Opening Vendor workspace")
-    startup_status = st.empty()
-    startup_status.info("Connecting to saved data…")
-    st.caption("Your workspace is loading. Please keep this page open.")
-
-
-@st.cache_resource(show_spinner=False)
+@st.cache_resource
 def open_store(data_dir: str, database_url: str, storage_schema: str = "product-records-v3") -> Store:
     return Store(Path(data_dir), database_url)
-
-
-@st.cache_data(ttl=60, max_entries=4, show_spinner=False)
-def load_workspace_data(identity: str, include_drive: bool, _store: Store) -> dict:
-    """Reuse shared read data across UI interactions; writes and Refresh clear it."""
-    from drive_view import combine_company_documents, inventory
-    vendors = _store.vendors()
-    documents = _store.documents()
-    uploaded_documents = documents
-    aliases = _store.aliases()
-    drive_failed = False
-    if include_drive:
-        try:
-            drive_started = time.perf_counter()
-            snapshot = inventory(identity, _store, include_record_totals=False)
-            logging.getLogger("organizer.application").info("Drive references read in %.3fs", time.perf_counter() - drive_started)
-            projection_started = time.perf_counter()
-            vendors, documents = combine_company_documents(vendors, documents, snapshot['references'], aliases)
-            logging.getLogger("organizer.application").info("Drive references projected in %.3fs", time.perf_counter() - projection_started)
-        except Exception as error:
-            logging.getLogger(__name__).error("Drive references unavailable: %s", type(error).__name__)
-            drive_failed = True
-    checklist = build_checklist(vendors, documents)
-    return {"vendors": vendors, "documents": documents, "uploaded_documents": uploaded_documents,
-            "aliases": aliases, "checklist": checklist,
-            "counts": dashboard_counts(vendors, documents, checklist=checklist), "drive_failed": drive_failed}
 
 
 try:
@@ -180,7 +164,6 @@ try:
             raise RuntimeError("Cached vendor storage does not support catalogue classification.")
 except Exception as error:
     logging.getLogger(__name__).error("Storage initialization failed: %s", type(error).__name__)
-    startup_status.error("Could not connect to saved data")
     st.error("Storage could not be opened. Check the data folder or your private database settings. No documents were loaded.")
     st.stop()
 
@@ -218,12 +201,6 @@ def document_bytes(_store: Store, document_id: int, file_hash: str) -> bytes | N
     return _store.read_bytes(document_id)
 
 
-@st.cache_data(ttl=60, max_entries=4, show_spinner=False)
-def drive_preview_bytes(identity: str, document_id: str, version: str, _store: Store) -> bytes:
-    from app.drive.originals import preview_bytes
-    return preview_bytes(_store, document_id)
-
-
 @st.cache_data(show_spinner=False, max_entries=2, ttl=600)
 def catalogue_download(_store: Store, store_identity: str, signature: tuple) -> bytes:
     return catalogue_price_workbook_bytes(_store.catalogue_export_records(), include_review_details=True)
@@ -250,7 +227,7 @@ def show_document_preview(filename: str, payload: bytes):
             st.caption("Fast preview: first page. Download the original file for the complete document.")
             st.pdf(preview)
         else:
-            st.pdf(payload)
+            st.info("This PDF could not be reduced to a first-page preview. Download the original file to view it.")
     elif mime.startswith("image/"):
         st.image(payload, caption=filename, width="stretch")
     elif suffix in {".xlsx", ".xls"}:
@@ -261,17 +238,6 @@ def show_document_preview(filename: str, payload: bytes):
             sheet_name, rows = preview
             st.caption(f"Preview: {sheet_name} · first {len(rows)} data row(s), up to 50 columns. Download the original file for all sheets and rows.")
             st.dataframe(rows, hide_index=True, height=360)
-    elif suffix == ".docx":
-        try:
-            from docx import Document
-            document = Document(BytesIO(payload))
-            lines = [paragraph.text for paragraph in document.paragraphs[:300] if paragraph.text.strip()]
-            for table in document.tables[:10]:
-                lines.extend(" | ".join(cell.text for cell in row.cells[:20]) for row in table.rows[:100])
-            st.caption("Word document text preview. Download file for the original formatting and complete document.")
-            st.text("\n".join(lines)[:200000] or "This Word document has no readable text.")
-        except Exception:
-            st.info("This Word document could not be previewed. Use Download file to open it.")
     elif mime.startswith("text/") or suffix in {".csv", ".txt", ".log"}:
         try:
             st.code(payload.decode("utf-8", errors="replace"), language="text")
@@ -322,179 +288,54 @@ def vendor_ai_terms(question: str) -> set[str]:
     return {t for t in terms if t}
 
 
-@st.cache_data(show_spinner=False, max_entries=128, ttl=3600)
-def vendor_ai_extract_text(filename: str, payload: bytes | None) -> tuple[str, str]:
+def vendor_ai_extract_text(filename: str, payload: bytes | None) -> str:
     if payload is None:
-        return "", "Original file is unavailable."
+        return filename or ""
     suffix = Path(filename).suffix.lower()
-    warning = ""
     try:
         if suffix == ".pdf":
             from pypdf import PdfReader
-            from pypdf.errors import PdfReadError
-            try:
-                reader = PdfReader(BytesIO(payload), strict=False)
-                pages = [page.extract_text() or "" for page in reader.pages]
-            except (PdfReadError, OSError, ValueError) as error:
-                return "", f"Could not read the PDF ({type(error).__name__})."
-            scanned_pages = [index for index, text in enumerate(pages) if not text.strip()]
-            if scanned_pages:
-                try:
-                    import pypdfium2 as pdfium
-                    import pytesseract
-                except ImportError:
-                    return "\n".join(pages), "Scanned pages were not OCR-indexed because OCR dependencies are unavailable."
-                try:
-                    with pdfium.PdfDocument(payload) as document:
-                        for index in scanned_pages:
-                            bitmap = document[index].render(scale=2)
-                            try:
-                                with bitmap.to_pil() as image:
-                                    pages[index] = pytesseract.image_to_string(image, lang="eng", timeout=30)
-                            finally:
-                                bitmap.close()
-                except pytesseract.TesseractNotFoundError:
-                    warning = "Scanned pages were not OCR-indexed because Tesseract is unavailable."
-                except pytesseract.TesseractError as error:
-                    warning = f"Scanned-page OCR failed ({type(error).__name__})."
-                except (pdfium.PdfiumError, OSError, ValueError) as error:
-                    warning = f"Scanned-page OCR failed ({type(error).__name__})."
-            text = "\n".join(pages)
-        elif suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
-            try:
-                import pytesseract
-                from PIL import Image, ImageSequence
-            except ImportError:
-                return "", "Image OCR was not run because OCR dependencies are unavailable."
-            try:
-                parts = []
-                with Image.open(BytesIO(payload)) as image:
-                    for frame in ImageSequence.Iterator(image):
-                        with frame.copy() as copy:
-                            parts.append(pytesseract.image_to_string(copy, lang="eng", timeout=30))
-                text = "\n".join(parts)
-            except pytesseract.TesseractNotFoundError:
-                return "", "Image OCR was not run because Tesseract is unavailable."
-            except pytesseract.TesseractError as error:
-                return "", f"Image OCR failed ({type(error).__name__})."
-            except (OSError, ValueError) as error:
-                return "", f"Could not read the image ({type(error).__name__})."
-        elif suffix in {".csv", ".txt", ".log", ".json"}:
-            text = payload.decode("utf-8", errors="replace")
-        elif suffix in {".xlsx", ".xls"}:
+            reader = PdfReader(BytesIO(payload), strict=False)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages[:3])
+            return text[:8000]
+        if suffix in {".csv", ".txt", ".log"}:
+            return payload.decode("utf-8", errors="replace")[:8000]
+        if suffix in {".xlsx", ".xls"}:
+            df = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
+            pages = []
+            for sheet in df.values():
+                pages.append(sheet.to_csv(index=False, header=False))
+            return "\n".join(pages)[:8000]
+        if suffix == ".docx":
             import zipfile
-            try:
-                df = pd.read_excel(BytesIO(payload), sheet_name=None, dtype=str)
-                text = "\n".join(sheet.to_csv(index=False, header=False) for sheet in df.values())
-            except (ImportError, OSError, ValueError, zipfile.BadZipFile) as error:
-                return "", f"Could not read the workbook ({type(error).__name__})."
-        elif suffix == ".docx":
-            import zipfile
-            try:
-                with zipfile.ZipFile(BytesIO(payload)) as archive:
+            with zipfile.ZipFile(BytesIO(payload)) as archive:
+                if "word/document.xml" in archive.namelist():
                     xml = archive.read("word/document.xml")
-                text = re.sub(r"<[^>]+>", " ", xml.decode("utf-8", errors="replace"))
-                text = re.sub(r"\s+", " ", text)
-            except (OSError, KeyError, zipfile.BadZipFile) as error:
-                return "", f"Could not read the Word document ({type(error).__name__})."
-        else:
-            return "", "This file type has no text extractor."
-    except ImportError:
-        return "", "Required document-reading dependencies are unavailable."
-    if len(text) > 100_000:
-        text = text[:100_000]
-        warning = "Only the first 100,000 extracted characters are searchable."
-    elif not text.strip() and not warning:
-        warning = "No searchable text was extracted; the filename and vendor remain searchable."
-    return text, warning
-
-
-def vendor_ai_purchase_invoice_signature(store) -> tuple[int, str]:
-    with store.connection() as db:
-        if store.cloud:
-            exists = db.execute(
-                "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=?",
-                ("vdd_purchase_invoices",),
-            ).fetchone()
-        else:
-            exists = db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                ("vdd_purchase_invoices",),
-            ).fetchone()
-        if not exists:
-            return 0, ""
-        row = db.execute(
-            "SELECT COUNT(*) AS n, COALESCE(MAX(created_at), '') AS latest FROM vdd_purchase_invoices"
-        ).fetchone()
-    return int(row["n"]), str(row["latest"] or "")
-
-
-def vendor_ai_signature(store) -> tuple:
-    from search_sources import signature
-    return store.search_index_signature(), vendor_ai_purchase_invoice_signature(store), signature(store)
-
-
-def vendor_ai_purchase_invoices(store) -> tuple[list[dict], list[str]]:
-    with store.connection() as db:
-        if store.cloud:
-            exists = db.execute(
-                "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=?",
-                ("vdd_purchase_invoices",),
-            ).fetchone()
-        else:
-            exists = db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                ("vdd_purchase_invoices",),
-            ).fetchone()
-        if not exists:
-            return [], []
-        rows = db.execute(
-            "SELECT id,filename,record_json FROM vdd_purchase_invoices ORDER BY created_at DESC"
-        ).fetchall()
-    index = []
-    warnings = []
-    for row in rows:
-        try:
-            record = json.loads(row["record_json"])
-        except json.JSONDecodeError:
-            warnings.append(f"{row['filename']}: saved invoice data could not be read.")
-            continue
-        fields = record.get("fields") or {}
-        items = record.get("items") or []
-        supplier = str(fields.get("supplier") or "").strip()
-        number = str(fields.get("invoice_number") or "").strip()
-        date = str(fields.get("invoice_date") or "").strip()
-        item_text = " ".join(
-            str(item.get(key) or "")
-            for item in items
-            for key in ("description", "quantity", "unit_price", "amount")
-        )
-        index.append({
-            "title": f"{number or row['filename']} · {supplier or 'Purchase invoice'}",
-            "source": "Purchase invoices",
-            "result_id": f"invoice:{row['id']}",
-            "priority": 2,
-            "score_hint": 18,
-            "text": f"{row['filename']} {supplier} {number} {date} {fields.get('gstin', '')} "
-                    f"{fields.get('total', '')} {fields.get('currency', '')} {item_text} {record.get('raw_text', '')}",
-            "vendor": supplier or "Not found in invoice",
-            "product": item_text,
-            "invoice_id": row["id"],
-            "invoice_number": number,
-            "invoice_date": date,
-            "invoice_total": str(fields.get("total") or ""),
-            "source_file": row["filename"],
-        })
-    return index, warnings
+                    text = re.sub(r"<[^>]+>", " ", xml.decode("utf-8", errors="replace"))
+                    return re.sub(r"\s+", " ", text)[:8000]
+    except Exception:
+        pass
+    return filename or ""
 
 
 def vendor_ai_index(store) -> list[dict]:
-    signature = vendor_ai_signature(store)
+    if hasattr(store, "search_index_signature"):
+        signature = store.search_index_signature()
+    else:
+        vendors = store.vendors()
+        documents = store.documents()
+        products = store.product_records()
+        signature = (
+            len(vendors),
+            len(documents),
+            len(products),
+            str(documents.uploaded_at.max()) if not documents.empty else "",
+            str(products.extracted_at.max()) if not products.empty and "extracted_at" in products else "",
+        )
     cached = st.session_state.get("vendor_ai_index_cache")
     if cached and cached.get("signature") == signature:
         return cached["index"]
     index = []
-    warnings = []
     vendors = store.vendors()
     for _, vendor in vendors.iterrows():
         company = str(vendor.get("company_name") or "").strip()
@@ -503,7 +344,6 @@ def vendor_ai_index(store) -> list[dict]:
         index.append({
             "title": company,
             "source": "Vendor master",
-            "result_id": f"vendor:{vendor.get('company_key', company)}",
             "priority": 0,
             "score_hint": 30,
             "text": f"{company} vendor supplier company manufacturer dealer contact details",
@@ -514,15 +354,10 @@ def vendor_ai_index(store) -> list[dict]:
     for _, doc in documents.iterrows():
         company = str(doc.get("company_name") or "").strip()
         filename = str(doc.get("filename") or "").strip()
-        if not filename:
+        if not filename or not doc.get("available"):
             continue
-        try:
-            payload = store.read_bytes(int(doc["id"])) if doc.get("available") else None
-            body, warning = vendor_ai_extract_text(filename, payload)
-        except Exception as error:
-            body, warning = "", f"Document could not be indexed ({type(error).__name__})."
-        if warning:
-            warnings.append(f"{filename}: {warning}")
+        payload = store.read_bytes(int(doc["id"]))
+        body = vendor_ai_extract_text(filename, payload)
         text = f"{company} {filename} {body} {' '.join(doc.get('types', []))}"
         if "catalog" in filename.lower() or "price" in filename.lower() or "rate" in filename.lower():
             priority = 3
@@ -533,23 +368,22 @@ def vendor_ai_index(store) -> list[dict]:
         index.append({
             "title": company or filename,
             "source": "Uploaded documents",
-            "result_id": f"document:{doc['id']}",
             "priority": priority,
             "score_hint": 12,
             "text": text,
             "vendor": company or "Not found in available vendor data",
             "source_file": filename,
-            "document_id": int(doc["id"]),
         })
     for _, record in store.product_records().iterrows():
         company = str(record.get("company_name") or "").strip()
         product = str(record.get("product_name") or "").strip()
+        if len(product) > 180:
+            continue
         price = record.get("price")
         price_text = f" price {price}" if pd.notna(price) else ""
         index.append({
             "title": f"{product} ({company})",
             "source": "Persisted catalogue/price records",
-            "result_id": f"product:{record.get('id')}",
             "priority": 5 if record.get("record_type") == "price" else 4,
             "score_hint": 20,
             "text": (
@@ -570,29 +404,24 @@ def vendor_ai_index(store) -> list[dict]:
             "source_sheet": str(record.get("source_sheet") or ""),
             "source_page": str(record.get("source_page") or ""),
             "price": price,
-            "document_id": int(record.get("document_id")) if pd.notna(record.get("document_id")) else None,
         })
-    invoices, invoice_warnings = vendor_ai_purchase_invoices(store)
-    index.extend(invoices)
-    warnings.extend(invoice_warnings)
     for item in index:
         item["_normalized_text"] = vendor_ai_normalize(f"{item['title']} {item['text']}")
-    st.session_state["vendor_ai_index_warnings"] = warnings
     st.session_state["vendor_ai_index_cache"] = {"signature": signature, "index": index}
     return index
 
 
 def vendor_ai_search(store, question: str) -> list[dict]:
     """Return ranked results, reusing both the normalized index and exact query results."""
-    signature = vendor_ai_signature(store)
+    if hasattr(store, "search_index_signature"):
+        signature = store.search_index_signature()
+    else:
+        signature = None
     cache = st.session_state.setdefault("vendor_ai_result_cache", {})
     cache_key = (signature, vendor_ai_normalize(question))
     if cache_key in cache:
         return cache[cache_key]
-    from search_sources import results as shared_results
-    extra, warnings = shared_results(store, question)
-    results = vendor_ai_rank(question, [*vendor_ai_index(store), *extra])
-    st.session_state["vendor_ai_index_warnings"] = [*st.session_state.get("vendor_ai_index_warnings", []), *warnings]
+    results = vendor_ai_rank(question, vendor_ai_index(store))
     cache[cache_key] = results
     # Keep session memory bounded while retaining the newest searches.
     if len(cache) > 32:
@@ -602,24 +431,13 @@ def vendor_ai_search(store, question: str) -> list[dict]:
 
 def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
     terms = vendor_ai_terms(question)
-    ignored = {"show", "find", "search", "please", "give", "me", "the", "all", "what", "which", "is", "are", "of", "for", "in", "and", "does", "have", "has", "do", "sell", "sells"}
-    required = set(vendor_ai_tokens(question)) - ignored
-    if not required:
-        return []
-    groups = []
-    for token in required:
-        aliases = next(({key, *values} for key, values in VENDOR_AI_SYNONYMS.items() if token == key or token in values), {token})
-        groups.append(aliases)
     question_text = vendor_ai_normalize(question)
     ranked = []
     for item in index:
         haystack = item.get("_normalized_text") or vendor_ai_normalize(f"{item['title']} {item['text']}")
-        matches = lambda term: re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", haystack) is not None
-        if not all(any(matches(term) for term in group) for group in groups):
-            continue
         score = 0
         for term in terms:
-            if matches(term):
+            if term in haystack:
                 score += 8 if " " in term else 4
         if question_text and question_text in haystack:
             score += 24
@@ -634,8 +452,7 @@ def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
     unique = []
     seen = set()
     for item in ranked:
-        key = item.get("result_id") or (
-            item.get("source", ""),
+        key = (
             item.get("vendor", ""),
             item.get("product", item.get("title", "")),
             item.get("sku", ""),
@@ -645,7 +462,7 @@ def vendor_ai_rank(question: str, index: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         unique.append(item)
-    return unique
+    return unique[:6]
 
 
 def _display_value(value, fallback: str = "Not found") -> str:
@@ -653,168 +470,6 @@ def _display_value(value, fallback: str = "Not found") -> str:
         return fallback
     text = re.sub(r"\s+", " ", str(value)).strip()
     return text[:180] if text else fallback
-
-
-def vendor_ai_source_payload(store, item: dict) -> bytes | None:
-    if item.get("document_id"):
-        return store.read_bytes(int(item["document_id"]))
-    if not item.get("invoice_id"):
-        return None
-    with store.connection() as db:
-        if store.cloud:
-            column = db.execute(
-                "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() "
-                "AND table_name=? AND column_name='original_payload'",
-                ("vdd_purchase_invoices",),
-            ).fetchone()
-        else:
-            columns = db.execute("PRAGMA table_info(vdd_purchase_invoices)").fetchall()
-            column = any(row["name"] == "original_payload" for row in columns)
-        if not column:
-            return None
-        row = db.execute(
-            "SELECT original_payload FROM vdd_purchase_invoices WHERE id=?",
-            (item["invoice_id"],),
-        ).fetchone()
-    return bytes(row["original_payload"]) if row and row["original_payload"] is not None else None
-
-
-def vendor_ai_snippet(item: dict, question: str, limit: int = 260) -> str:
-    text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
-    positions = [text.casefold().find(term.casefold()) for term in vendor_ai_tokens(question)]
-    positions = [position for position in positions if position >= 0]
-    start = max(0, min(positions) - 80) if positions else 0
-    snippet = text[start:start + limit]
-    return ("…" if start else "") + snippet + ("…" if start + limit < len(text) else "")
-
-
-def vendor_ai_results_excel(results: list[dict], question: str) -> bytes:
-    from openpyxl import Workbook
-    from openpyxl.cell import WriteOnlyCell
-
-    headers = [
-        "Type", "Title", "Vendor / Supplier", "Product / Items", "SKU",
-        "Invoice Number", "Invoice Date", "Invoice Total", "Source File", "OCR / Text Snippet",
-    ]
-    workbook = Workbook(write_only=True)
-    sheet = workbook.create_sheet("Search Results")
-    sheet.freeze_panes = "A2"
-    sheet.append([WriteOnlyCell(sheet, value=value) for value in headers])
-    for item in results:
-        values = [
-            item.get("source", ""),
-            item.get("title", ""),
-            item.get("vendor", ""),
-            item.get("product", ""),
-            item.get("sku", ""),
-            item.get("invoice_number", ""),
-            item.get("invoice_date", ""),
-            item.get("invoice_total", ""),
-            item.get("source_file", ""),
-            vendor_ai_snippet(item, question),
-        ]
-        cells = [WriteOnlyCell(sheet, value=str(value or "")) for value in values]
-        for cell in cells:
-            cell.data_type = "s"
-        sheet.append(cells)
-    sheet.auto_filter.ref = f"A1:J{len(results) + 1}"
-    output = BytesIO()
-    workbook.save(output)
-    return output.getvalue()
-
-
-def vendor_ai_search_all_page(store):
-    st.subheader("Search all data")
-    st.caption("Search uploaded documents, purchase invoices, original invoice worksheets, indexed Drive rows and catalogue products. Scans use OCR when Tesseract is available; incomplete reads are listed below.")
-    if st.button("Refresh search index", key="refresh_search_index"):
-        vendor_ai_extract_text.clear()
-        for key in ("vendor_ai_index_cache", "vendor_ai_result_cache", "vendor_ai_all_results"):
-            st.session_state.pop(key, None)
-    query = st.text_input(
-        "Search all records",
-        placeholder="Search a supplier, invoice, product, SKU, or text in an uploaded file...",
-        key="vendor_ai_all_query",
-    )
-    if st.button("Search all", type="primary", key="vendor_ai_all_search"):
-        if query.strip():
-            with st.spinner("Searching records and extracting document text..."):
-                st.session_state["vendor_ai_all_results"] = vendor_ai_search(store, query.strip())
-                st.session_state["vendor_ai_all_last_query"] = query.strip()
-    last_query = st.session_state.get("vendor_ai_all_last_query", "")
-    if last_query:
-        st.session_state["vendor_ai_all_results"] = vendor_ai_search(store, last_query)
-    results = st.session_state.get("vendor_ai_all_results", [])
-    last_query = st.session_state.get("vendor_ai_all_last_query", "")
-    if not last_query:
-        st.info("Enter a search term to find matches across all saved data.")
-        return
-    if results:
-        st.caption(f"{len(results)} matching result(s)")
-        rows = [{
-            "Type": item.get("source", ""),
-            "Title": item.get("title", ""),
-            "Vendor / Supplier": item.get("vendor", ""),
-            "Product / Items": item.get("product", ""),
-            "SKU": item.get("sku", ""),
-            "Invoice Number": item.get("invoice_number", ""),
-            "Invoice Date": item.get("invoice_date", ""),
-            "Invoice Total": item.get("invoice_total", ""),
-            "Source File": item.get("source_file", ""),
-            "Sheet / Row": " · ".join(filter(None, [item.get("source_sheet", ""), str(item.get("source_page", ""))])),
-            "Review status": item.get("review_status", ""),
-            "OCR / Text Snippet": vendor_ai_snippet(item, last_query),
-        } for item in results]
-        source_options = ["All sources", *sorted({item.get("source", "") for item in results})]
-        source = st.selectbox("Filter by source", source_options, key="all_search_source_filter")
-        visible = rows if source == "All sources" else [row for row in rows if row["Type"] == source]
-        st.dataframe(pd.DataFrame(visible), hide_index=True, width="stretch")
-        drive_links = {item["source_url"]: item.get("source_file", "Document") for item in results
-                       if item.get("source_url", "").startswith("https://drive.google.com/")}
-        for url, name in drive_links.items():
-            st.link_button("Open Drive source: " + name, url)
-        st.download_button(
-            "Export all matches to Excel",
-            data=vendor_ai_results_excel(results, last_query),
-            file_name="all_search_results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="vendor_ai_all_excel",
-        )
-        source_labels = {
-            f"{index + 1}. {item.get('source', '')} · {item.get('source_file') or item.get('title', '')}": index
-            for index, item in enumerate(results)
-            if item.get("document_id") or item.get("invoice_id")
-        }
-        if source_labels:
-            selected_label = st.selectbox(
-                "Preview or download a source file",
-                list(source_labels),
-                key="vendor_ai_all_source",
-            )
-            item = results[source_labels[selected_label]]
-            payload = vendor_ai_source_payload(store, item)
-            if payload:
-                filename = str(item.get("source_file") or "source-file")
-                st.download_button(
-                    "Download original file",
-                    data=payload,
-                    file_name=filename,
-                    mime=mimetypes.guess_type(filename)[0] or "application/octet-stream",
-                    key=f"vendor_ai_source_download_{item.get('document_id') or item.get('invoice_id')}",
-                )
-                show_document_preview(filename, payload)
-            elif item.get("invoice_id"):
-                st.warning("The invoice record is searchable, but its original file is not available. Older invoices may need to be re-uploaded.")
-            else:
-                st.warning("The original uploaded file is no longer available for preview or download.")
-    else:
-        st.info(f"No records matched “{last_query}”.")
-    warnings = st.session_state.get("vendor_ai_index_warnings", [])
-    if warnings:
-        with st.expander(f"{len(warnings)} file(s) could not be fully indexed"):
-            for warning in warnings[:50]:
-                st.warning(warning)
-            if len(warnings) > 50:
-                st.caption(f"{len(warnings) - 50} additional warning(s) not shown.")
 
 
 def vendor_ai_format(question: str, results: list[dict]) -> str:
@@ -915,11 +570,8 @@ def open_data_reset():
 
 
 def refresh(message: str):
-    load_workspace_data.clear()
     st.session_state["view_cleared"] = False
     st.session_state["notice"] = message
-    for key in ("vendor_ai_index_cache", "vendor_ai_result_cache", "vendor_ai_all_results", "vendor_ai_all_signature"):
-        st.session_state.pop(key, None)
     for key in list(st.session_state):
         if str(key).startswith(("export_", "zip_", "backup_download")):
             del st.session_state[key]
@@ -928,7 +580,6 @@ def refresh(message: str):
 
 def execute_delete_all_data():
     """Run the destructive reset as a widget callback, before the next Streamlit rerun."""
-    require_admin()
     acknowledged = bool(st.session_state.get("reset_acknowledged"))
     confirmation = str(st.session_state.get("reset_confirmation", "")).strip()
     if not acknowledged or confirmation != "RESET HISTORY":
@@ -936,7 +587,6 @@ def execute_delete_all_data():
         return
     try:
         store.reset_data("RESET HISTORY")
-        load_workspace_data.clear()
         status = store.reset_status()
         if not status.get("clean", False):
             raise RuntimeError("Some dashboard data is still present after reset.")
@@ -983,27 +633,43 @@ if st.session_state.pop("reset_completed", False):
 
 # Apply requested navigation before the sidebar widgets are instantiated.
 pending_page = st.session_state.pop("pending_page", None)
-if st.query_params.get('view') == 'served-invoices' and not st.session_state.get('served_deep_link_applied'):
-    pending_page = 'Purchase Invoice'
-    st.session_state['served_deep_link_applied'] = True
 if st.query_params.get("assistant") == "1" and not st.session_state.get("assistant_deep_link_applied"):
     pending_page = "🤖 Vendor AI Assistant"
     st.session_state["assistant_deep_link_applied"] = True
 
+vendors = store.vendors()
+documents = store.documents()
+uploaded_documents = documents
+upload_archives = store.upload_archives()
+aliases = store.aliases()
+from drive_view import combine_company_documents, inventory
+try:
+    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
+    if st.session_state.get('page') != 'Catalogue & prices':
+        drive_snapshot = inventory(drive_identity, store)
+        vendors, documents = combine_company_documents(vendors, documents, drive_snapshot['references'], aliases)
+except Exception:
+    logging.getLogger(__name__).exception('Shared Drive company view could not be loaded')
+    st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
+review_queue = store.review_queue()
+checklist = build_checklist(vendors, documents)
+counts = dashboard_counts(vendors, documents)
+view_cleared = bool(st.session_state.get("view_cleared", False))
+display_counts = {k: 0 for k in counts} if view_cleared else counts
+
 with st.sidebar:
-    st.markdown('<div class="brand"><img src="/static/hospkart-logo.png" alt="HOSPkart.com"></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "Search all", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
+    st.markdown('<div class="brand"><div class="brand-icon"><div><span>HOSP</span>kart.com</div></div><div><div class="brand-name"><span>HOSP</span>kart.com</div><div class="brand-sub">Vendor &amp; document operations</div></div></div>', unsafe_allow_html=True)
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "🤖 Vendor AI Assistant", "Data & backups", "Purchase Invoice"]
     page_map = {item: item for item in navigation}
     captions = [
         "Yes / No checklist + company downloads",
         "Extracted products and prices",
         "Add a new vendor batch",
         "Original ZIP uploads saved here",
-        "Review or correct any uploaded file",
-        "Documents, OCR, invoices and products",
-        "Natural-language vendor search and company answers",
-        "Original served data.xlsx workbook",
+        "Only files that need correction",
+        "HospKart chat, product search, quotations and vendor documents",
         "Backup, restore or reset saved data",
+        "Upload, review and search purchase invoices",
     ]
     if pending_page:
         matching_label = next((label for label, target in page_map.items() if target == pending_page), None)
@@ -1016,80 +682,32 @@ with st.sidebar:
         navigation,
         key="page",
         captions=captions,
-        format_func=lambda label: {"🤖 Vendor AI Assistant": "✦ QuoteSaarthi", "Purchase Invoice": "Served invoices"}.get(label, label),
     )
     page = page_map[page_label]
-
-if not can_edit:
-    st.caption("View only · Browse, search and download. Admin sign in is available through the A icon on the main dashboard.")
-    st.link_button("Admin account ↗", "/")
-if page in {"Upload documents", "Review files", "Data & backups"}:
-    if not can_edit:
-        loading_placeholder.empty()
-    require_admin()
-
-if page == 'Purchase Invoice':
-    loading_placeholder.empty()
-    from served_invoices_ui import render_served_invoices
-    render_served_invoices(store)
-    st.stop()
-
-startup_status.info("Loading companies and documents…")
-from drive_view import inventory
-try:
-    drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
-    snapshot = load_workspace_data(drive_identity, page != "Catalogue & prices", store)
-    vendors, documents = snapshot["vendors"], snapshot["documents"]
-    uploaded_documents, aliases = snapshot["uploaded_documents"], snapshot["aliases"]
-    checklist, counts = snapshot["checklist"], snapshot["counts"]
-    if snapshot["drive_failed"]:
-        load_workspace_data.clear()
-        st.warning('Drive references could not be loaded. Uploaded companies are shown; refresh to retry.')
-except Exception as error:
-    logging.getLogger(__name__).error("Workspace metadata load failed: %s", type(error).__name__)
-    startup_status.error("Could not load workspace data")
-    st.error("Saved data could not be loaded. Please retry in a moment.")
-    st.button("Retry loading workspace", key="retry_workspace_load")
-    st.stop()
-view_cleared = bool(st.session_state.get("view_cleared", False))
-display_counts = {k: 0 for k in counts} if view_cleared else counts
-logging.getLogger("organizer.application").info("Vendor workspace data loaded in %.3fs", time.perf_counter() - workspace_started)
-startup_status.success("Workspace ready")
-loading_placeholder.empty()
+    if setting("APP_PASSWORD") and st.button("Sign out", width="stretch"):
+        st.session_state.clear(); st.rerun()
 
 header, upload_col, checklist_col, clear_col, reset_col = st.columns([4.0, 1.25, 1.4, 1.15, 1.35], vertical_alignment="center")
-dashboard_title = header.empty()
-dashboard_title.title("Vendor Document Dashboard")
-from app.vendor_zip_upload import issue_upload_token, upload_signing_key
-with st.sidebar:
-    with st.expander('Workspace tools'):
-        st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(upload_signing_key()))
-        if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
-            st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(upload_signing_key()))
-upload_col.button("Upload documents", disabled=not can_edit, key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
+header.title("Vendor Document Dashboard")
+from app.vendor_zip_upload import issue_upload_token
+st.link_button('Upload purchase invoice / Excel', '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD')))
+if setting('GOOGLE_DRIVE_FOLDER_URL') or setting('GOOGLE_DRIVE_FOLDER_ID'):
+    st.link_button('Search all Google Drive data', '/drive-library#'+issue_upload_token(setting('APP_PASSWORD')))
+upload_col.button("Upload documents", key="open_upload", on_click=open_upload, width="stretch", help="Upload a company-folders ZIP or document files.")
 checklist_col.button("Yes / No checklist", key="open_checklist", on_click=open_checklist, width="stretch", help="Open the company-wise document checklist and Excel export.")
 if view_cleared:
     clear_col.button("Show saved data", key="show_saved_data", on_click=show_saved_data, width="stretch", help="Show the saved companies and documents again.")
 else:
     clear_col.button("Clear search", key="reset_filters", on_click=reset_filters, width="stretch", help="Clear the dashboard view and show 0 summary counters without deleting saved data.")
-reset_col.button("Reset all history", disabled=not can_edit, key="open_reset", on_click=open_data_reset, width="stretch", help="Delete ALL dashboard data, history, backups and uploaded ZIP files. The dashboard returns to 0 / 0 / 0 / 0.")
+reset_col.button("Reset all history", key="open_reset", on_click=open_data_reset, width="stretch", help="Delete ALL dashboard data, history, backups and uploaded ZIP files. The dashboard returns to 0 / 0 / 0 / 0.")
 if notice := st.session_state.pop("notice", None):
     st.success(notice)
-
-if page == "Companies & documents":
-    st.markdown('''<section class="workspace-hero" aria-label="QuoteSaarthi workspace">
-<div class="hero-eyebrow">QuoteSaarthi · Futuristic intelligence dashboard</div>
-<h2>Your data. A clearer way forward.</h2>
-<p>Explore company documents, find products and compare recorded prices with an assistant connected to your saved workspace.</p>
-<div class="hero-badges"><span>Company-wise records</span><span>Source-backed search</span><span>Team-protected workspace</span></div>
-</section>''', unsafe_allow_html=True)
-    st.button("✦ Ask QuoteSaarthi", key="ask_quotesaarthi", on_click=partial(go_to, "🤖 Vendor AI Assistant"))
 
 if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
     st.markdown('<div class="summary-label">Workspace overview</div>', unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
-    from app.served_workbook import served_invoice_count
-    m1.metric("Served data invoices", f"{served_invoice_count(store):,}", help="Distinct non-blank invoice numbers in Client Call List of the latest served workbook. Each invoice counts once across repeated item rows.")
+    from app.purchase_invoices import invoice_count
+    m1.metric("Purchase Invoice", f"{invoice_count(store):,}", help="Confirmed purchase invoices saved in the shared database. Each invoice counts once.")
     m2.metric("Stored documents", f"{display_counts['stored_files']:,}", help="Available uploaded files and Drive references. Drive originals remain in Drive. Known identical content within a company counts once.")
     m3.metric("Vendor headcount", f"{display_counts['companies']:,}", help="Unique companies across saved vendor records and assigned documents. Multiple files do not increase headcount.")
     m4.metric("Needs review", f"{display_counts['review_files']:,}", help="Unassigned, unclassified or unavailable document files.")
@@ -1112,11 +730,17 @@ if page not in {"🤖 Vendor AI Assistant", "Catalogue & prices"}:
                 help=f"Unique companies with at least one available {document_type} file. Multiple files for one company count once.",
             )
     if view_cleared:
-        st.info("The vendor document view is cleared. Saved documents and original workbooks are kept; the Served data invoices card still counts unique invoices. Click **Show saved data** to restore the vendor summary.")
+        st.info("The vendor document view is cleared. Saved documents and purchase invoices are kept; the Purchase Invoice card still counts confirmed invoices. Click **Show saved data** to restore the vendor summary.")
     else:
-        st.caption("Served data invoices counts unique invoice numbers in the latest served workbook. Headcount is unique companies; document totals and coverage describe vendor documents.")
+        st.caption("Purchase Invoice counts confirmed shared invoices. Headcount is unique companies; document totals and coverage describe vendor documents.")
 
-if page == "Upload documents":
+if page == 'Purchase Invoice':
+    st.subheader('Purchase invoices')
+    invoice_url = '/purchase-invoices#'+issue_upload_token(setting('APP_PASSWORD'))
+    st.link_button('Open purchase invoices in a new tab',invoice_url)
+    st.iframe(invoice_url,height=1100)
+
+elif page == "Upload documents":
     st.subheader("Upload vendor documents")
     st.write("Upload documents from your computer, or index the connected Google Drive collection. Drive originals stay in Drive; extracted records are searchable by everyone with dashboard access.")
     connected_drive = setting("GOOGLE_DRIVE_FOLDER_URL") or setting("GOOGLE_DRIVE_FOLDER_ID")
@@ -1148,7 +772,7 @@ if page == "Upload documents":
             from app.config import parse_drive_folder_id
             folder_url = 'https://drive.google.com/drive/folders/' + parse_drive_folder_id(connected_drive)
             st.link_button("1. Open connected Drive folder and add your ZIP", folder_url)
-        library_url = '/drive-library#' + issue_upload_token(upload_signing_key())
+        library_url = '/drive-library#' + issue_upload_token(setting('APP_PASSWORD'))
         st.link_button("Open Drive library in a new tab", library_url)
         st.caption("Searchable records are shared in PostgreSQL; originals remain in Drive. Drive companies, file references and extracted rows also appear on Companies & documents and Catalogue & prices.")
         st.iframe(library_url, height=1000)
@@ -1171,8 +795,8 @@ if page == "Upload documents":
             use_pdf = st.checkbox("Read PDF headings for unclear filenames", value=False, help="Optional local text extraction. No OCR or external service. Scans can still need review.")
             expected = st.number_input("Expected company count (0 = not specified)", min_value=0, value=0, step=1)
     if streamed_upload:
-        from app.vendor_zip_upload import issue_upload_token, upload_signing_key
-        upload_token = issue_upload_token(upload_signing_key())
+        from app.vendor_zip_upload import issue_upload_token
+        upload_token = issue_upload_token(setting("APP_PASSWORD"))
         upload_url = "/vendor-upload?source=computer&company=" + quote_plus(single_company) + "&read_pdf=" + str(use_pdf).lower() + "&expected=" + str(int(expected)) + "#" + upload_token
         st.link_button("Choose ZIP files", upload_url, type="primary", width="stretch")
     if not streamed_upload and not indexing_drive and st.button("Save documents", key="save_documents", disabled=not (uploads or local_zip_path.strip()), type="primary", width="stretch"):
@@ -1243,9 +867,7 @@ elif page == "Companies & documents":
         st.stop()
     if st.button('Refresh companies and documents', key='refresh_shared_companies'):
         inventory.clear()
-        load_workspace_data.clear()
         st.rerun()
-    st.caption("Use Refresh companies and documents to include newly uploaded files.")
     st.subheader("Find a company")
     col1, col2 = st.columns([3, 1])
     search = col1.text_input("Search company", placeholder="Type a company name...", key="company_search")
@@ -1269,14 +891,12 @@ elif page == "Companies & documents":
         checklist_dl2.download_button("Download visible checklist - CSV", csv_bytes(view), visible_csv_name, "text/csv", width="stretch", key="visible_csv")
         st.divider()
         st.markdown("### Company documents")
-        st.caption("Select a company, open a document category, then preview, review or delete an uploaded file using the controls beside its name.")
         options = filtered.company_key.tolist()
         mapping = dict(zip(filtered.company_key, filtered["Company Name"]))
         if st.session_state.get("company_selection") not in options:
             st.session_state["company_selection"] = options[0]
         selected = st.selectbox("Select company", options, format_func=mapping.get, key="company_selection")
         company = mapping[selected]
-        dashboard_title.title(company)
         company_docs = documents[documents.company_key == selected]
         company_checklist = checklist[checklist.company_key == selected]
         signature = hashlib.sha256((selected + repr(company_docs[["id","types_json","reviewed","available","file_hash"]].to_dict("records"))).encode()).hexdigest()
@@ -1306,61 +926,15 @@ elif page == "Companies & documents":
                     if rows.empty:
                         st.caption("No file available in this category.")
                     for row_number, doc in enumerate(rows.itertuples(index=False)):
-                        document_token = f"{category}_{doc.id}_{row_number}"
-                        filename_col, preview_col, review_col, delete_col = st.columns([6, 1.2, 1.2, 1.2], vertical_alignment="center")
+                        filename_col, preview_col = st.columns([8.5, 1.5], vertical_alignment="center")
                         filename_col.text(doc.filename)
-                        is_uploaded = str(doc.id).isdigit()
-                        if review_col.button("Review", key=f"review_document_{document_token}", disabled=not can_edit or not is_uploaded):
-                            st.session_state["review_document_request"] = int(doc.id)
-                            st.session_state["review_show_all"] = True
-                            go_to("Review files")
-                            st.rerun()
-                        if delete_col.button("Delete", key=f"delete_document_{document_token}", disabled=not can_edit or not is_uploaded,
-                                             help="Remove this saved upload and its extracted rows. Drive source files are kept."):
-                            st.session_state["delete_document_id"] = int(doc.id)
-                        if is_uploaded and st.session_state.get("delete_document_id") == int(doc.id):
-                            st.warning(f"Delete {doc.filename} and its extracted catalogue rows? Source archives and Drive originals are kept.")
-                            confirm, cancel = st.columns(2)
-                            if confirm.button("Confirm delete", key=f"confirm_delete_document_{document_token}", type="primary"):
-                                require_admin()
-                                try:
-                                    store.delete_document(int(doc.id))
-                                except Exception:
-                                    logging.getLogger(__name__).exception("Document deletion failed")
-                                    st.error("The file could not be completely removed. Refresh and check its status before retrying.")
-                                else:
-                                    document_bytes.clear()
-                                    st.session_state.pop("delete_document_id", None)
-                                    st.session_state.pop("preview_document_id", None)
-                                    refresh("Document deleted. The checklist and search have been refreshed.")
-                            if cancel.button("Cancel", key=f"cancel_delete_document_{document_token}"):
-                                st.session_state.pop("delete_document_id", None)
-                                st.rerun()
-                        detail = 'Google Drive' if getattr(doc, 'drive_url', '') else (supporting_category(doc.filename) if not doc.types else doc.method)
+                        detail = supporting_category(doc.filename) if not doc.types else doc.method
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
-                            preview_token = f"{category}_{doc.id}_{row_number}"
-                            if preview_col.button("👁", key=f"preview_{preview_token}", help="Preview this document before downloading."):
-                                st.session_state["preview_document_id"] = preview_token
-                            if st.session_state.get("preview_document_id") == preview_token:
-                                with st.container(border=True):
-                                    preview_title, close_preview = st.columns([5, 1])
-                                    preview_title.markdown(f"**Preview: {doc.filename}**")
-                                    if close_preview.button("Close", key=f"close_{preview_token}"):
-                                        st.session_state.pop("preview_document_id", None)
-                                        st.rerun()
-                                    try:
-                                        with st.spinner("Opening original document…"):
-                                            payload = drive_preview_bytes(drive_identity, str(doc.id), getattr(doc, 'drive_version', '') or doc.file_hash, store)
-                                        from app.drive.originals import PREVIEW_LIMIT
-                                        if doc.size_bytes > PREVIEW_LIMIT and Path(doc.filename).suffix.lower() == '.pdf':
-                                            st.caption("Large PDF: first-page preview. Download file for the complete original.")
-                                        show_document_preview(doc.filename, payload)
-                                    except Exception as error:
-                                        from app.drive.originals import OriginalUnavailable
-                                        st.warning(str(error) if isinstance(error, OriginalUnavailable) else "The Drive original could not be previewed. Please try again.")
-                                        st.link_button("Open original in Drive", doc.drive_url, key=f"drive_fallback_{preview_token}")
-                            st.link_button("Download file", "/api/drive-index/original/" + str(doc.id), key=f"file_{preview_token}")
+                            st.link_button('Open original in Drive', doc.drive_url, key=f'drive_original_{category}_{doc.id}_{row_number}')
+                            st.caption(f'Drive status: {doc.drive_status} · ZIP member/source: {getattr(doc, "drive_member", "") or doc.original_path}')
+                            if doc.reason:
+                                st.caption(doc.reason)
                             continue
                         payload = document_bytes(store, doc.id, doc.file_hash) if doc.available else None
                         if payload is not None:
@@ -1391,56 +965,55 @@ elif page == "Companies & documents":
 
 elif page == "Catalogue & prices":
     st.subheader('Drive catalogue and price rows')
-    catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(upload_signing_key())
+    catalogue_url = '/drive-library?view=catalogue#'+issue_upload_token(setting('APP_PASSWORD'))
     st.link_button('Open Drive catalogue in a new tab', catalogue_url)
     st.iframe(catalogue_url, height=850)
     st.subheader("Saved catalogue and manual Excel records")
     st.caption("Drive source rows appear in the searchable catalogue above. Saved manual/document rows below include both validated records and rows needing review. Their status is shown explicitly.")
-    if can_edit:
-        st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
-        manual_workbook = st.file_uploader(
-            "Upload manual catalogue & prices (.xlsx or .csv)", type=["xlsx", "csv"], max_upload_size=2048,
-            key="catalogue_manual_workbook", on_change=clear_manual_catalogue_import,
-            help="Excel (.xlsx) and CSV (.csv) are supported. Include Company Name and Product Name columns. Maximum 2 GB and 200,000 scanned product rows. Original files are retained; repeated identical uploads are skipped.",
+    st.caption("Upload your populated manual workbook once. Validated rows are saved automatically alongside extracted catalogue rows in the table, search and Excel export below. You do not need to upload the generated workbook.")
+    manual_workbook = st.file_uploader(
+        "Upload manual catalogue & prices (.xlsx or .csv)", type=["xlsx", "csv"], max_upload_size=2048,
+        key="catalogue_manual_workbook", on_change=clear_manual_catalogue_import,
+        help="Excel (.xlsx) and CSV (.csv) are supported. Include Company Name and Product Name columns. Maximum 2 GB and 200,000 scanned product rows. Original files are retained; repeated identical uploads are skipped.",
+    )
+    retry_import = False
+    if manual_workbook is not None:
+        interrupted = (
+            st.session_state.get("manual_catalogue_import_token") == (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
+            and not st.session_state.get("manual_catalogue_import_result")
+            and not st.session_state.get("manual_catalogue_import_error")
+            and not catalogue_jobs.status(st.session_state.get('manual_catalogue_job'))
         )
-        retry_import = False
-        if manual_workbook is not None:
-            interrupted = (
-                st.session_state.get("manual_catalogue_import_token") == (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
-                and not st.session_state.get("manual_catalogue_import_result")
-                and not st.session_state.get("manual_catalogue_import_error")
-                and not catalogue_jobs.status(st.session_state.get('manual_catalogue_job'))
-            )
-            if interrupted:
-                st.warning("The previous workbook import did not finish. Retry to continue; already saved rows are skipped.")
-            if interrupted or st.session_state.get("manual_catalogue_import_error"):
-                retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
-        if manual_workbook is not None:
-            token = (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
-            if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
-                st.session_state["manual_catalogue_import_token"] = token
-                st.session_state.pop("manual_catalogue_import_error", None)
-                st.session_state.pop('manual_catalogue_import_result', None)
-                st.session_state.pop('manual_catalogue_job', None)
-                try:
-                    st.session_state['manual_catalogue_job'] = catalogue_jobs.start(
-                        store, manual_workbook.name, manual_workbook.getvalue(), retry=True)
-                except Exception as error:
-                    logging.getLogger(__name__).exception("Manual catalogue import failed")
-                    st.session_state["manual_catalogue_import_error"] = (
-                        str(error) if isinstance(error, (ValueError, RuntimeError, OSError))
-                        else f"Saving failed ({type(error).__name__}). Retry the import; the server log contains the error details."
-                    )
-            manual_import_progress()
-        if st.session_state.get("manual_catalogue_import_error"):
-            st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
-        result = st.session_state.get("manual_catalogue_import_result")
-        if result:
-            if not result['added'] and not result['review'] and result['duplicates']:
-                st.info("This workbook was already imported. No new rows were added; its saved rows remain in the table and full Excel export below.")
-            else:
-                st.success(f"Saved {result['added']:,} validated row(s) and {result['review']:,} row(s) needing review.")
-            st.caption(f"{result['duplicates']:,} already processed source row(s) skipped; {result['excluded']:,} medicine/drug row(s) excluded from this workbook. Source rows can expand into multiple prices or collapse as exact duplicates.")
+        if interrupted:
+            st.warning("The previous workbook import did not finish. Retry to continue; already saved rows are skipped.")
+        if interrupted or st.session_state.get("manual_catalogue_import_error"):
+            retry_import = st.button("Retry catalogue import", key="retry_manual_catalogue_import")
+    if manual_workbook is not None:
+        token = (MANUAL_CATALOGUE_IMPORT_VERSION, manual_workbook.file_id)
+        if token != st.session_state.get("manual_catalogue_import_token") or retry_import:
+            st.session_state["manual_catalogue_import_token"] = token
+            st.session_state.pop("manual_catalogue_import_error", None)
+            st.session_state.pop('manual_catalogue_import_result', None)
+            st.session_state.pop('manual_catalogue_job', None)
+            try:
+                st.session_state['manual_catalogue_job'] = catalogue_jobs.start(
+                    store, manual_workbook.name, manual_workbook.getvalue(), retry=True)
+            except Exception as error:
+                logging.getLogger(__name__).exception("Manual catalogue import failed")
+                st.session_state["manual_catalogue_import_error"] = (
+                    str(error) if isinstance(error, (ValueError, RuntimeError, OSError))
+                    else f"Saving failed ({type(error).__name__}). Retry the import; the server log contains the error details."
+                )
+        manual_import_progress()
+    if st.session_state.get("manual_catalogue_import_error"):
+        st.error(f"Could not import the manual workbook: {st.session_state['manual_catalogue_import_error']}")
+    result = st.session_state.get("manual_catalogue_import_result")
+    if result:
+        if not result['added'] and not result['review'] and result['duplicates']:
+            st.info("This workbook was already imported. No new rows were added; its saved rows remain in the table and full Excel export below.")
+        else:
+            st.success(f"Saved {result['added']:,} validated row(s) and {result['review']:,} row(s) needing review.")
+        st.caption(f"{result['duplicates']:,} already processed source row(s) skipped; {result['excluded']:,} medicine/drug row(s) excluded from this workbook. Source rows can expand into multiple prices or collapse as exact duplicates.")
     catalogue_counts = store.product_classification_counts()
     st.caption(
         "Medical devices, equipment, diagnostics and consumables only; medicines and drugs are excluded. "
@@ -1501,7 +1074,6 @@ elif page == "Catalogue & prices":
         show_table(display)
 
 elif page == "Uploaded ZIPs":
-    upload_archives = store.upload_archives()
     st.subheader("Uploaded ZIP Files")
     st.write("Every original vendor ZIP saved through the dashboard appears here separately. Downloading returns the exact original ZIP bytes and original filename.")
     if upload_archives.empty:
@@ -1532,8 +1104,7 @@ elif page == "Uploaded ZIPs":
                     c2.warning("ZIP unavailable")
 
 elif page == "Review files":
-    review_queue = store.review_queue()
-    st.subheader("Review documents")
+    st.subheader("Check unclear documents")
     product_review = store.product_review_records(limit=1000)
     if not product_review.empty:
         st.markdown("### Product rows needing catalogue validation")
@@ -1548,28 +1119,21 @@ elif page == "Review files":
         st.markdown("### Company match review queue")
         show_table(review_queue[["detected_name", "possible_company", "canonical_id", "confidence", "evidence", "source", "status"]].rename(columns={"detected_name":"Detected name", "possible_company":"Possible company", "canonical_id":"Company ID", "confidence":"Confidence", "evidence":"Evidence", "source":"Source", "status":"Status"}))
         st.caption("These records were not automatically merged because the company match was uncertain.")
-    st.caption("Review any uploaded document, including files already classified. Turn off all documents to focus on files needing attention. Drive-only references remain read-only in the library.")
-    show_all=st.checkbox("Show all documents for correction", value=True, key="review_show_all")
-    drive_issues = documents[documents.drive_url.ne('')] if 'drive_url' in documents else pd.DataFrame()
-    if not show_all and not drive_issues.empty:
-        drive_issues = drive_issues[drive_issues.needs_review | ~drive_issues.available]
+    st.caption("Recognised supporting certificates stay under Other documents. Only unclear classifications and unavailable files need attention.")
+    show_all=st.checkbox("Show all documents for correction")
+    drive_issues = documents[documents.drive_url.ne('') & (documents.needs_review | ~documents.available)] if 'drive_url' in documents else pd.DataFrame()
     if not drive_issues.empty:
-        st.caption('Drive files remain linked to their originals. Uploaded copies can be corrected below; Drive-only references can be inspected in the Drive library.')
+        st.caption('Drive files needing review remain linked to their originals. Their extraction status is shared with the Drive library.')
         show_table(drive_issues[['company_name','filename','drive_status','reason','drive_url']])
     queue=uploaded_documents if show_all else uploaded_documents[uploaded_documents.needs_review | ~uploaded_documents.available]
     show_table(queue[["company_name","filename","method","reason"]].rename(columns={"company_name":"Company Name","filename":"File","method":"Classification","reason":"Reason"}))
     if not queue.empty:
         lookup={int(r.id):f"{r.company_name or 'Unassigned'} | {r.filename}" for r in queue.itertuples(index=False)}
-        requested = st.session_state.pop("review_document_request", None)
-        if requested in lookup:
-            st.session_state["review_selected_doc"] = requested
-        if st.session_state.get("review_selected_doc") not in lookup:
-            st.session_state.pop("review_selected_doc", None)
-        selected_doc=st.selectbox("Select file to review",list(lookup),format_func=lookup.get, key="review_selected_doc")
+        selected_doc=st.selectbox("Select file to review",list(lookup),format_func=lookup.get)
         doc=queue[queue.id==selected_doc].iloc[0]
         with st.form(f"review_{selected_doc}"):
             company=st.text_input("Correct company name",value=doc.company_name)
-            types=st.multiselect("Document type(s)",DOCUMENT_TYPES,default=[value for value in doc.types if value in DOCUMENT_TYPES])
+            types=st.multiselect("Document type(s)",DOCUMENT_TYPES,default=doc.types)
             st.caption("Leave types empty to confirm a supporting/non-checklist document.")
             note=st.text_input("Note (optional)")
             submit=st.form_submit_button("Save correction",type="primary")
@@ -1584,16 +1148,10 @@ elif page == "Review files":
             st.link_button('Open original in Drive for review', doc.drive_url)
             st.caption('Drive archive member: '+getattr(doc, 'drive_member', ''))
         if data is not None:
-            show_document_preview(doc.filename, data)
             st.download_button("Download original for review",data,doc.filename,key="review_download")
-        elif not getattr(doc, "drive_url", ""):
-            st.warning("Original file unavailable. You can still correct its company and document types.")
         st.caption("Source path: "+doc.original_path)
     else:
         st.success("No files are waiting for review.")
-
-elif page == "Search all":
-    vendor_ai_search_all_page(store)
 
 elif page == "🤖 Vendor AI Assistant":
     vendor_ai_page()
@@ -1605,7 +1163,7 @@ else:
     else:
         st.info("Local data is saved in the vendor_data folder beside app.py. Closing the browser or resetting search does not delete it.")
         st.caption("For Streamlit Community Cloud, configure DATABASE_URL. Its local disk is not guaranteed to persist.")
-    st.caption("Only the configured administrator can change shared data. Keep admin credentials private.")
+    st.caption("Password protection is a shared-team control, not individual roles. Restrict app access when using PAN, Aadhaar and bank documents.")
     st.markdown("#### Download or restore a checkpoint")
     if st.button("Prepare full data backup",key="prepare_backup"):
         try:
