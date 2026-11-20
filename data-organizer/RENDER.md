@@ -1,6 +1,8 @@
 ## Document workflow update · 19 November 2026
 
-Saved uploads now have Preview, Review and Delete controls together. Review defaults to all uploaded files and includes the original-file preview. Deletion requires admin access and confirmation, removes related catalogue/import rows, and keeps source archives and Drive originals.
+Saved uploads now have Preview, Review and Delete controls together. Review defaults to all uploaded files and includes the original-file preview. Deletion requires admin access and confirmation, removes related catalogue/import rows, and keeps source archives and Drive originals. Review also previews Drive-linked files and can remove a Drive reference from the dashboard index without deleting its original.
+
+The Vendor **Google Drive files** page lists and searches indexed Drive files and extracted rows. Removing a Drive reference affects only the dashboard index; the original remains in Drive and can reappear if the source is indexed again.
 
 Search all includes uploaded-file text/OCR, saved purchase invoices, all saved invoice worksheets, indexed Drive rows and approved catalogue records. Scans use Tesseract. Missing engines, failed OCR and extraction limits remain visible as issues. Start/Resume the Drive library to retry older OCR-pending or partial sources after this update; deployment does not automatically process the collection. OCR text is unverified source text and does not approve products or train a model.
 

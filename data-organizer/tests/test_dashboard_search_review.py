@@ -129,6 +129,35 @@ def test_review_shows_classified_files_and_opens_preview(store, monkeypatch, adm
     assert store.documents().iloc[0].types == ['PAN Card']
 
 
+def test_review_can_preview_and_delete_drive_backed_document(store, monkeypatch, admin_ui):
+    from unittest.mock import patch
+
+    from vendor_core import classify
+
+    store.save_document('Alpha Medical/Notes.txt', b'Local copy', classify('Alpha Medical/Notes.txt'))
+    ident = int(store.documents().iloc[0].id)
+    source = 'https://drive.google.com/file/d/syntheticBackup123/view#member=documents/1/Notes.txt'
+    with store.connection() as db:
+        db.execute('UPDATE vdd_documents SET stored_path=?,payload=NULL WHERE id=?', (source, ident))
+    monkeypatch.setenv('VENDOR_DATA_DIR', str(store.data_dir))
+    monkeypatch.setenv('DATABASE_URL', '')
+    monkeypatch.setenv('APP_PASSWORD', '')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT', 'false')
+    app = AppTest.from_file(str(DASHBOARD / 'app.py'))
+    app.session_state['page'] = 'Review files'
+    with patch('app.drive.originals.preview_bytes', return_value=b'Synthetic Drive preview'):
+        app.run(timeout=40)
+        assert not app.exception
+        app.button(key=f'preview_review_document_{ident}').click().run(timeout=40)
+        assert not app.exception
+        assert any('Synthetic Drive preview' in str(item.value) for item in app.code)
+        app.button(key=f'delete_review_document_{ident}').click().run(timeout=40)
+        assert any('original in Google Drive stays untouched' in item.value for item in app.warning)
+        app.button(key=f'confirm_delete_review_document_{ident}').click().run(timeout=40)
+    assert not app.exception
+    assert store.documents().empty
+
+
 def test_shared_search_finds_drive_and_saved_worksheet_rows(store, monkeypatch):
     from openpyxl import Workbook
     from app import served_workbook

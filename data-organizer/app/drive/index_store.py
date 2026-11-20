@@ -144,6 +144,25 @@ class DriveIndex:
         with self.store.connection() as db:
             db.execute('DELETE FROM vdd_drive_records WHERE entry_key=?', (key,))
 
+    def remove_entry(self, key):
+        self._totals_cache.clear()
+        with self.store.connection() as db:
+            row = db.execute(
+                'SELECT folder_id,drive_id,source_name,member_path FROM vdd_drive_entries WHERE entry_key=?',
+                (key,),
+            ).fetchone()
+            if row is None:
+                return False
+            db.execute('DELETE FROM vdd_drive_records WHERE entry_key=?', (key,))
+            db.execute('DELETE FROM vdd_drive_entries WHERE entry_key=?', (key,))
+            db.execute('INSERT INTO vdd_audit VALUES(?,?,?)', (
+                now(), 'Drive reference removed', json.dumps({
+                    'entry_key': key, 'folder_id': row['folder_id'], 'drive_id': row['drive_id'],
+                    'source_name': row['source_name'], 'member_path': row['member_path'],
+                }),
+            ))
+        return True
+
     def set_size(self, key, size):
         with self.store.connection() as db:
             db.execute('UPDATE vdd_drive_entries SET size_bytes=? WHERE entry_key=?',(size,key))

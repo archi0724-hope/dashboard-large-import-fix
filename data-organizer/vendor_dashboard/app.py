@@ -224,6 +224,67 @@ def drive_preview_bytes(identity: str, document_id: str, version: str, _store: S
     return preview_bytes(_store, document_id)
 
 
+def remove_dashboard_document(store: Store, document_id: int | str) -> bool:
+    ident = str(document_id)
+    if ident.isdecimal():
+        return store.delete_document(int(ident))
+    if ident.startswith("drive:"):
+        from app.drive.index_store import DriveIndex
+        return DriveIndex(store).remove_entry(ident[6:])
+    raise ValueError("This document cannot be removed from the dashboard.")
+
+
+def render_dashboard_delete_confirmation(
+    store: Store,
+    document_id: int | str,
+    filename: str,
+    state_key: str,
+    key_prefix: str,
+    *,
+    drive_original: bool = False,
+):
+    ident = str(document_id)
+    if str(st.session_state.get(state_key, "")) != ident:
+        return
+    if drive_original or ident.startswith("drive:"):
+        st.warning(
+            f"Remove {filename} from this dashboard? The original in Google Drive stays untouched "
+            "and can return if the source is indexed again."
+        )
+    else:
+        st.warning(f"Delete {filename} and its extracted rows from this dashboard? Uploaded ZIP archives are kept.")
+    confirm, cancel = st.columns(2)
+    if confirm.button("Confirm delete", key=f"confirm_delete_{key_prefix}", type="primary"):
+        require_admin()
+        try:
+            if not remove_dashboard_document(store, ident):
+                raise ValueError("This document is no longer available. Refresh and retry.")
+        except Exception as error:
+            logging.getLogger(__name__).exception("Dashboard document deletion failed")
+            st.error(str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else "The document could not be removed. Check storage access.")
+        else:
+            st.session_state.pop(state_key, None)
+            for key in ("preview_document_id", "review_preview_document_id", "review_drive_preview_id", "review_drive_document"):
+                st.session_state.pop(key, None)
+            message = (
+                "Drive reference removed from the dashboard. Its original remains in Google Drive."
+                if drive_original or ident.startswith("drive:")
+                else "Document deleted. The checklist and search have been refreshed."
+            )
+            refresh(message)
+    if cancel.button("Cancel", key=f"cancel_delete_{key_prefix}"):
+        st.session_state.pop(state_key, None)
+        st.rerun()
+
+
+def clear_document_views():
+    document_bytes.clear()
+    drive_preview_bytes.clear()
+    from drive_view import inventory, source_rows
+    inventory.clear()
+    source_rows.clear()
+
+
 @st.cache_data(show_spinner=False, max_entries=2, ttl=600)
 def catalogue_download(_store: Store, store_identity: str, signature: tuple) -> bytes:
     return catalogue_price_workbook_bytes(_store.catalogue_export_records(), include_review_details=True)
@@ -916,6 +977,7 @@ def open_data_reset():
 
 def refresh(message: str):
     load_workspace_data.clear()
+    clear_document_views()
     st.session_state["view_cleared"] = False
     st.session_state["notice"] = message
     for key in ("vendor_ai_index_cache", "vendor_ai_result_cache", "vendor_ai_all_results", "vendor_ai_all_signature"):
@@ -992,7 +1054,7 @@ if st.query_params.get("assistant") == "1" and not st.session_state.get("assista
 
 with st.sidebar:
     st.markdown('<div class="brand"><img src="/static/hospkart-logo.png" alt="HOSPkart.com"></div>', unsafe_allow_html=True)
-    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "Search all", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
+    navigation = ["Companies & documents", "Catalogue & prices", "Upload documents", "Uploaded ZIPs", "Review files", "Google Drive files", "Search all", "🤖 Vendor AI Assistant", "Purchase Invoice", "Data & backups"]
     page_map = {item: item for item in navigation}
     captions = [
         "Yes / No checklist + company downloads",
@@ -1000,6 +1062,7 @@ with st.sidebar:
         "Add a new vendor batch",
         "Original ZIP uploads saved here",
         "Review or correct any uploaded file",
+        "Browse and search all indexed Drive files",
         "Documents, OCR, invoices and products",
         "Natural-language vendor search and company answers",
         "Original served data.xlsx workbook",
@@ -1035,10 +1098,10 @@ if page == 'Purchase Invoice':
     st.stop()
 
 startup_status.info("Loading companies and documents…")
-from drive_view import inventory
+from drive_view import inventory, render_drive_records
 try:
     drive_identity = hashlib.sha256((str(store.data_dir)+store.database_url).encode()).hexdigest()
-    snapshot = load_workspace_data(drive_identity, page != "Catalogue & prices", store)
+    snapshot = load_workspace_data(drive_identity, page not in {"Catalogue & prices", "Google Drive files"}, store)
     vendors, documents = snapshot["vendors"], snapshot["documents"]
     uploaded_documents, aliases = snapshot["uploaded_documents"], snapshot["aliases"]
     checklist, counts = snapshot["checklist"], snapshot["counts"]
@@ -1309,33 +1372,25 @@ elif page == "Companies & documents":
                         document_token = f"{category}_{doc.id}_{row_number}"
                         filename_col, preview_col, review_col, delete_col = st.columns([6, 1.2, 1.2, 1.2], vertical_alignment="center")
                         filename_col.text(doc.filename)
-                        is_uploaded = str(doc.id).isdigit()
-                        if review_col.button("Review", key=f"review_document_{document_token}", disabled=not can_edit or not is_uploaded):
+                        document_id = str(doc.id)
+                        is_stored_document = document_id.isdecimal()
+                        if review_col.button("Review", key=f"review_document_{document_token}", disabled=not can_edit or not is_stored_document):
                             st.session_state["review_document_request"] = int(doc.id)
                             st.session_state["review_show_all"] = True
                             go_to("Review files")
                             st.rerun()
-                        if delete_col.button("Delete", key=f"delete_document_{document_token}", disabled=not can_edit or not is_uploaded,
-                                             help="Remove this saved upload and its extracted rows. Drive source files are kept."):
-                            st.session_state["delete_document_id"] = int(doc.id)
-                        if is_uploaded and st.session_state.get("delete_document_id") == int(doc.id):
-                            st.warning(f"Delete {doc.filename} and its extracted catalogue rows? Source archives and Drive originals are kept.")
-                            confirm, cancel = st.columns(2)
-                            if confirm.button("Confirm delete", key=f"confirm_delete_document_{document_token}", type="primary"):
-                                require_admin()
-                                try:
-                                    store.delete_document(int(doc.id))
-                                except Exception:
-                                    logging.getLogger(__name__).exception("Document deletion failed")
-                                    st.error("The file could not be completely removed. Refresh and check its status before retrying.")
-                                else:
-                                    document_bytes.clear()
-                                    st.session_state.pop("delete_document_id", None)
-                                    st.session_state.pop("preview_document_id", None)
-                                    refresh("Document deleted. The checklist and search have been refreshed.")
-                            if cancel.button("Cancel", key=f"cancel_delete_document_{document_token}"):
-                                st.session_state.pop("delete_document_id", None)
-                                st.rerun()
+                        can_delete = is_stored_document or document_id.startswith("drive:")
+                        drive_original = bool(getattr(doc, "drive_url", "")) or document_id.startswith("drive:")
+                        delete_help = ("Remove this Drive reference from the dashboard; its original remains in Drive."
+                                       if drive_original else
+                                       "Delete this saved upload and its extracted rows; uploaded ZIP archives are kept.")
+                        if delete_col.button("Delete", key=f"delete_document_{document_token}", disabled=not can_edit or not can_delete, help=delete_help):
+                            st.session_state["delete_document_id"] = document_id
+                        if str(st.session_state.get("delete_document_id", "")) == document_id:
+                            render_dashboard_delete_confirmation(
+                                store, document_id, doc.filename, "delete_document_id",
+                                f"document_{document_token}", drive_original=bool(getattr(doc, "drive_url", "")),
+                            )
                         detail = 'Google Drive' if getattr(doc, 'drive_url', '') else (supporting_category(doc.filename) if not doc.types else doc.method)
                         st.caption(f"{detail or 'Needs review'} | {doc.size_bytes / 1024:,.0f} KB")
                         if getattr(doc, 'drive_url', ''):
@@ -1500,6 +1555,9 @@ elif page == "Catalogue & prices":
         display['Review status'] = display['Review status'].replace({'approved':'Validated', 'review':'Needs review'})
         show_table(display)
 
+elif page == "Google Drive files":
+    render_drive_records(store)
+
 elif page == "Uploaded ZIPs":
     upload_archives = store.upload_archives()
     st.subheader("Uploaded ZIP Files")
@@ -1548,14 +1606,50 @@ elif page == "Review files":
         st.markdown("### Company match review queue")
         show_table(review_queue[["detected_name", "possible_company", "canonical_id", "confidence", "evidence", "source", "status"]].rename(columns={"detected_name":"Detected name", "possible_company":"Possible company", "canonical_id":"Company ID", "confidence":"Confidence", "evidence":"Evidence", "source":"Source", "status":"Status"}))
         st.caption("These records were not automatically merged because the company match was uncertain.")
-    st.caption("Review any uploaded document, including files already classified. Turn off all documents to focus on files needing attention. Drive-only references remain read-only in the library.")
+    st.caption("Review uploaded and Drive documents. Drive originals stay in Google Drive; deleting a Drive item here removes only its dashboard record.")
     show_all=st.checkbox("Show all documents for correction", value=True, key="review_show_all")
     drive_issues = documents[documents.drive_url.ne('')] if 'drive_url' in documents else pd.DataFrame()
     if not show_all and not drive_issues.empty:
         drive_issues = drive_issues[drive_issues.needs_review | ~drive_issues.available]
     if not drive_issues.empty:
-        st.caption('Drive files remain linked to their originals. Uploaded copies can be corrected below; Drive-only references can be inspected in the Drive library.')
+        st.caption('Drive originals remain in Google Drive. Preview, download, or remove only their dashboard references below.')
         show_table(drive_issues[['company_name','filename','drive_status','reason','drive_url']])
+    drive_only_issues = drive_issues[drive_issues.id.astype(str).str.startswith("drive:")] if not drive_issues.empty else pd.DataFrame()
+    if not drive_only_issues.empty:
+        drive_lookup = {
+            str(row.id): f"{row.company_name or 'Unassigned'} | {row.filename}"
+            for row in drive_only_issues.itertuples(index=False)
+        }
+        selected_drive_id = st.selectbox(
+            "Select a Drive-only file",
+            list(drive_lookup),
+            format_func=drive_lookup.get,
+            key="review_drive_document",
+        )
+        drive_doc = drive_only_issues[drive_only_issues.id.astype(str) == selected_drive_id].iloc[0]
+        drive_token = selected_drive_id.replace(":", "_")
+        with st.container(horizontal=True):
+            if st.button("Preview", key=f"preview_review_drive_{drive_token}"):
+                st.session_state["review_drive_preview_id"] = selected_drive_id
+            st.link_button("Open in Drive", drive_doc.drive_url, key=f"open_review_drive_{drive_token}")
+            st.link_button("Download original", "/api/drive-index/original/" + selected_drive_id, key=f"download_review_drive_{drive_token}")
+            if st.button("Delete from dashboard", key=f"delete_review_drive_{drive_token}"):
+                st.session_state["review_drive_delete_id"] = selected_drive_id
+        if st.session_state.get("review_drive_preview_id") == selected_drive_id:
+            try:
+                with st.spinner("Opening original document…"):
+                    payload = drive_preview_bytes(
+                        drive_identity, selected_drive_id,
+                        getattr(drive_doc, "drive_version", "") or drive_doc.file_hash, store,
+                    )
+                show_document_preview(drive_doc.filename, payload)
+            except Exception as error:
+                from app.drive.originals import OriginalUnavailable
+                st.warning(str(error) if isinstance(error, OriginalUnavailable) else "The Drive original could not be previewed. Please try again.")
+        render_dashboard_delete_confirmation(
+            store, selected_drive_id, drive_doc.filename, "review_drive_delete_id",
+            f"review_drive_{drive_token}", drive_original=True,
+        )
     queue=uploaded_documents if show_all else uploaded_documents[uploaded_documents.needs_review | ~uploaded_documents.available]
     show_table(queue[["company_name","filename","method","reason"]].rename(columns={"company_name":"Company Name","filename":"File","method":"Classification","reason":"Reason"}))
     if not queue.empty:
@@ -1581,16 +1675,44 @@ elif page == "Review files":
                 st.error(str(error) if isinstance(error,ValueError) else "Correction could not be saved. Check storage access.")
         data=document_bytes(store, selected_doc, doc.file_hash)
         if getattr(doc, 'drive_url', ''):
-            st.link_button('Open original in Drive for review', doc.drive_url)
             st.caption('Drive archive member: '+getattr(doc, 'drive_member', ''))
+        with st.container(horizontal=True):
+            if data is not None:
+                st.download_button("Download original for review", data, doc.filename, key="review_download")
+            if getattr(doc, "drive_url", ""):
+                if data is None and st.button("Preview original", key=f"preview_review_document_{selected_doc}"):
+                    st.session_state["review_preview_document_id"] = str(selected_doc)
+                st.link_button("Open original in Drive", doc.drive_url, key=f"open_review_document_{selected_doc}")
+                if data is None:
+                    st.link_button("Download original", "/api/drive-index/original/" + str(selected_doc), key=f"download_review_document_{selected_doc}")
+            if st.button("Delete from dashboard", key=f"delete_review_document_{selected_doc}"):
+                st.session_state["review_delete_document_id"] = str(selected_doc)
         if data is not None:
             show_document_preview(doc.filename, data)
-            st.download_button("Download original for review",data,doc.filename,key="review_download")
+        elif getattr(doc, "drive_url", ""):
+            if st.session_state.get("review_preview_document_id") == str(selected_doc):
+                try:
+                    with st.spinner("Opening original document…"):
+                        preview = drive_preview_bytes(
+                            drive_identity, str(selected_doc),
+                            getattr(doc, "drive_version", "") or doc.file_hash, store,
+                        )
+                    show_document_preview(doc.filename, preview)
+                except Exception as error:
+                    from app.drive.originals import OriginalUnavailable
+                    st.warning(str(error) if isinstance(error, OriginalUnavailable) else "The Drive original could not be previewed. Please try again.")
         elif not getattr(doc, "drive_url", ""):
             st.warning("Original file unavailable. You can still correct its company and document types.")
+        render_dashboard_delete_confirmation(
+            store, selected_doc, doc.filename, "review_delete_document_id",
+            f"review_document_{selected_doc}", drive_original=bool(getattr(doc, "drive_url", "")),
+        )
         st.caption("Source path: "+doc.original_path)
     else:
-        st.success("No files are waiting for review.")
+        if drive_only_issues.empty:
+            st.success("No files are waiting for review.")
+        else:
+            st.caption("No uploaded files are waiting for review. Drive-only files are listed above.")
 
 elif page == "Search all":
     vendor_ai_search_all_page(store)

@@ -67,6 +67,68 @@ def test_main_vendor_fragment_renders_shared_rows_and_search(shared):
     assert app.dataframe[0].value['Detected company'].tolist() == ['Beta Medical']
 
 
+def test_drive_files_page_is_available_from_vendor_navigation(shared, monkeypatch, admin_ui):
+    store, _, _ = shared
+    monkeypatch.setenv('VENDOR_DATA_DIR', str(store.data_dir))
+    monkeypatch.setenv('DATABASE_URL', '')
+    monkeypatch.setenv('APP_PASSWORD', '')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT', 'false')
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'vendor_dashboard' / 'app.py'))
+    app.session_state['page'] = 'Google Drive files'
+    app.run(timeout=40)
+    assert not app.exception
+    assert 'Google Drive companies & documents' in [heading.value for heading in app.subheader]
+    assert {metric.label: metric.value for metric in app.metric}['Drive source rows'] == '1'
+    assert set(app.dataframe[0].value['Detected company']) == {'Alpha Medical', 'Beta Medical'}
+    app.text_input(key='drive_vendor_files_query').set_value('Beta').run(timeout=40)
+    assert not app.exception
+    assert app.dataframe[0].value['Detected company'].tolist() == ['Beta Medical']
+
+
+def test_review_can_preview_and_remove_drive_only_reference(shared, monkeypatch, admin_ui):
+    from unittest.mock import patch
+
+    store, _, _ = shared
+    monkeypatch.setenv('VENDOR_DATA_DIR', str(store.data_dir))
+    monkeypatch.setenv('DATABASE_URL', '')
+    monkeypatch.setenv('APP_PASSWORD', '')
+    monkeypatch.setenv('CLOUD_DEPLOYMENT', 'false')
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'vendor_dashboard' / 'app.py'))
+    app.session_state['page'] = 'Review files'
+    with patch('app.drive.originals.preview_bytes', return_value=b'Synthetic Drive preview'):
+        app.run(timeout=40)
+        assert not app.exception
+        app.selectbox(key='review_drive_document').set_value('drive:alpha').run(timeout=40)
+        selected = app.selectbox(key='review_drive_document').value
+        token = selected.replace(':', '_')
+        app.button(key=f'preview_review_drive_{token}').click().run(timeout=40)
+        assert not app.exception
+        assert any('Synthetic Drive preview' in str(item.value) for item in app.code)
+        app.button(key=f'delete_review_drive_{token}').click().run(timeout=40)
+        assert any('original in Google Drive stays untouched' in item.value for item in app.warning)
+        app.button(key=f'confirm_delete_review_drive_{token}').click().run(timeout=40)
+    assert not app.exception
+    with store.connection() as db:
+        assert db.execute('SELECT count(*) AS n FROM vdd_drive_entries WHERE entry_key=?', (selected[6:],)).fetchone()['n'] == 0
+        assert db.execute('SELECT count(*) AS n FROM vdd_drive_records WHERE entry_key=?', (selected[6:],)).fetchone()['n'] == 0
+        assert db.execute("SELECT count(*) AS n FROM vdd_audit WHERE action='Drive reference removed'").fetchone()['n'] == 1
+
+
+def test_remove_drive_entry_deletes_only_its_indexed_rows(shared):
+    store, inventory, source_rows = shared
+    index = DriveIndex(store)
+    assert index.remove_entry('alpha')
+    assert not index.remove_entry('alpha')
+    inventory.clear()
+    source_rows.clear()
+    with store.connection() as db:
+        assert db.execute('SELECT count(*) AS n FROM vdd_drive_entries WHERE entry_key=?', ('alpha',)).fetchone()['n'] == 0
+        assert db.execute('SELECT count(*) AS n FROM vdd_drive_records WHERE entry_key=?', ('alpha',)).fetchone()['n'] == 0
+        assert db.execute('SELECT count(*) AS n FROM vdd_drive_entries WHERE entry_key=?', ('beta',)).fetchone()['n'] == 1
+        audit = db.execute("SELECT details FROM vdd_audit WHERE action='Drive reference removed'").fetchone()
+    assert json.loads(audit['details'])['drive_id'] == 'syntheticzip'
+
+
 def test_combined_checklist_groups_both_sources_and_deduplicates_known_content(shared):
     import hashlib
     import zipfile
